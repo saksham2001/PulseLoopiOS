@@ -10,23 +10,45 @@ import SwiftData
 
 @main
 struct PulseLoopApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    let container: ModelContainer
+    @State private var bleClient: RingBLEClient
+    @State private var coordinator: RingSyncCoordinator
+    @State private var gpsRecorder: GpsRouteRecorder
+    /// Retained for app lifetime so it keeps draining the event bus into SwiftData.
+    private let persistence: EventPersistenceSubscriber
 
+    init() {
+        let container: ModelContainer
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            container = try ModelContainerFactory.make()
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            fatalError("Failed to create SwiftData container: \(error)")
         }
-    }()
+        self.container = container
+
+        let client = RingBLEClient()
+        let coordinator = RingSyncCoordinator(client: client, context: container.mainContext)
+        client.onConnected = { [weak coordinator] in coordinator?.runStartupSequence() }
+        _bleClient = State(initialValue: client)
+        _coordinator = State(initialValue: coordinator)
+        _gpsRecorder = State(initialValue: GpsRouteRecorder())
+
+        let subscriber = EventPersistenceSubscriber(context: container.mainContext)
+        self.persistence = subscriber
+
+        // Start persistence + coordinator draining the bus; auto-reconnect happens when
+        // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).
+        subscriber.start()
+        coordinator.start()
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootAppView()
+                .environment(bleClient)
+                .environment(coordinator)
+                .environment(gpsRecorder)
         }
-        .modelContainer(sharedModelContainer)
+        .modelContainer(container)
     }
 }

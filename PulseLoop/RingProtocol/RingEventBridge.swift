@@ -1,0 +1,69 @@
+import Foundation
+
+/// Pure mapping from a decoded ring packet to the typed `PulseEvent`s that should be
+/// published on the bus. The raw packet itself is published separately by `RingBLEClient`
+/// (always, even for `.unknown`), so this bridge only produces the *typed* fan-out used by
+/// the persistence subscriber and the sync coordinator.
+///
+/// Mirrors the typed fan-out in the Python reference
+/// (`backend/app/ble/bleak_ring_client.py::_on_notify`), including its sanity gates:
+/// HR zero/garbage frames are dropped, SpO2 is already range-gated in the decoder, and
+/// sleep timelines with implausible timestamps are rejected so a corrupt frame can't
+/// create a bogus "recent" sleep session.
+enum RingEventBridge {
+    /// Plausible instantaneous heart rate, in bpm. Drops 0-bpm warm-up frames and noise.
+    static let hrRange: ClosedRange<Int> = 30...220
+
+    static func events(for decoded: RingDecodedEvent, now: Date = Date()) -> [PulseEvent] {
+        switch decoded {
+        case let .activityUpdate(timestamp, steps, distanceMeters, calories):
+            return [.activityUpdate(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, calories: calories)]
+
+        case let .heartRateSample(bpm, timestamp):
+            guard hrRange.contains(bpm) else { return [] }
+            return [.heartRateSample(bpm: bpm, timestamp: timestamp)]
+
+        case let .heartRateComplete(timestamp):
+            return [.heartRateComplete(timestamp: timestamp)]
+
+        case let .spo2Progress(percent, timestamp):
+            return [.spo2Progress(percent: percent, timestamp: timestamp)]
+
+        case let .spo2Result(value, timestamp):
+            return [.spo2Result(value: value, timestamp: timestamp)]
+
+        case let .spo2Complete(timestamp):
+            return [.spo2Complete(timestamp: timestamp)]
+
+        case let .historyMeasurement(kind, value, timestamp):
+            if kind == .heartRate, !hrRange.contains(Int(value)) { return [] }
+            return [.historyMeasurement(kind: kind, value: value, timestamp: timestamp)]
+
+        case let .sleepTimeline(timestamp, stages):
+            guard isPlausibleSleepStart(timestamp, now: now), !stages.isEmpty else { return [] }
+            return [.sleepTimeline(timestamp: timestamp, stages: stages)]
+
+        case let .battery(percent):
+            guard (0...100).contains(percent) else { return [] }
+            return [.batteryLevel(percent: percent)]
+
+        case let .status(address):
+            // The status reply carries the ring's embedded address; surface it (and refresh
+            // last-sync) by re-asserting the connected state with the address attached.
+            return [.deviceStateChanged(state: .connected, address: address)]
+
+        case .timeSyncAck, .commandAck, .unknown:
+            // No typed measurement — the raw packet was already logged for the debug feed.
+            return []
+        }
+    }
+
+    /// A sleep session start is plausible if it falls within roughly the last two days and is
+    /// not in the future. Ring timestamps are "local-like" (see Protocol.md), so a wildly
+    /// off value indicates a misdecoded frame.
+    static func isPlausibleSleepStart(_ start: Date, now: Date = Date()) -> Bool {
+        let lower = now.addingTimeInterval(-2 * 24 * 3600)
+        let upper = now.addingTimeInterval(3600)
+        return start >= lower && start <= upper
+    }
+}

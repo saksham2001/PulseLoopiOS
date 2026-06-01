@@ -6,8 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		AA0000000000000000000008 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4147614E2FCC0F81009EB0EF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 414761552FCC0F81009EB0EF;
+			remoteInfo = PulseLoop;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		414761562FCC0F81009EB0EF /* PulseLoop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseLoop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000002 /* PulseLoopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PulseLoopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,22 @@
 			path = PulseLoop;
 			sourceTree = "<group>";
 		};
+		AA0000000000000000000003 /* PulseLoopTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PulseLoopTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		414761532FCC0F81009EB0EF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -34,6 +57,7 @@
 			children = (
 				414761582FCC0F81009EB0EF /* PulseLoop */,
 				414761572FCC0F81009EB0EF /* Products */,
+				414763642FCCCC58009EB0EF /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -41,8 +65,17 @@
 			isa = PBXGroup;
 			children = (
 				414761562FCC0F81009EB0EF /* PulseLoop.app */,
+				AA0000000000000000000002 /* PulseLoopTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		414763642FCCCC58009EB0EF /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000003 /* PulseLoopTests */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -70,6 +103,29 @@
 			productReference = 414761562FCC0F81009EB0EF /* PulseLoop.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AA0000000000000000000001 /* PulseLoopTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA000000000000000000000B /* Build configuration list for PBXNativeTarget "PulseLoopTests" */;
+			buildPhases = (
+				AA0000000000000000000004 /* Sources */,
+				AA0000000000000000000005 /* Frameworks */,
+				AA0000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA0000000000000000000007 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA0000000000000000000003 /* PulseLoopTests */,
+			);
+			name = PulseLoopTests;
+			packageProductDependencies = (
+			);
+			productName = PulseLoopTests;
+			productReference = AA0000000000000000000002 /* PulseLoopTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +138,10 @@
 				TargetAttributes = {
 					414761552FCC0F81009EB0EF = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					AA0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 414761552FCC0F81009EB0EF;
 					};
 				};
 			};
@@ -100,12 +160,20 @@
 			projectRoot = "";
 			targets = (
 				414761552FCC0F81009EB0EF /* PulseLoop */,
+				AA0000000000000000000001 /* PulseLoopTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		414761542FCC0F81009EB0EF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +190,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA0000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AA0000000000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 414761552FCC0F81009EB0EF /* PulseLoop */;
+			targetProxy = AA0000000000000000000008 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		414761612FCC0F82009EB0EF /* Debug */ = {
@@ -178,7 +261,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -236,7 +319,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -256,6 +339,9 @@
 				DEVELOPMENT_TEAM = CQUQ9RZMDK;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts when GPS is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +374,9 @@
 				DEVELOPMENT_TEAM = CQUQ9RZMDK;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts when GPS is enabled.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -310,6 +399,48 @@
 			};
 			name = Release;
 		};
+		AA0000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CQUQ9RZMDK;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.sakshambhutani.PulseLoopTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PulseLoop.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PulseLoop";
+			};
+			name = Debug;
+		};
+		AA000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CQUQ9RZMDK;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.sakshambhutani.PulseLoopTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PulseLoop.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PulseLoop";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -327,6 +458,15 @@
 			buildConfigurations = (
 				414761642FCC0F82009EB0EF /* Debug */,
 				414761652FCC0F82009EB0EF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA000000000000000000000B /* Build configuration list for PBXNativeTarget "PulseLoopTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000009 /* Debug */,
+				AA000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
