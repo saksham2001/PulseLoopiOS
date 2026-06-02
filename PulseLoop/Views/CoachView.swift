@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 private let coldStartPrompts = [
     "How am I doing today?",
@@ -11,11 +12,35 @@ private let coldStartPrompts = [
 
 struct CoachView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \CoachMessage.createdAt) private var messages: [CoachMessage]
-    @Query private var conversations: [CoachConversation]
+    @Query(sort: \CoachMessage.createdAt) private var allMessages: [CoachMessage]
+    @Query(sort: \CoachConversation.updatedAt, order: .reverse) private var conversations: [CoachConversation]
     @State private var draft = ""
     @State private var viewModel = CoachViewModel()
+    @State private var activeConversationId: UUID?
+    @State private var showHistory = false
+    @State private var keyboardHeight: CGFloat = 0
     @FocusState private var composerFocused: Bool
+
+    /// Bottom inset for the composer: clears the overlaid nav bar (~60) when the
+    /// keyboard is hidden, and sits just above the keyboard when shown. Computed
+    /// manually because the tab layout pins the keyboard safe area (see RootViews).
+    private var composerBottomInset: CGFloat {
+        guard keyboardHeight > 0 else { return 60 }
+        return max(8, keyboardHeight - bottomSafeInset + 8)
+    }
+
+    private var bottomSafeInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?.safeAreaInsets.bottom ?? 0
+    }
+
+    /// Messages for the currently selected conversation.
+    private var messages: [CoachMessage] {
+        guard let id = activeConversationId else { return allMessages }
+        return allMessages.filter { $0.conversationId == id }
+    }
 
     private var showColdStart: Bool {
         !viewModel.isSending && (messages.isEmpty || messages.last?.role == "assistant")
@@ -45,6 +70,8 @@ struct CoachView: View {
                 .onChange(of: viewModel.traceEvents.count) {
                     withAnimation { proxy.scrollTo("trace", anchor: .bottom) }
                 }
+                .scrollDismissesKeyboard(.immediately)
+                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
             }
 
             VStack(spacing: 0) {
@@ -68,12 +95,31 @@ struct CoachView: View {
                 }
                 composer
             }
-            // Lift the composer just above the overlaid BottomNavBar (~60pt of
-            // content above the safe area); collapse when the keyboard is up.
-            .padding(.bottom, composerFocused ? 8 : 60)
+            // Clears the nav bar when idle; rises above the keyboard when typing.
+            .padding(.bottom, composerBottomInset)
             .background(PulseColors.secondaryBackground)
         }
         .background(PulseColors.background)
+        .animation(.easeOut(duration: 0.25), value: keyboardHeight)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = UIScreen.main.bounds.height
+            // Visible keyboard height = how far its top is above the screen bottom.
+            keyboardHeight = max(0, screenHeight - frame.origin.y)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardHeight = 0
+        }
+        .onAppear {
+            if activeConversationId == nil {
+                activeConversationId = allMessages.last?.conversationId ?? conversations.first?.id
+            }
+        }
+        .sheet(isPresented: $showHistory) {
+            CoachHistorySheet(conversations: conversations, activeId: activeConversationId) { id in
+                activeConversationId = id
+            }
+        }
     }
 
     private var header: some View {
@@ -88,7 +134,7 @@ struct CoachView: View {
                 Image(systemName: "plus").font(.system(size: 16)).foregroundStyle(PulseColors.textSecondary)
                     .frame(width: 36, height: 36).overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
             }
-            Button {} label: {
+            Button { composerFocused = false; showHistory = true } label: {
                 Image(systemName: "clock.arrow.circlepath").font(.system(size: 16)).foregroundStyle(PulseColors.textSecondary)
                     .frame(width: 36, height: 36).overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
             }
@@ -131,25 +177,107 @@ struct CoachView: View {
     private func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !viewModel.isSending else { return }
-        let conversationId = activeConversationId()
+        let conversationId = resolveConversationId()
+        // Title a fresh conversation from its opening message.
+        if let convo = conversations.first(where: { $0.id == conversationId }),
+           isDefaultTitle(convo.title),
+           !allMessages.contains(where: { $0.conversationId == conversationId }) {
+            convo.title = String(trimmed.prefix(40))
+            try? modelContext.save()
+        }
         draft = ""
         composerFocused = false
         Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext) }
     }
 
-    private func activeConversationId() -> UUID {
-        if let existing = conversations.first { return existing.id }
-        let conversation = CoachConversation()
+    /// The active conversation, creating one on first use.
+    private func resolveConversationId() -> UUID {
+        if let id = activeConversationId { return id }
+        if let existing = conversations.first {
+            activeConversationId = existing.id
+            return existing.id
+        }
+        let conversation = CoachConversation(title: "New chat")
         modelContext.insert(conversation)
+        try? modelContext.save()
+        activeConversationId = conversation.id
         return conversation.id
     }
 
+    private func isDefaultTitle(_ title: String) -> Bool {
+        title == "New chat" || title == "Today check-in"
+    }
+
     private func newConversation() {
+        composerFocused = false
         let conversation = CoachConversation(title: "New chat")
         modelContext.insert(conversation)
-        // Clear visible messages for a fresh start.
-        for message in messages { modelContext.delete(message) }
         try? modelContext.save()
+        activeConversationId = conversation.id
+    }
+}
+
+/// Conversation history sheet — pick a past conversation to resume.
+struct CoachHistorySheet: View {
+    let conversations: [CoachConversation]
+    let activeId: UUID?
+    let onSelect: (UUID) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if conversations.isEmpty {
+                    Text("No conversations yet.")
+                        .font(.system(size: 14)).foregroundStyle(PulseColors.textMuted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(conversations) { convo in
+                            Button { onSelect(convo.id); dismiss() } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(convo.title)
+                                            .font(.system(size: 15, weight: .medium))
+                                            .foregroundStyle(PulseColors.textPrimary)
+                                        Text(Self.dateFormatter.string(from: convo.updatedAt))
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(PulseColors.textMuted)
+                                    }
+                                    Spacer()
+                                    if convo.id == activeId {
+                                        Image(systemName: "checkmark").foregroundStyle(PulseColors.accent)
+                                    }
+                                }
+                            }
+                            .listRowBackground(PulseColors.card)
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .background(PulseColors.background)
+            .navigationTitle("Conversations")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+            }
+        }
+    }
+}
+
+extension UIApplication {
+    /// Resigns the first responder app-wide (used to dismiss the keyboard on
+    /// tab changes, where no single FocusState is in scope).
+    func endEditing() {
+        sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
@@ -194,7 +322,7 @@ struct CoachBubble: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
                 } else {
-                    Text(message.body)
+                    (message.role == "user" ? Text(message.body) : Text(coachMarkdown: message.body))
                         .font(.system(size: 14))
                         .foregroundStyle(message.role == "user" ? .white : PulseColors.textPrimary)
                         .padding(14)

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct RootAppView: View {
     @Environment(\.modelContext) private var modelContext
@@ -82,6 +83,10 @@ struct MainTabView: View {
 
                 BottomNavBar(selected: $selected)
             }
+            // Pin the whole tab layout so the keyboard never shifts the nav bar or
+            // tab content. CoachView lifts its own composer via a keyboard observer.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)

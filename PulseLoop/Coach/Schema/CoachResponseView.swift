@@ -10,13 +10,13 @@ struct CoachResponseView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !response.title.isEmpty {
-                Text(response.title)
+                Text(coachMarkdown: response.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(PulseColors.textPrimary)
             }
 
             if !response.summary.isEmpty {
-                Text(response.summary)
+                Text(coachMarkdown: response.summary)
                     .font(.system(size: 14))
                     .lineSpacing(4)
                     .foregroundStyle(PulseColors.textPrimary)
@@ -27,7 +27,7 @@ struct CoachResponseView: View {
                     ForEach(response.bullets, id: \.self) { bullet in
                         HStack(alignment: .top, spacing: 6) {
                             Text("•").foregroundStyle(PulseColors.accent)
-                            Text(bullet).foregroundStyle(PulseColors.textSecondary)
+                            Text(coachMarkdown: bullet).foregroundStyle(PulseColors.textSecondary)
                         }
                         .font(.system(size: 13))
                     }
@@ -93,10 +93,27 @@ struct CoachResponseView: View {
     private func noteRow(icon: String, text: String, tone: Color) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: icon).font(.system(size: 11)).foregroundStyle(tone)
-            Text(text).font(.system(size: 12)).foregroundStyle(tone)
+            Text(coachMarkdown: text).font(.system(size: 12)).foregroundStyle(tone)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(tone.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+extension Text {
+    /// Renders inline Markdown (**bold**, *italic*, `code`, links) so model
+    /// output like "**HR**" displays formatted instead of raw. Falls back to the
+    /// literal string if parsing fails. `inlineOnlyPreservingWhitespace` keeps
+    /// line breaks intact for multi-line summaries/bullets.
+    init(coachMarkdown string: String) {
+        if let attributed = try? AttributedString(
+            markdown: string,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            self.init(attributed)
+        } else {
+            self.init(verbatim: string)
+        }
     }
 }
