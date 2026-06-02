@@ -646,7 +646,7 @@ enum ActivityService {
     }
     
     private static func gpsDistance(sessionId: UUID, context: ModelContext) -> Double? {
-        let points = ActivityRepository.gpsPoints(sessionId: sessionId, context: context)
+        let points = ActivityRepository.gpsPoints(sessionId: sessionId, context: context).filter { $0.accepted }
         guard points.count >= 2 else { return nil }
         let sorted = points.sorted { $0.timestamp < $1.timestamp }
         return zip(sorted, sorted.dropFirst()).reduce(0) { total, pair in

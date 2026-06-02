@@ -588,7 +588,7 @@ enum ActivityMeta {
 
     /// Pace in min/km from distance + duration; nil when not meaningful.
     static func pace(distanceMeters: Double?, durationSeconds: Int?) -> String? {
-        guard let distanceMeters, let durationSeconds, distanceMeters >= 10 else { return nil }
+        guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
         let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
         let m = Int(paceSecPerKm) / 60
         let s = Int(paceSecPerKm.rounded()) % 60

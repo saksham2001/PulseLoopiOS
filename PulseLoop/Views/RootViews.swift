@@ -4,6 +4,8 @@ import UIKit
 
 struct RootAppView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(LiveWorkoutManager.self) private var liveWorkout
     @Query private var profiles: [UserProfile]
     @State private var path = NavigationPath()
 
@@ -32,6 +34,21 @@ struct RootAppView: View {
                 if UserDefaults.standard.bool(forKey: "openRecord") {
                     path.append(AppRoute.recordSelect)
                 }
+                // Re-attach to an in-progress workout left running across launches.
+                liveWorkout.recover()
+                routeDeepLinkIfNeeded()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    liveWorkout.recover()
+                    routeDeepLinkIfNeeded()
+                }
+            }
+            .onOpenURL { url in
+                guard url.scheme == "pulseloop", url.host == "workout",
+                      let id = UUID(uuidString: url.lastPathComponent) else { return }
+                liveWorkout.requestOpen(sessionID: id)
+                routeDeepLinkIfNeeded()
             }
             .navigationDestination(for: AppRoute.self) { route in
                 switch route {
@@ -54,6 +71,15 @@ struct RootAppView: View {
         }
         .tint(PulseColors.accent)
         .preferredColorScheme(.dark)
+    }
+
+    /// Navigate to a workout requested by a Live Activity tap / Lock Screen control.
+    private func routeDeepLinkIfNeeded() {
+        guard let id = liveWorkout.pendingDeepLinkSession else { return }
+        liveWorkout.clearDeepLink()
+        guard let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.id == id }) else { return }
+        let route: AppRoute = session.status == .finished ? .recordSummary(id) : .recordLive(id)
+        path.append(route)
     }
 }
 

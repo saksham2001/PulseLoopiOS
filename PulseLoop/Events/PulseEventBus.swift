@@ -18,7 +18,7 @@ enum PulseEvent: Sendable {
     case workoutPaused(UUID)
     case workoutResumed(UUID)
     case workoutFinished(UUID)
-    case gpsPoint(sessionId: UUID, latitude: Double, longitude: Double, timestamp: Date)
+    case gpsPoint(sessionId: UUID, latitude: Double, longitude: Double, altitude: Double?, horizontalAccuracy: Double?, speed: Double?, course: Double?, accepted: Bool, rejectionReason: String?, timestamp: Date)
     case coachTrace(String)
 }
 
@@ -129,8 +129,27 @@ final class EventPersistenceSubscriber {
             persistMeasurement(kind: kind, value: value, timestamp: timestamp, source: .history, kindLabel: "history_measurement")
         case let .sleepTimeline(timestamp, stages):
             persistSleepTimeline(start: timestamp, stages: stages)
-        case let .gpsPoint(sessionId, latitude, longitude, timestamp):
-            context.insert(ActivityGpsPoint(sessionId: sessionId, latitude: latitude, longitude: longitude, timestamp: timestamp))
+        case let .gpsPoint(sessionId, latitude, longitude, altitude, horizontalAccuracy, speed, course, accepted, rejectionReason, timestamp):
+            context.insert(ActivityGpsPoint(
+                sessionId: sessionId,
+                latitude: latitude,
+                longitude: longitude,
+                altitude: altitude,
+                horizontalAccuracy: horizontalAccuracy,
+                speed: speed,
+                course: course,
+                timestamp: timestamp,
+                accepted: accepted,
+                rejectionReason: rejectionReason
+            ))
+            if let session = ActivityRepository.sessions(context: context).first(where: { $0.id == sessionId }) {
+                if accepted {
+                    session.gpsPointCount += 1
+                    session.lastGpsPointAt = timestamp
+                } else {
+                    session.rejectedGpsPointCount += 1
+                }
+            }
         case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
         }

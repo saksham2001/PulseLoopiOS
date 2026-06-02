@@ -375,7 +375,19 @@ final class ActivitySession {
     var perceivedEffort: String?
     var createdAt: Date
     var updatedAt: Date
-    
+
+    // Recording-quality + Live Activity metadata. Defaulted so SwiftData lightweight
+    // migration is additive on the existing (unversioned) store.
+    var gpsPointCount: Int = 0
+    var rejectedGpsPointCount: Int = 0
+    var hrPollCount: Int = 0
+    var hrPollFailureCount: Int = 0
+    var spo2PollCount: Int = 0
+    var spo2PollFailureCount: Int = 0
+    var liveActivityID: String?
+    var lastSensorPollAt: Date?
+    var lastGpsPointAt: Date?
+
     init(
         id: UUID = UUID(),
         type: String,
@@ -457,7 +469,11 @@ final class ActivityGpsPoint {
     var speed: Double?
     var course: Double?
     var timestamp: Date
-    
+    // Whether this fix passed the route filter. Rejected points are persisted too so the
+    // post-workout quality report can show coverage. Defaulted for additive migration.
+    var accepted: Bool = true
+    var rejectionReason: String?
+
     init(
         id: UUID = UUID(),
         sessionId: UUID,
@@ -467,7 +483,9 @@ final class ActivityGpsPoint {
         horizontalAccuracy: Double? = nil,
         speed: Double? = nil,
         course: Double? = nil,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        accepted: Bool = true,
+        rejectionReason: String? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -478,6 +496,39 @@ final class ActivityGpsPoint {
         self.speed = speed
         self.course = course
         self.timestamp = timestamp
+        self.accepted = accepted
+        self.rejectionReason = rejectionReason
+    }
+}
+
+/// One sensor-poll attempt during a workout. Powers the recording-quality report and
+/// makes the reverse-engineered ring's reliability transparent.
+@Model
+final class ActivitySensorPollEvent {
+    @Attribute(.unique) var id: UUID
+    var sessionId: UUID
+    var timestamp: Date
+    var kind: String    // "hr" | "spo2"
+    var status: String  // "started" | "success" | "failed" | "skipped"
+    var value: Double?
+    var errorMessage: String?
+
+    init(
+        id: UUID = UUID(),
+        sessionId: UUID,
+        timestamp: Date = Date(),
+        kind: String,
+        status: String,
+        value: Double? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.timestamp = timestamp
+        self.kind = kind
+        self.status = status
+        self.value = value
+        self.errorMessage = errorMessage
     }
 }
 

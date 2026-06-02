@@ -16,6 +16,7 @@ enum ModelContainerFactory {
             ActivitySample.self,
             ActivityGpsPoint.self,
             ActivityEvent.self,
+            ActivitySensorPollEvent.self,
             CoachConversation.self,
             CoachMessage.self,
             CoachMemory.self,
