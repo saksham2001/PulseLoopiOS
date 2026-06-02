@@ -164,6 +164,41 @@ struct CaloriesAreaChart: View {
     }
 }
 
+// MARK: - Elevation profile (workout summary)
+
+/// Altitude over the course of a route. X is point index (route progression),
+/// Y is metres above sea level. Gradient area + line in the distance colour, axes hidden —
+/// matches `CaloriesAreaChart`'s styling.
+struct ElevationAreaChart: View {
+    let altitudes: [Double]
+    var height: CGFloat = 120
+
+    var body: some View {
+        let lo = (altitudes.min() ?? 0) - 2
+        let hi = (altitudes.max() ?? 0) + 2
+        Chart {
+            ForEach(Array(altitudes.enumerated()), id: \.offset) { index, value in
+                AreaMark(x: .value("i", index), y: .value("m", value))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [PulseColors.distance.opacity(0.40), PulseColors.distance.opacity(0)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                LineMark(x: .value("i", index), y: .value("m", value))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .foregroundStyle(PulseColors.distance)
+            }
+        }
+        .chartYScale(domain: lo...max(hi, lo + 1))
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: height)
+    }
+}
+
 // MARK: - Sleep duration histogram (Sleep aggregate)
 
 struct SleepBar: Identifiable {

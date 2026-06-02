@@ -716,6 +716,32 @@ enum ActivityRecorderService {
         try? context.save()
     }
     
+    /// Permanently deletes a workout and all of its child rows (samples, GPS points, events, sensor
+    /// poll events — all raw-UUID FKs, so no SwiftData cascade) and reverses its contribution to the
+    /// day's activity rollup so the totals stay honest.
+    @MainActor
+    static func delete(_ session: ActivitySession, context: ModelContext) {
+        if let ended = session.endedAt {
+            let minutes = max(0, Int(ended.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60
+            if minutes > 0, let row = MetricsRepository.activity(on: session.startedAt, context: context) {
+                row.activeMinutes = max(0, row.activeMinutes - minutes)
+                if session.useGps, let dist = session.distanceMeters {
+                    row.distanceMeters = max(0, row.distanceMeters - dist)
+                }
+                row.updatedAt = Date()
+            }
+        }
+
+        let id = session.id
+        ActivityRepository.samples(sessionId: id, context: context).forEach(context.delete)
+        ActivityRepository.gpsPoints(sessionId: id, context: context).forEach(context.delete)
+        ActivityRepository.events(sessionId: id, context: context).forEach(context.delete)
+        let polls = ((try? context.fetch(FetchDescriptor<ActivitySensorPollEvent>())) ?? []).filter { $0.sessionId == id }
+        polls.forEach(context.delete)
+        context.delete(session)
+        try? context.save()
+    }
+
     static func recoverStaleSession(context: ModelContext) -> [ActivitySession] {
         let cutoff = Calendar.current.date(byAdding: .hour, value: -6, to: Date()) ?? Date()
         return ActivityRepository.sessions(context: context)

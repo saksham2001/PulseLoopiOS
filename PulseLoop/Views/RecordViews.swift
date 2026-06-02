@@ -65,6 +65,15 @@ private func sessionHRSamples(_ sessionId: UUID, context: ModelContext) -> [Metr
         .map { MetricSample(timestamp: $0.timestamp, value: $0.value) }
 }
 
+/// SpO₂ samples for a finished session, as chart-ready points.
+@MainActor
+private func sessionSpO2Samples(_ sessionId: UUID, context: ModelContext) -> [MetricSample] {
+    ActivityRepository.samples(sessionId: sessionId, context: context)
+        .filter { $0.kind == MeasurementKind.spo2.rawValue && $0.value > 0 }
+        .sorted { $0.timestamp < $1.timestamp }
+        .map { MetricSample(timestamp: $0.timestamp, value: $0.value) }
+}
+
 /// Banner shown on Activity when a workout from a previous launch was left recording/paused.
 struct StaleSessionRecoveryCard: View {
     @Environment(\.modelContext) private var modelContext
@@ -146,23 +155,18 @@ struct WorkoutRow: View {
 
 struct ActivityDetailView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query private var sessions: [ActivitySession]
     let sessionId: UUID
+    @State private var confirmingDelete = false
 
     var body: some View {
         if let session = sessions.first(where: { $0.id == sessionId }) {
-            let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
-            let hr = sessionHRSamples(session.id, context: modelContext)
             ScrollView {
                 VStack(spacing: 16) {
-                    activityHeader(session)
-                    statsGrid(session)
-                    if session.useGps {
-                        WorkoutMapView(points: points, unavailable: false)
-                    }
-                    if hr.count > 1 {
-                        hrCard(hr)
-                    }
+                    // Same rich body as the post-record summary, kept in sync via the shared view.
+                    WorkoutMetricsSections(session: session)
+
                     if let notes = session.notes, !notes.isEmpty {
                         StatusCopy(title: "Notes", body: notes)
                     }
@@ -176,56 +180,45 @@ struct ActivityDetailView: View {
                         .font(.system(size: 14))
                         .padding(.horizontal, 4)
                     }
+
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
+                        Label("Delete workout", systemImage: "trash")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(PulseColors.danger)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(PulseColors.danger.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.danger.opacity(0.4), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 8)
                 }
                 .padding(16)
                 .padding(.bottom, 32)
             }
             .background(PulseColors.background)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) { confirmingDelete = true } label: {
+                        Image(systemName: "trash")
+                    }
+                    .tint(PulseColors.danger)
+                }
+            }
+            .confirmationDialog("Delete this workout?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+                Button("Delete workout", role: .destructive) {
+                    ActivityRecorderService.delete(session, context: modelContext)
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This permanently removes the workout and its recorded heart-rate, GPS, and sensor data. This can't be undone.")
+            }
         } else {
             EmptyStateView(title: "Workout not found", body: "This session is no longer in local storage.")
         }
-    }
-
-    private func activityHeader(_ session: ActivitySession) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: ActivityMeta.icon(session.type))
-                .font(.system(size: 34))
-                .foregroundStyle(PulseColors.accent)
-                .frame(width: 72, height: 72)
-                .background(PulseColors.accentSoft, in: Circle())
-            Text(ActivityMeta.label(session.type))
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(PulseColors.textPrimary)
-            Text(session.startedAt.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()))
-                .font(.system(size: 13))
-                .foregroundStyle(PulseColors.textMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 8)
-    }
-
-    private func statsGrid(_ session: ActivitySession) -> some View {
-        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-            WorkoutStat(label: "Duration", value: duration.map { ActivityMeta.duration($0) } ?? "—")
-            WorkoutStat(label: "Distance", value: session.distanceMeters.map { String(format: "%.2f km", $0 / 1000) } ?? "—")
-            WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
-            WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
-            WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
-            WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
-        }
-    }
-
-    private func hrCard(_ hr: [MetricSample]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("HEART RATE").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
-            HRLineChart(samples: hr, height: 120)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 
@@ -527,6 +520,78 @@ func haversineMeters(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint) -> Double {
     return 2 * r * asin(min(1, sqrt(h)))
 }
 
+/// Seconds elapsed for each *completed* kilometre of a route, in order. Walks the cumulative
+/// haversine distance and records the elapsed time every time distance crosses the next km mark.
+/// Shared by the live `SplitStrip` and the summary `SplitsTable`.
+func kmSplitSeconds(_ points: [ActivityGpsPoint]) -> [Double] {
+    guard points.count >= 2, let first = points.first else { return [] }
+    var cumulative = 0.0
+    var markTime = first.timestamp
+    var nextKm = 1000.0
+    var splits: [Double] = []
+    for (a, b) in zip(points, points.dropFirst()) {
+        cumulative += haversineMeters(a, b)
+        while cumulative >= nextKm {
+            splits.append(b.timestamp.timeIntervalSince(markTime))
+            markTime = b.timestamp
+            nextKm += 1000
+        }
+    }
+    return splits
+}
+
+/// Total ascent / descent in metres over a route, ignoring sub-metre jitter. nil when there is
+/// no usable altitude data.
+func routeElevation(_ points: [ActivityGpsPoint]) -> (gain: Double, loss: Double)? {
+    let alts = points.compactMap(\.altitude)
+    guard alts.count >= 3 else { return nil }
+    var gain = 0.0, loss = 0.0
+    for (a, b) in zip(alts, alts.dropFirst()) {
+        let delta = b - a
+        if delta > 1 { gain += delta } else if delta < -1 { loss += -delta }
+    }
+    return (gain, loss)
+}
+
+/// One heart-rate training zone: a %HRmax band with a label and palette colour.
+struct HRZone: Identifiable {
+    let id: Int        // 1...5
+    let name: String
+    let color: Color
+    let seconds: Double
+}
+
+/// Time spent in each of the 5 HR zones, derived from sorted HR samples. Zone boundaries are
+/// 50/60/70/80/90/100 % of an estimated HRmax (`220 − age`, fallback 190). Each inter-sample
+/// interval (capped at 30 s to ignore gaps) is credited to the earlier sample's zone.
+func hrZoneDurations(samples: [MetricSample], age: Int?) -> [HRZone] {
+    let hrMax = Double(age.map { 220 - $0 } ?? 190)
+    let palette: [(String, Color)] = [
+        ("Zone 1 · Easy", PulseColors.spo2),
+        ("Zone 2 · Fat burn", PulseColors.success),
+        ("Zone 3 · Aerobic", PulseColors.warning),
+        ("Zone 4 · Threshold", PulseColors.calories),
+        ("Zone 5 · Max", PulseColors.heartRate)
+    ]
+    var seconds = [Double](repeating: 0, count: 5)
+    let sorted = samples.sorted { $0.timestamp < $1.timestamp }
+    for (a, b) in zip(sorted, sorted.dropFirst()) {
+        let dt = min(30, b.timestamp.timeIntervalSince(a.timestamp))
+        guard dt > 0 else { continue }
+        let pct = a.value / hrMax
+        let zone: Int
+        switch pct {
+        case ..<0.60: zone = 0
+        case ..<0.70: zone = 1
+        case ..<0.80: zone = 2
+        case ..<0.90: zone = 3
+        default:      zone = 4
+        }
+        seconds[zone] += dt
+    }
+    return (0..<5).map { HRZone(id: $0 + 1, name: palette[$0].0, color: palette[$0].1, seconds: seconds[$0]) }
+}
+
 // MARK: - Record: summary
 
 struct RecordSummaryView: View {
@@ -541,37 +606,10 @@ struct RecordSummaryView: View {
 
     var body: some View {
         if let session = sessions.first(where: { $0.id == sessionId }) {
-            let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
-            let hr = sessionHRSamples(session.id, context: modelContext)
             ScrollView {
                 VStack(spacing: 16) {
-                    VStack(spacing: 8) {
-                        Image(systemName: ActivityMeta.icon(session.type))
-                            .font(.system(size: 34)).foregroundStyle(PulseColors.accent)
-                            .frame(width: 72, height: 72).background(PulseColors.accentSoft, in: Circle())
-                        Text("WORKOUT SAVED").font(.system(size: 11, weight: .medium)).tracking(1.8).foregroundStyle(PulseColors.accent)
-                        Text(ActivityMeta.label(session.type)).font(.system(size: 24, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-                    }
-                    .padding(.top, 8)
-
-                    statsGrid(session)
-
-                    if session.useGps {
-                        WorkoutMapView(points: points)
-                    }
-
-                    if hr.count > 1 {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("HEART RATE").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
-                            HRLineChart(samples: hr, height: 120)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16).background(PulseColors.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-                    }
-
-                    RecordingQualityCard(session: session)
+                    // Same rich body as the activity detail screen, kept in sync via the shared view.
+                    WorkoutMetricsSections(session: session, savedBadge: true)
 
                     effortCard
 
@@ -590,18 +628,6 @@ struct RecordSummaryView: View {
             .onAppear { effort = session.perceivedEffort; note = session.notes ?? "" }
         } else {
             EmptyStateView(title: "Summary unavailable", body: "This workout could not be loaded.")
-        }
-    }
-
-    private func statsGrid(_ session: ActivitySession) -> some View {
-        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-            WorkoutStat(label: "Duration", value: duration.map { ActivityMeta.duration($0) } ?? "—")
-            WorkoutStat(label: "Distance", value: session.distanceMeters.map { String(format: "%.2f km", $0 / 1000) } ?? "—")
-            WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
-            WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
-            WorkoutStat(label: "Active min", value: duration.map { "\($0 / 60)" } ?? "—")
-            WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
         }
     }
 
@@ -641,6 +667,292 @@ struct RecordSummaryView: View {
         session.updatedAt = Date()
         try? modelContext.save()
         path.removeLast(path.count)
+    }
+}
+
+// MARK: - Summary components
+
+/// The full rich body of a finished workout — header, hero band, stat grid, map, splits, HR chart
+/// + zones, SpO₂ chart, elevation profile, and the recording-quality card. Shared by the
+/// post-record summary (`RecordSummaryView`) and the activity detail screen (`ActivityDetailView`)
+/// so the two never drift apart. Read-only; each host supplies its own footer (editable
+/// effort/notes + Done, or read-only notes + Delete).
+struct WorkoutMetricsSections: View {
+    @Environment(\.modelContext) private var modelContext
+    let session: ActivitySession
+    /// Shows the "WORKOUT SAVED" badge in the header (only meaningful right after recording).
+    var savedBadge: Bool = false
+
+    var body: some View {
+        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
+        let accepted = points.filter { $0.accepted }.sorted { $0.timestamp < $1.timestamp }
+        let hr = sessionHRSamples(session.id, context: modelContext)
+        let spo2 = sessionSpO2Samples(session.id, context: modelContext)
+        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
+        let elevation = session.useGps ? routeElevation(accepted) : nil
+        let altitudes = accepted.compactMap(\.altitude)
+
+        VStack(spacing: 16) {
+            header
+
+            SummaryHeroBand(session: session, durationSeconds: duration)
+
+            statsGrid(elevationGain: elevation?.gain)
+
+            if session.useGps {
+                WorkoutMapView(points: points)
+                SplitsTable(points: accepted)
+            }
+
+            if hr.count > 1 {
+                chartCard(title: "HEART RATE", footnote: hrFootnote) {
+                    HRLineChart(samples: hr, height: 120)
+                }
+                HRZonesCard(samples: hr, age: userAge)
+            }
+
+            if spo2.count > 1 {
+                chartCard(title: "BLOOD OXYGEN", footnote: spo2Footnote) {
+                    SpO2DotsChart(samples: spo2, height: 110)
+                }
+            }
+
+            if let elevation, altitudes.count >= 3 {
+                chartCard(title: "ELEVATION",
+                          footnote: String(format: "↑ %.0f m   ↓ %.0f m", elevation.gain, elevation.loss)) {
+                    ElevationAreaChart(altitudes: altitudes, height: 120)
+                }
+            }
+
+            RecordingQualityCard(session: session)
+        }
+    }
+
+    /// Age from the (single) user profile, used to estimate HRmax for the zones card.
+    private var userAge: Int? {
+        (try? modelContext.fetch(FetchDescriptor<UserProfile>()))?.first?.age
+    }
+
+    private var header: some View {
+        VStack(spacing: 8) {
+            Image(systemName: ActivityMeta.icon(session.type))
+                .font(.system(size: 34)).foregroundStyle(PulseColors.accent)
+                .frame(width: 72, height: 72).background(PulseColors.accentSoft, in: Circle())
+            if savedBadge {
+                Text("WORKOUT SAVED").font(.system(size: 11, weight: .medium)).tracking(1.8).foregroundStyle(PulseColors.accent)
+            }
+            Text(ActivityMeta.label(session.type)).font(.system(size: 24, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
+            Text(dateRange).font(.system(size: 13)).foregroundStyle(PulseColors.textMuted)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+    }
+
+    /// e.g. "Today · 7:32 – 8:05 AM" or "May 28 · 6:10 – 6:48 PM".
+    private var dateRange: String {
+        let time = DateFormatter(); time.dateFormat = "h:mm"
+        let timeAmPm = DateFormatter(); timeAmPm.dateFormat = "h:mm a"
+        let day: String
+        if Calendar.current.isDateInToday(session.startedAt) {
+            day = "Today"
+        } else if Calendar.current.isDateInYesterday(session.startedAt) {
+            day = "Yesterday"
+        } else {
+            let d = DateFormatter(); d.dateFormat = "MMM d"
+            day = d.string(from: session.startedAt)
+        }
+        guard let ended = session.endedAt else { return day }
+        return "\(day) · \(time.string(from: session.startedAt)) – \(timeAmPm.string(from: ended))"
+    }
+
+    @ViewBuilder
+    private func chartCard<Content: View>(title: String, footnote: String?, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Spacer()
+                if let footnote {
+                    Text(footnote).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(PulseColors.textMuted)
+                }
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16).background(PulseColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+    }
+
+    private var hrFootnote: String? {
+        guard let avg = session.avgHeartRate else { return nil }
+        let mn = session.minHeartRate.map { Int($0) }
+        let mx = session.maxHeartRate.map { Int($0) }
+        if let mn, let mx { return "\(mn) · avg \(Int(avg)) · \(mx) bpm" }
+        return "avg \(Int(avg)) bpm"
+    }
+
+    private var spo2Footnote: String? {
+        session.avgSpO2.map { "avg \(Int($0))%" }
+    }
+
+    private func statsGrid(elevationGain: Double?) -> some View {
+        // The hero band already shows the headline metrics (GPS: distance/duration/pace,
+        // indoor: duration/active-min/calories), so the grid fills in the rest without repeating.
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            if session.useGps {
+                WorkoutStat(label: "Calories", value: session.calories.map { "\(Int($0))" } ?? "—")
+            }
+            WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
+            WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
+            WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
+            WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
+            if session.useGps, let elevationGain {
+                WorkoutStat(label: "Elev gain", value: String(format: "%.0f m", elevationGain))
+            }
+        }
+    }
+}
+
+/// Three large headline stats in one card. Adapts to whether the workout used GPS:
+/// outdoor → Distance · Duration · Pace; indoor → Duration · Active min · Calories.
+private struct SummaryHeroBand: View {
+    let session: ActivitySession
+    let durationSeconds: Int?
+
+    private struct Metric { let value: String; let label: String; let tint: Color }
+
+    private var metrics: [Metric] {
+        let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
+        if session.useGps {
+            let dist = session.distanceMeters.map { String(format: "%.2f", $0 / 1000) } ?? "—"
+            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds)
+            return [
+                Metric(value: dist, label: "KM", tint: PulseColors.distance),
+                Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
+                Metric(value: pace?.replacingOccurrences(of: " /km", with: "") ?? "—", label: "PACE /KM", tint: PulseColors.accent)
+            ]
+        } else {
+            let cals = session.calories.map { "\(Int($0))" } ?? "—"
+            return [
+                Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
+                Metric(value: durationSeconds.map { "\($0 / 60)" } ?? "—", label: "ACTIVE MIN", tint: PulseColors.success),
+                Metric(value: cals, label: "CALORIES", tint: PulseColors.calories)
+            ]
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(metrics.enumerated()), id: \.offset) { index, m in
+                VStack(spacing: 6) {
+                    Text(m.value)
+                        .font(.system(size: 30, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(m.tint)
+                        .minimumScaleFactor(0.5).lineLimit(1)
+                    Text(m.label)
+                        .font(.system(size: 10, weight: .medium)).tracking(0.8)
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                .frame(maxWidth: .infinity)
+                if index != metrics.count - 1 {
+                    Rectangle().fill(PulseColors.borderSubtle).frame(width: 1, height: 40)
+                }
+            }
+        }
+        .padding(.vertical, 18).padding(.horizontal, 8)
+        .frame(maxWidth: .infinity)
+        .background(PulseColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+    }
+}
+
+/// Per-kilometre splits with a relative pace bar; the fastest km is highlighted. Hidden when
+/// there isn't at least one full completed kilometre.
+private struct SplitsTable: View {
+    let points: [ActivityGpsPoint]
+
+    var body: some View {
+        let splits = kmSplitSeconds(points)
+        if splits.count >= 1 {
+            let fastest = splits.min() ?? 0
+            let slowest = splits.max() ?? 1
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SPLITS").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                ForEach(Array(splits.enumerated()), id: \.offset) { index, seconds in
+                    let isFastest = seconds == fastest
+                    let frac = slowest > fastest ? (seconds - fastest) / (slowest - fastest) : 0
+                    HStack(spacing: 12) {
+                        Text("KM \(index + 1)")
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(PulseColors.textSecondary)
+                            .frame(width: 44, alignment: .leading)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(PulseColors.cardSoft)
+                                Capsule().fill(isFastest ? PulseColors.accent : PulseColors.distance)
+                                    // Faster = longer bar (invert the fraction).
+                                    .frame(width: max(8, geo.size.width * (0.25 + 0.75 * (1 - frac))))
+                            }
+                        }
+                        .frame(height: 8)
+                        Text(paceLabel(seconds))
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(isFastest ? PulseColors.accent : PulseColors.textPrimary)
+                            .frame(width: 64, alignment: .trailing)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16).background(PulseColors.card)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        }
+    }
+
+    private func paceLabel(_ secPerKm: Double) -> String {
+        String(format: "%d:%02d /km", Int(secPerKm) / 60, Int(secPerKm.rounded()) % 60)
+    }
+}
+
+/// Time-in-zone breakdown derived from HR samples (zones by %HRmax). Hidden when no usable time
+/// accrued in any zone.
+private struct HRZonesCard: View {
+    let samples: [MetricSample]
+    let age: Int?
+
+    var body: some View {
+        let zones = hrZoneDurations(samples: samples, age: age)
+        let total = zones.reduce(0) { $0 + $1.seconds }
+        if total > 0 {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("HEART RATE ZONES").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                ForEach(zones.reversed()) { zone in
+                    let frac = zone.seconds / total
+                    HStack(spacing: 10) {
+                        Text(zone.name)
+                            .font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
+                            .frame(width: 132, alignment: .leading).lineLimit(1)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(PulseColors.cardSoft)
+                                Capsule().fill(zone.color)
+                                    .frame(width: max(frac > 0 ? 6 : 0, geo.size.width * frac))
+                            }
+                        }
+                        .frame(height: 8)
+                        Text(zone.seconds >= 1 ? ActivityMeta.duration(Int(zone.seconds)) : "—")
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(zone.seconds >= 1 ? PulseColors.textPrimary : PulseColors.textMuted)
+                            .frame(width: 56, alignment: .trailing)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16).background(PulseColors.card)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        }
     }
 }
 
@@ -746,21 +1058,13 @@ struct SplitStrip: View {
     }
 
     private func kmSplits() -> (last: String?, best: String?, current: String?) {
-        guard points.count >= 2, let first = points.first, let lastPoint = points.last else { return (nil, nil, nil) }
-        var cumulative = 0.0
-        var markTime = first.timestamp
-        var nextKm = 1000.0
-        var splitSeconds: [Double] = []
-        for (a, b) in zip(points, points.dropFirst()) {
-            cumulative += haversineMeters(a, b)
-            while cumulative >= nextKm {
-                splitSeconds.append(b.timestamp.timeIntervalSince(markTime))
-                markTime = b.timestamp
-                nextKm += 1000
-            }
-        }
-        let distSinceMark = cumulative - (nextKm - 1000)
-        let timeSinceMark = lastPoint.timestamp.timeIntervalSince(markTime)
+        guard points.count >= 2, let lastPoint = points.last else { return (nil, nil, nil) }
+        let splitSeconds = kmSplitSeconds(points)
+        let cumulative = zip(points, points.dropFirst()).reduce(0) { $0 + haversineMeters($1.0, $1.1) }
+        // Partial distance / time since the last whole-km mark.
+        let distSinceMark = cumulative.truncatingRemainder(dividingBy: 1000)
+        let elapsed = lastPoint.timestamp.timeIntervalSince(points.first?.timestamp ?? lastPoint.timestamp)
+        let timeSinceMark = elapsed - splitSeconds.reduce(0, +)
         let currentPace = distSinceMark >= 50 && timeSinceMark > 0 ? timeSinceMark / (distSinceMark / 1000) : nil
         return (paceString(splitSeconds.last), paceString(splitSeconds.min()), paceString(currentPace))
     }
