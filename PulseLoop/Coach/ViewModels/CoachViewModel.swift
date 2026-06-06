@@ -67,6 +67,24 @@ final class CoachViewModel {
         persist(result, conversationId: conversationId, context: context)
     }
 
+    // MARK: - Confirmation cards
+
+    /// Execute a proposed risky action after the user taps Confirm.
+    func confirmPendingAction(_ message: CoachMessage, context: ModelContext) {
+        guard let action = PendingAction.decode(fromJSON: message.pendingActionJSON) else { return }
+        let resultText = PendingActionExecutor.execute(action, context: context)
+        message.pendingActionJSON = nil
+        context.insert(CoachMessage(conversationId: message.conversationId, role: "assistant", body: resultText))
+        try? context.save()
+    }
+
+    /// Dismiss a proposed action after the user taps Cancel.
+    func cancelPendingAction(_ message: CoachMessage, context: ModelContext) {
+        message.pendingActionJSON = nil
+        context.insert(CoachMessage(conversationId: message.conversationId, role: "assistant", body: "Okay, I won't make that change."))
+        try? context.save()
+    }
+
     // MARK: - Persistence
 
     private func persist(_ result: CoachOrchestrator.TurnResult, conversationId: UUID, context: ModelContext) {
@@ -74,7 +92,8 @@ final class CoachViewModel {
             conversationId: conversationId,
             role: "assistant",
             body: result.assistant.plainText,
-            cardsJSON: result.assistant.encodedJSON()
+            cardsJSON: result.assistant.encodedJSON(),
+            pendingActionJSON: result.pendingActions.first?.encodedJSON()
         )
         context.insert(assistant)
 

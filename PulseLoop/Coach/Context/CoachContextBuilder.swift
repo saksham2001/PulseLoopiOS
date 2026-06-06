@@ -133,12 +133,15 @@ enum CoachContextBuilder {
             }
     }
 
-    private static func memories(context: ModelContext, limit: Int = 8) -> [CoachContextPacket.MemoryContext] {
+    private static func memories(context: ModelContext, limit: Int = 8, now: Date = Date()) -> [CoachContextPacket.MemoryContext] {
         let descriptor = FetchDescriptor<CoachMemory>(
-            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+            sortBy: [SortDescriptor(\.importance, order: .reverse), SortDescriptor(\.updatedAt, order: .reverse)]
         )
         let rows = (try? context.fetch(descriptor)) ?? []
-        return rows.prefix(limit).map { .init(key: $0.key, value: $0.value) }
+        return rows
+            .filter { $0.expiresAt == nil || $0.expiresAt! > now }  // drop expired
+            .prefix(limit)
+            .map { .init(type: $0.memoryType, key: $0.key, value: $0.value, importance: $0.importance) }
     }
 
     private static func profileCompleteness(_ profile: UserProfile?) -> String {

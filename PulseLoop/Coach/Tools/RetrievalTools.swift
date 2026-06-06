@@ -147,7 +147,7 @@ enum RetrievalTools {
         .make(
             name: "get_metric_series",
             label: "Pulling the numbers",
-            description: "Fetch a daily time-series for one metric over a date range.",
+            description: "Fetch a time-series for one metric over a date range. For hr/spo2 use granularity 'raw' for a within-a-single-day trend (individual readings), 'hour' to bucket by hour, or 'day' for daily averages across multiple days. Activity/sleep are always daily.",
             parameters: JSONSchema.object([
                 "metric": JSONSchema.enumString(metricEnum),
                 "start": JSONSchema.string, "end": JSONSchema.string,
@@ -156,8 +156,8 @@ enum RetrievalTools {
             argsType: SeriesArg.self
         ) { args, ctx in
             guard let metric = CoachChartMetric.from(args.metric) else { return .error("unknown metric '\(args.metric)'") }
-            let series = CoachDataAccess.dailySeries(metric: metric, start: args.start, end: args.end, context: ctx.modelContext)
-            let points = series.map { ["x": CoachDataAccess.localDateString($0.date), "y": $0.value] }
+            let series = CoachDataAccess.seriesPoints(metric: metric, start: args.start, end: args.end, granularity: args.granularity, context: ctx.modelContext)
+            let points = series.map { ["x": $0.x, "y": $0.y] }
             return .object(["metric": args.metric, "granularity": args.granularity, "count": points.count, "points": points])
         }
     }

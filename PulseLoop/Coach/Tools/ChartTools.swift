@@ -11,9 +11,9 @@ enum ChartTools {
     private struct Annotation: Decodable { let x: String; let label: String }
     private struct Args: Decodable {
         let chartType: String, title: String, metric: String
-        let start: String, end: String, annotations: [Annotation]
+        let start: String, end: String, granularity: String, annotations: [Annotation]
         enum CodingKeys: String, CodingKey {
-            case chartType = "chart_type", title, metric, start, end, annotations
+            case chartType = "chart_type", title, metric, start, end, granularity, annotations
         }
     }
 
@@ -27,17 +27,18 @@ enum ChartTools {
         .make(
             name: "prepare_chart",
             label: "Preparing a chart",
-            description: "Build a ready-to-render chart (with embedded data) from ring data for a metric + date range. Returns a chart object to copy verbatim into the final response's `chart` field. For chart_type 'sleep_stage', uses the most recent sleep session in range.",
+            description: "Build a ready-to-render chart (with embedded data) from ring data for a metric + date range. Returns a chart object to copy verbatim into the final response's `chart` field. granularity controls hr/spo2 resolution: use 'raw' for a within-a-single-day trend (individual readings), 'hour' for a busy day, 'day' for multi-day trends (daily averages). Activity/sleep metrics are always daily. For chart_type 'sleep_stage', uses the most recent sleep session in range.",
             parameters: JSONSchema.object([
                 "chart_type": JSONSchema.enumString(["line", "bar", "dot", "sleep_stage", "sparkline"]),
                 "title": JSONSchema.string,
                 "metric": JSONSchema.enumString(["steps", "hr", "spo2", "sleep", "active_minutes", "calories", "distance"]),
                 "start": JSONSchema.string,
                 "end": JSONSchema.string,
+                "granularity": JSONSchema.enumString(["raw", "hour", "day"]),
                 "annotations": JSONSchema.array(JSONSchema.object(
                     ["x": JSONSchema.string, "label": JSONSchema.string], required: ["x", "label"]
                 )),
-            ], required: ["chart_type", "title", "metric", "start", "end", "annotations"]),
+            ], required: ["chart_type", "title", "metric", "start", "end", "granularity", "annotations"]),
             argsType: Args.self
         ) { args, ctx in
             guard let chartType = CoachChartType(rawValue: args.chartType) else {
@@ -51,8 +52,8 @@ enum ChartTools {
             if chartType == .sleepStage {
                 points = sleepStagePoints(start: args.start, end: args.end, context: ctx.modelContext)
             } else {
-                points = CoachDataAccess.dailySeries(metric: metric, start: args.start, end: args.end, context: ctx.modelContext)
-                    .map { CoachChartPoint(x: CoachDataAccess.localDateString($0.date), y: $0.value, series: nil) }
+                points = CoachDataAccess.seriesPoints(metric: metric, start: args.start, end: args.end, granularity: args.granularity, context: ctx.modelContext)
+                    .map { CoachChartPoint(x: $0.x, y: $0.y, series: nil) }
             }
 
             let chart = CoachChart(

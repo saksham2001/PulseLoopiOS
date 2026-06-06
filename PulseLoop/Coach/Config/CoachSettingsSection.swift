@@ -1,9 +1,12 @@
 import SwiftUI
+import SwiftData
 
 /// "AI Coach" block for `SettingsView`: provider mode, model, OpenAI key
-/// (stored in Keychain), and the web-search toggle. Visuals reuse the existing
-/// design system (`SectionHeader`, `StatusCopy`, `PulseColors`).
+/// (stored in Keychain), action/measurement toggles, and saved coach memory.
+/// Visuals reuse the existing design system (`SectionHeader`, `StatusCopy`).
 struct CoachSettingsSection: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
     private let keyStore = OpenAIKeychainStore()
 
@@ -45,6 +48,43 @@ struct CoachSettingsSection: View {
         }
 
         toggleRow("Web search", isOn: webSearchBinding)
+        toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
+        toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
+
+        if !memories.isEmpty {
+            SectionHeader(title: "Coach memory", action: nil)
+            ForEach(memories) { memory in memoryRow(memory) }
+        }
+    }
+
+    private func memoryRow(_ memory: CoachMemory) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(memory.key)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(PulseColors.textPrimary)
+                Text(memory.value)
+                    .font(.system(size: 12))
+                    .foregroundStyle(PulseColors.textSecondary)
+                Text(memory.memoryType.replacingOccurrences(of: "_", with: " "))
+                    .font(.system(size: 9, weight: .medium)).tracking(0.6)
+                    .foregroundStyle(PulseColors.textMuted)
+            }
+            Spacer(minLength: 8)
+            Button {
+                modelContext.delete(memory)
+                try? modelContext.save()
+            } label: {
+                Image(systemName: "trash").font(.system(size: 14)).foregroundStyle(PulseColors.danger)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(PulseColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Key field
@@ -134,6 +174,12 @@ struct CoachSettingsSection: View {
     }
     private var webSearchBinding: Binding<Bool> {
         Binding(get: { store.settings.enableWebSearch }, set: { store.settings.enableWebSearch = $0 })
+    }
+    private var writeToolsBinding: Binding<Bool> {
+        Binding(get: { store.settings.enableWriteTools }, set: { store.settings.enableWriteTools = $0 })
+    }
+    private var liveMeasurementsBinding: Binding<Bool> {
+        Binding(get: { store.settings.enableLiveMeasurements }, set: { store.settings.enableLiveMeasurements = $0 })
     }
 
     // MARK: - Key actions

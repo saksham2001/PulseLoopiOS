@@ -571,14 +571,17 @@ final class CoachMessage {
     var role: String
     var body: String
     var cardsJSON: String?
+    /// Encoded `PendingAction` awaiting a Confirm/Cancel tap (Milestone B).
+    var pendingActionJSON: String? = nil
     var createdAt: Date
-    
-    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, createdAt: Date = Date()) {
+
+    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, createdAt: Date = Date()) {
         self.id = id
         self.conversationId = conversationId
         self.role = role
         self.body = body
         self.cardsJSON = cardsJSON
+        self.pendingActionJSON = pendingActionJSON
         self.createdAt = createdAt
     }
 }
@@ -588,13 +591,34 @@ final class CoachMemory {
     @Attribute(.unique) var id: UUID
     var key: String
     var value: String
+    // Typed-memory fields (Milestone B). Defaults keep the SwiftData migration
+    // lightweight for existing installs.
+    var memoryType: String = "note"
+    var importance: Int = 3
+    var expiresAt: Date? = nil
+    var sourceMessageId: UUID? = nil
+    var isUserEditable: Bool = true
     var createdAt: Date
     var updatedAt: Date
-    
-    init(id: UUID = UUID(), key: String, value: String) {
+
+    init(
+        id: UUID = UUID(),
+        key: String,
+        value: String,
+        memoryType: String = "note",
+        importance: Int = 3,
+        expiresAt: Date? = nil,
+        sourceMessageId: UUID? = nil,
+        isUserEditable: Bool = true
+    ) {
         self.id = id
         self.key = key
         self.value = value
+        self.memoryType = memoryType
+        self.importance = importance
+        self.expiresAt = expiresAt
+        self.sourceMessageId = sourceMessageId
+        self.isUserEditable = isUserEditable
         self.createdAt = Date()
         self.updatedAt = Date()
     }

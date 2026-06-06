@@ -17,6 +17,7 @@ struct CoachOrchestrator {
     struct TurnResult {
         let assistant: CoachResponse
         let trace: [CoachToolCallTrace]
+        var pendingActions: [PendingAction] = []
     }
 
     struct PriorMessage { let role: String; let text: String }
@@ -113,7 +114,7 @@ struct CoachOrchestrator {
 
         let assistant = try await parseFinal(response, textFormat: textFormat)
         onTrace(CoachTraceEvent(label: "", status: .done))
-        return TurnResult(assistant: assistant, trace: trace)
+        return TurnResult(assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions)
     }
 
     // MARK: - Final parse + repair

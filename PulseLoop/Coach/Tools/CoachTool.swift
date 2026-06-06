@@ -9,6 +9,8 @@ final class ToolExecutionContext {
     let flags: CoachFeatureFlags
     /// Optional coordinator for live ring measurements (Milestone B).
     let coordinator: RingSyncCoordinator?
+    /// Risky writes proposed this turn, awaiting a Confirm/Cancel tap.
+    var pendingActions: [PendingAction] = []
 
     init(modelContext: ModelContext, flags: CoachFeatureFlags, coordinator: RingSyncCoordinator? = nil) {
         self.modelContext = modelContext

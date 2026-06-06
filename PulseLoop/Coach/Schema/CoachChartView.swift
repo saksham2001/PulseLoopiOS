@@ -4,6 +4,10 @@ import Charts
 /// Renders a `CoachChart` whose data is already embedded (computed by the
 /// `prepare_chart` tool). Generic over the five chart types; uses the point
 /// index for x-position so heterogeneous x labels (dates, minutes) stay ordered.
+///
+/// The y-axis autoscales to the data (trend charts never get forced through 0,
+/// so trends stay visible and lines don't fall off-frame), and `sleep_stage`
+/// reuses the Sleep page's hypnogram instead of thin bars.
 struct CoachChartView: View {
     let chart: CoachChart
     var height: CGFloat = 170
@@ -31,6 +35,8 @@ struct CoachChartView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+            } else if chart.chartType == .sleepStage {
+                sleepHypnogram
             } else {
                 plot.frame(height: height)
             }
@@ -51,18 +57,40 @@ struct CoachChartView: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
+    // MARK: - Standard plot (line / dot / bar / sparkline)
+
     @ViewBuilder private var plot: some View {
         let indexed = Array(chart.data.enumerated())
+        let domain = yDomain
+        let showPoints = chart.data.count <= 8
+
         switch chart.chartType {
-        case .line, .sparkline:
+        case .line:
+            Chart(indexed, id: \.offset) { i, point in
+                LineMark(x: .value("i", i), y: .value("y", point.y))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .foregroundStyle(color)
+                if showPoints {
+                    PointMark(x: .value("i", i), y: .value("y", point.y))
+                        .symbolSize(20)
+                        .foregroundStyle(color)
+                }
+            }
+            .chartYScale(domain: domain)
+            .chartXAxis(.hidden)
+            .chartYAxis { axisMarks }
+
+        case .sparkline:
             Chart(indexed, id: \.offset) { i, point in
                 LineMark(x: .value("i", i), y: .value("y", point.y))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .foregroundStyle(color)
             }
+            .chartYScale(domain: domain)
             .chartXAxis(.hidden)
-            .chartYAxis(chart.chartType == .sparkline ? .hidden : .automatic)
+            .chartYAxis(.hidden)
 
         case .dot:
             Chart(indexed, id: \.offset) { i, point in
@@ -70,27 +98,84 @@ struct CoachChartView: View {
                     .symbolSize(34)
                     .foregroundStyle(color)
             }
+            .chartYScale(domain: domain)
             .chartXAxis(.hidden)
+            .chartYAxis { axisMarks }
 
         case .bar:
             Chart(indexed, id: \.offset) { i, point in
                 BarMark(x: .value("x", point.x), y: .value("y", point.y))
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 6, topTrailingRadius: 6))
-                    .foregroundStyle(color.opacity(0.8))
+                    .foregroundStyle(color.opacity(0.85))
             }
-            .chartYAxis(.hidden)
+            .chartYScale(domain: domain)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: min(6, chart.data.count))) { _ in
+                    AxisValueLabel().font(.system(size: 9)).foregroundStyle(PulseColors.textMuted)
+                }
+            }
+            .chartYAxis { axisMarks }
 
         case .sleepStage:
-            Chart(indexed, id: \.offset) { i, point in
-                BarMark(x: .value("i", i), y: .value("min", point.y))
-                    .foregroundStyle(by: .value("stage", point.series ?? "—"))
+            EmptyView()  // handled by `sleepHypnogram`
+        }
+    }
+
+    private var axisMarks: some AxisContent {
+        AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+            AxisGridLine().foregroundStyle(PulseColors.borderSubtle)
+            AxisValueLabel().font(.system(size: 9)).foregroundStyle(PulseColors.textMuted)
+        }
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        CoachChartView.yDomain(values: chart.data.map(\.y), chartType: chart.chartType, metric: chart.metric)
+    }
+
+    /// Data-hugging y-domain. Magnitude bars stay 0-based; trends pad around the
+    /// data; hr/spo2 always autoscale (a 0 baseline is meaningless for them) and
+    /// spo2 is clamped to ≤100. Pure + static so it can be unit-tested.
+    static func yDomain(values: [Double], chartType: CoachChartType, metric: CoachChartMetric) -> ClosedRange<Double> {
+        guard let lo = values.min(), let hi = values.max() else { return 0...1 }
+
+        let magnitudeBar = chartType == .bar
+            && [.steps, .calories, .distance, .activeMinutes, .sleep].contains(metric)
+
+        let range: ClosedRange<Double>
+        if lo == hi {
+            let pad = Swift.max(abs(lo) * 0.1, 1)
+            range = (magnitudeBar ? 0 : lo - pad)...(hi + pad)
+        } else if magnitudeBar {
+            range = 0...(hi * 1.15)
+        } else {
+            let pad = Swift.max((hi - lo) * 0.15, hi * 0.02, 1)
+            range = (lo - pad)...(hi + pad)
+        }
+
+        guard metric == .spo2 else { return range }
+        let upper = Swift.min(range.upperBound, 100)
+        return range.lowerBound...Swift.max(upper, range.lowerBound + 1)
+    }
+
+    // MARK: - Sleep hypnogram (reuses the Sleep page component)
+
+    private var sleepHypnogram: some View {
+        let blocks = chart.data.compactMap { point -> SleepStageBlock? in
+            guard let stage = SleepStage(rawValue: point.series ?? ""), let start = Int(point.x) else { return nil }
+            return SleepStageBlock(
+                sessionId: UUID(), startAt: Date(),
+                startMinute: start, durationMinutes: Int(point.y), stage: stage
+            )
+        }
+        let total = blocks.map { $0.startMinute + $0.durationMinutes }.max() ?? 0
+        return Group {
+            if blocks.isEmpty || total == 0 {
+                Text("No sleep stages to plot.")
+                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+            } else {
+                SleepHypnogramView(blocks: blocks, totalMin: total, startTs: nil, height: height + 30)
             }
-            .chartForegroundStyleScale([
-                "deep": SleepStageColors.deep,
-                "light": SleepStageColors.light,
-                "awake": SleepStageColors.awake,
-            ])
-            .chartXAxis(.hidden)
         }
     }
 }

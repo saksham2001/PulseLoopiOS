@@ -152,6 +152,20 @@ final class CoachToolTests: XCTestCase {
         XCTAssertEqual(obj["count"] as? Int, 2)  // the -40d row is excluded
     }
 
+    func testHRRawSeriesKeepsIntradayPointsButDailyCollapses() throws {
+        let c = try context()
+        let day = "2026-06-01"
+        let base = try XCTUnwrap(CoachDataAccess.parseLocalDate(day))
+        for h in [8, 12, 18] {
+            TestSupport.insertMeasurement(kind: .heartRate, value: Double(60 + h),
+                                          timestamp: base.addingTimeInterval(Double(h) * 3600), into: c)
+        }
+        let raw = CoachDataAccess.seriesPoints(metric: .hr, start: day, end: day, granularity: "raw", context: c)
+        XCTAssertEqual(raw.count, 3)  // intraday readings preserved
+        let daily = CoachDataAccess.seriesPoints(metric: .hr, start: day, end: day, granularity: "day", context: c)
+        XCTAssertEqual(daily.count, 1)  // one daily average
+    }
+
     func testPrepareChartEmbedsData() async throws {
         let c = try context()
         TestSupport.insertActivity(date: TestSupport.day(0), steps: 8000, into: c)
@@ -160,7 +174,7 @@ final class CoachToolTests: XCTestCase {
         let start = CoachDataAccess.localDateString(TestSupport.day(-6))
         let end = CoachDataAccess.localDateString(TestSupport.day(0))
         let tool = try XCTUnwrap(ToolRegistry(flags: ctx(c).flags).tool(named: "prepare_chart"))
-        let result = try await tool.run(Data(#"{"chart_type":"bar","title":"Steps","metric":"steps","start":"\#(start)","end":"\#(end)","annotations":[]}"#.utf8), ctx(c))
+        let result = try await tool.run(Data(#"{"chart_type":"bar","title":"Steps","metric":"steps","start":"\#(start)","end":"\#(end)","granularity":"day","annotations":[]}"#.utf8), ctx(c))
         // The returned `chart` must decode as a CoachChart (verbatim-copy contract).
         let obj = try parse(result)
         let chartData = try JSONSerialization.data(withJSONObject: try XCTUnwrap(obj["chart"]))

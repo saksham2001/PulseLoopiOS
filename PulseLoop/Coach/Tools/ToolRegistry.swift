@@ -10,9 +10,13 @@ struct ToolRegistry {
 
     init(flags: CoachFeatureFlags) {
         self.flags = flags
-        // Milestone B appends ActionTools / MemoryTools / measurement here,
-        // gated by flags.writeToolsEnabled / flags.liveMeasurementsEnabled.
-        let all = RetrievalTools.all + ChartTools.all + AnalysisTools.all
+        var all = RetrievalTools.all + ChartTools.all + AnalysisTools.all
+        if flags.writeToolsEnabled {
+            all += MemoryTools.all + ActionTools.writeTools
+        }
+        if flags.liveMeasurementsEnabled {
+            all += ActionTools.measurementTools
+        }
         self.tools = Dictionary(uniqueKeysWithValues: all.map { ($0.name, $0) })
     }
 

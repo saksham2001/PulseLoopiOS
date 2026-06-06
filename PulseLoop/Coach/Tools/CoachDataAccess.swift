@@ -123,4 +123,56 @@ enum CoachDataAccess {
                 .map { ($0.date, Double($0.totalMinutes)) }
         }
     }
+
+    /// Granularity-aware series for charts/series tools. For hr/spo2, "raw" yields
+    /// the individual timestamped samples (intraday trend), "hour" averages per
+    /// hour, "day" averages per day. Activity/sleep metrics are daily rollups and
+    /// always return one point per day. Capped to 300 points (even downsample).
+    static func seriesPoints(
+        metric: CoachChartMetric, start: String, end: String, granularity: String, context: ModelContext
+    ) -> [(x: String, y: Double)] {
+        let dated: [(Date, Double)]
+        let labeler: (Date) -> String
+
+        switch metric {
+        case .hr, .spo2:
+            let kind: MeasurementKind = metric == .hr ? .heartRate : .spo2
+            let rows = measurements(kind: kind, start: start, end: end, context: context)
+            switch granularity {
+            case "hour":
+                let cal = Calendar.current
+                let grouped = Dictionary(grouping: rows) { row -> Date in
+                    cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: row.timestamp)) ?? row.timestamp
+                }
+                dated = grouped
+                    .map { ($0.key, ($0.value.map(\.value).reduce(0, +) / Double($0.value.count)).rounded(toPlaces: 1)) }
+                    .sorted { $0.0 < $1.0 }
+                labeler = hourLabel
+            case "day":
+                dated = dailySeries(metric: metric, start: start, end: end, context: context).map { ($0.date, $0.value) }
+                labeler = localDateString
+            default:  // "raw" / "minute" → individual samples
+                dated = rows.map { ($0.timestamp, $0.value) }
+                labeler = isoString
+            }
+        default:  // activity/sleep are daily rollups
+            dated = dailySeries(metric: metric, start: start, end: end, context: context).map { ($0.date, $0.value) }
+            labeler = localDateString
+        }
+
+        return downsample(dated, max: 300).map { (x: labeler($0.0), y: $0.1) }
+    }
+
+    private static func downsample(_ points: [(Date, Double)], max: Int) -> [(Date, Double)] {
+        guard points.count > max else { return points }
+        let step = Double(points.count) / Double(max)
+        return (0..<max).map { points[Int(Double($0) * step)] }
+    }
+
+    private static func hourLabel(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:00"
+        f.timeZone = .current
+        return f.string(from: date)
+    }
 }

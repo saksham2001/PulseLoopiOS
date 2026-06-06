@@ -97,7 +97,9 @@ struct CoachContextPacket: Encodable {
     }
 
     struct MemoryContext: Encodable {
+        var type: String
         var key: String
         var value: String
+        var importance: Int
     }
 }

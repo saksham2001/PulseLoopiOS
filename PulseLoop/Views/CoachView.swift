@@ -12,6 +12,7 @@ private let coldStartPrompts = [
 
 struct CoachView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \CoachMessage.createdAt) private var allMessages: [CoachMessage]
     @Query(sort: \CoachConversation.updatedAt, order: .reverse) private var conversations: [CoachConversation]
     @State private var draft = ""
@@ -54,7 +55,12 @@ struct CoachView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(messages) { message in
-                            CoachBubble(message: message, onChipTap: { send($0) }).id(message.id)
+                            CoachBubble(
+                                message: message,
+                                onChipTap: { send($0) },
+                                onConfirm: { viewModel.confirmPendingAction(message, context: modelContext) },
+                                onCancel: { viewModel.cancelPendingAction(message, context: modelContext) }
+                            ).id(message.id)
                         }
                         if viewModel.isSending {
                             CoachTraceStrip(events: viewModel.traceEvents).id("trace")
@@ -187,7 +193,7 @@ struct CoachView: View {
         }
         draft = ""
         composerFocused = false
-        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext) }
+        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext, coordinator: coordinator) }
     }
 
     /// The active conversation, creating one on first use.
@@ -306,35 +312,52 @@ struct CoachOrb: View {
 struct CoachBubble: View {
     let message: CoachMessage
     var onChipTap: ((String) -> Void)?
+    var onConfirm: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     private var structured: CoachResponse? {
         message.role == "assistant" ? CoachResponse.decode(fromJSON: message.cardsJSON) : nil
     }
 
+    private var pendingAction: PendingAction? {
+        message.role == "assistant" ? PendingAction.decode(fromJSON: message.pendingActionJSON) : nil
+    }
+
     var body: some View {
         HStack {
             if message.role == "user" { Spacer(minLength: 40) }
-            Group {
-                if let structured {
-                    CoachResponseView(response: structured, onChipTap: onChipTap)
-                        .padding(14)
-                        .background(PulseColors.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-                } else {
-                    (message.role == "user" ? Text(message.body) : Text(coachMarkdown: message.body))
-                        .font(.system(size: 14))
-                        .foregroundStyle(message.role == "user" ? .white : PulseColors.textPrimary)
-                        .padding(14)
-                        .background(message.role == "user" ? PulseColors.accent : PulseColors.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(message.role == "user" ? Color.clear : PulseColors.borderSubtle, lineWidth: 1)
-                        )
+            VStack(alignment: .leading, spacing: 8) {
+                content
+                if let pendingAction {
+                    CoachActionCardView(
+                        action: pendingAction,
+                        onConfirm: { onConfirm?() },
+                        onCancel: { onCancel?() }
+                    )
                 }
             }
             if message.role != "user" { Spacer(minLength: 40) }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let structured {
+            CoachResponseView(response: structured, onChipTap: onChipTap)
+                .padding(14)
+                .background(PulseColors.card)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        } else {
+            (message.role == "user" ? Text(message.body) : Text(coachMarkdown: message.body))
+                .font(.system(size: 14))
+                .foregroundStyle(message.role == "user" ? .white : PulseColors.textPrimary)
+                .padding(14)
+                .background(message.role == "user" ? PulseColors.accent : PulseColors.card)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(message.role == "user" ? Color.clear : PulseColors.borderSubtle, lineWidth: 1)
+                )
         }
     }
 }
