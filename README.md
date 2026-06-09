@@ -42,6 +42,22 @@ your sleep, heart rate, activity, and recovery.
 
 ---
 
+## How it works
+
+**System architecture:** four layers on the phone. Data flows up from the ring into local storage; the coach reads sideways through tools, and the only thing that leaves the device is a coach question you choose to ask.
+
+![System architecture](docs/system-architecture.png)
+
+**The ring link:** one custom BLE service, fixed 20-byte cleartext packets, commands out and notifications back.
+
+![Ring interaction](docs/ble-interaction.png)
+
+**The AI coach:** an agentic loop that calls tools to read your local data, then answers in a structured format.
+
+![AI coach](docs/AI-coach-design.png)
+
+---
+
 ## Getting started (Xcode)
 
 **Requirements**
