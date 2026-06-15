@@ -46,6 +46,22 @@ your sleep, heart rate, activity, and recovery.
 
 ---
 
+## Supported Wearables
+
+> **Disclaimer:** I have no affiliation with the sellers or manufacturers of
+> any of the wearables listed below. I do not endorse them and take no
+> responsibility for their quality, accuracy, performance, durability, data
+> security, or anything else that might go wrong with them. Listings are
+> provided for convenience only — links may break, sellers may swap hardware
+> under the same name, change prices, and your unit may behave differently from mine. Buy at
+> your own risk and treat any data the ring produces as approximate.
+
+| Ring | BLE Family | Original App | Price |Where I bought it |
+|---|---|---|---|
+| JRing (generic smart ring) | `56ff` | JRing | $7-12| [AliExpress listing](https://www.aliexpress.us/item/3256810466598469.html) |
+
+---
+
 ## How it works
 
 **System architecture:** four layers on the phone. Data flows up from the ring into local storage; the coach reads sideways through tools, and the only thing that leaves the device is a coach question you choose to ask.
@@ -96,7 +112,7 @@ launch with the `-seedDemo YES` argument.
 - [ ] **On-device LLM integration** — run the coach against a local model
   (Apple Foundation Models / a quantized on-device LLM) so the app works with
   no API key, no network, and full privacy.
-- [ ] **Support more cheap rings** — generalize the BLE protocol layer to
+- [ ] **Support more cheap rings and other wearables** — generalize the BLE protocol layer to
   handle other low-cost ring families beyond the `56ff` devices.
 - [ ] **Custom ring firmware** — open firmware to unlock features the stock
   ring won't do, e.g. automatic activity/workout detection, higher-rate
@@ -105,16 +121,8 @@ launch with the `-seedDemo YES` argument.
   setup journey.
 - [ ] **LLM tool-call transparency** — surface exactly which tools the coach
   called and what data it read, so every answer is auditable.
-- [ ] **Multimodal coach input** — let the coach accept image and voice input
-  (e.g. snap a meal, speak a question).
-
----
-
-## Known bugs
-
-- **Sleep page shows the last *recorded* sleep, not last night's.** If no sleep
-  was recorded for the most recent day, the Sleep view falls back to the most
-  recent session on file instead of reflecting that the latest day has no data.
+- [ ] **Multimodal coach input** — let the coach accept image and voice input (e.g. snap a meal, speak a question).
+- [ ] **Apple Health integration** — sync data with Apple Health.
 
 ---
 
