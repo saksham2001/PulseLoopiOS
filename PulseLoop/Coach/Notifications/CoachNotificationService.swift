@@ -107,13 +107,18 @@ final class CoachNotificationService {
 
     // MARK: - Record + deliver
 
+    /// Persist the check-in and seed a *fresh* conversation for it. Each
+    /// notification is independent — tapping it opens its own thread instead of
+    /// piling into one shared "Daily check-ins" log (which made earlier check
+    /// -ins masquerade as prior turns and confused the coach on follow-ups).
     @discardableResult
     func record(_ notification: CoachNotification, slot: CoachNotificationSlot, now: Date) -> CoachConversation {
         modelContext.insert(CoachNotificationRecord(
             slot: slot, dateKey: CoachNotificationRecord.dateKey(for: now),
             title: notification.title, body: notification.body
         ))
-        let convo = dailyCheckinsConversation()
+        let convo = CoachConversation(title: notificationConversationTitle(notification, slot: slot, at: now))
+        modelContext.insert(convo)
         // Render as a structured card so the chip + card UI matches the rest of the coach.
         let response = CoachResponse(responseType: .insight, title: notification.title,
                                      summary: notification.body, confidence: .medium)
@@ -127,15 +132,10 @@ final class CoachNotificationService {
         return convo
     }
 
-    /// The find-or-create "Daily check-ins" conversation, so tapping a
-    /// notification opens a thread the user can continue.
-    func dailyCheckinsConversation() -> CoachConversation {
-        let title = Self.dailyCheckinsTitle
-        let descriptor = FetchDescriptor<CoachConversation>(predicate: #Predicate { $0.title == title })
-        if let existing = (try? modelContext.fetch(descriptor))?.first { return existing }
-        let convo = CoachConversation(title: title)
-        modelContext.insert(convo)
-        return convo
+    private func notificationConversationTitle(_ notification: CoachNotification, slot: CoachNotificationSlot, at date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return "\(slot.label) check-in · \(f.string(from: date))"
     }
 
     static let dailyCheckinsTitle = "Daily check-ins"

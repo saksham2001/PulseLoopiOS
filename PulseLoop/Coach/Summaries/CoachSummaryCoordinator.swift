@@ -49,6 +49,11 @@ final class CoachSummaryCoordinator {
         debounce = Task { [weak self] in
             try? await Task.sleep(nanoseconds: (self?.debounceSeconds ?? 30) * 1_000_000_000)
             guard let self, !Task.isCancelled else { return }
+            // Skip background regeneration entirely when the user has turned the
+            // coach off; the views won't render the summaries anyway.
+            guard CoachSettingsStore.shared.settings.coachMasterEnabled else {
+                pendingToday = false; pendingSleep = false; return
+            }
             if pendingToday { pendingToday = false; await service.refreshTodayIfNeeded() }
             if pendingSleep { pendingSleep = false; await service.refreshSleepDayIfNeeded() }
         }

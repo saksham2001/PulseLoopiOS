@@ -3,8 +3,11 @@ import SwiftData
 
 /// Compact ~12-hour context the notification generator sees. Reuses
 /// `CoachContextBuilder` for the shared profile/goals/today/sleep/memory blocks
-/// and adds a rolling 12h HR/SpO₂ window, the slot, and the recent-notification
-/// history (so the LLM never repeats itself).
+/// and adds a rolling 12h HR/SpO₂ window plus the slot.
+///
+/// Each notification is generated **independently** — we deliberately do *not*
+/// thread prior check-ins through this packet. The dedup window for "don't
+/// schedule two of the same slot in one day" lives in `isDuplicate`.
 struct NotificationContextPacket: Encodable {
     var slot: String
     var generatedAt: String
@@ -19,7 +22,6 @@ struct NotificationContextPacket: Encodable {
     var recentWorkouts: [CoachContextPacket.WorkoutContext]
     var memories: [CoachContextPacket.MemoryContext]
     var dataQualityWarnings: [String]
-    var recentNotifications: [String]
 }
 
 @MainActor
@@ -48,17 +50,7 @@ enum NotificationContextBuilder {
             spo2Last12h: CoachDataAccess.stats(spo2),
             recentWorkouts: packet.recentWorkouts,
             memories: packet.memories,
-            dataQualityWarnings: packet.dataQualityWarnings,
-            recentNotifications: recentNotifications(context: context)
+            dataQualityWarnings: packet.dataQualityWarnings
         )
-    }
-
-    /// Last few delivered check-ins ("title — body") so the prompt can avoid repeats.
-    static func recentNotifications(context: ModelContext, limit: Int = 5) -> [String] {
-        let descriptor = FetchDescriptor<CoachNotificationRecord>(
-            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-        )
-        let rows = (try? context.fetch(descriptor)) ?? []
-        return rows.prefix(limit).map { "\($0.title) — \($0.body)" }
     }
 }

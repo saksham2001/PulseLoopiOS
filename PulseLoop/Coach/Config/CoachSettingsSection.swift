@@ -26,40 +26,43 @@ struct CoachSettingsSection: View {
     var body: some View {
         SectionHeader(title: "AI Coach", action: nil)
         StatusCopy(title: "Status", body: flags.statusLine)
+        toggleRow("Enable AI Coach", isOn: masterEnabledBinding)
 
-        labeledRow("Provider") {
-            Picker("Provider", selection: providerBinding) {
-                ForEach(CoachProviderMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+        if store.settings.coachMasterEnabled {
+            labeledRow("Provider") {
+                Picker("Provider", selection: providerBinding) {
+                    ForEach(CoachProviderMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
+                .pickerStyle(.menu)
+                .tint(PulseColors.accent)
             }
-            .pickerStyle(.menu)
-            .tint(PulseColors.accent)
-        }
 
-        labeledRow("Model") {
-            Picker("Model", selection: modelBinding) {
-                ForEach(CoachModel.allCases) { model in
-                    Text(model.label).tag(model.rawValue)
+            labeledRow("Model") {
+                Picker("Model", selection: modelBinding) {
+                    ForEach(CoachModel.allCases) { model in
+                        Text(model.label).tag(model.rawValue)
+                    }
                 }
+                .pickerStyle(.menu)
+                .tint(PulseColors.accent)
             }
-            .pickerStyle(.menu)
-            .tint(PulseColors.accent)
-        }
 
-        if store.settings.providerMode == .userOpenAIKey {
-            keyField
-        }
+            if store.settings.providerMode == .userOpenAIKey {
+                keyField
+            }
 
-        toggleRow("Web search", isOn: webSearchBinding)
-        toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
-        toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
+            toggleRow("Web search", isOn: webSearchBinding)
+            toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
+            toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
 
-        notificationsSection
+            notificationsSection
 
-        if !memories.isEmpty {
-            SectionHeader(title: "Coach memory", action: nil)
-            ForEach(memories) { memory in memoryRow(memory) }
+            if !memories.isEmpty {
+                SectionHeader(title: "Coach memory", action: nil)
+                ForEach(memories) { memory in memoryRow(memory) }
+            }
         }
     }
 
@@ -171,6 +174,21 @@ struct CoachSettingsSection: View {
     }
 
     // MARK: - Bindings
+
+    private var masterEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { store.settings.coachMasterEnabled },
+            set: { newValue in
+                store.settings.coachMasterEnabled = newValue
+                if !newValue {
+                    // Tear down anything scheduled so a future re-enable starts clean.
+                    CoachNotificationScheduler.shared.cancel()
+                } else if store.settings.notificationsEnabled {
+                    CoachNotificationScheduler.shared.scheduleNext()
+                }
+            }
+        )
+    }
 
     private var providerBinding: Binding<CoachProviderMode> {
         Binding(get: { store.settings.providerMode }, set: { store.settings.providerMode = $0 })

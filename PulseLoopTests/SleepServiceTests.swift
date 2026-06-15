@@ -63,4 +63,25 @@ final class SleepServiceTests: XCTestCase {
         XCTAssertFalse(SleepService.sleepRange(.day, context: context).sessions.first?.blocks.isEmpty ?? true)
         XCTAssertTrue(SleepService.sleepRange(.week, context: context).sessions.first?.blocks.isEmpty ?? false)
     }
+
+    /// The Day view used to show the last recorded sleep even when "last night"
+    /// had no data — so a 3-day-old session masqueraded as last night. Now the
+    /// day anchor is "today's reference night", so an old session is excluded.
+    func testDayRangeShowsNoDataWhenLastNightMissing() throws {
+        let context = try TestSupport.makeContext()
+        TestSupport.insertSleep(nightStart: night(-3), stages: Array(repeating: .light, count: 60), into: context)
+        XCTAssertTrue(SleepService.sleepRange(.day, context: context).sessions.isEmpty)
+        // But the week view still surfaces it.
+        XCTAssertFalse(SleepService.sleepRange(.week, context: context).sessions.isEmpty)
+    }
+
+    func testDayReferenceNightFlipsAt4AM() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
+        let at3am = cal.date(bySettingHour: 3, minute: 0, second: 0, of: today)!
+        let at4am = cal.date(bySettingHour: 4, minute: 0, second: 0, of: today)!
+        XCTAssertEqual(SleepService.dayReferenceNight(now: at3am), yesterday, "before 4 AM, still last night")
+        XCTAssertEqual(SleepService.dayReferenceNight(now: at4am), today, "from 4 AM, flip to today")
+    }
 }

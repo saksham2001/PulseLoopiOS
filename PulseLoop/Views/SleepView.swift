@@ -6,6 +6,7 @@ struct SleepView: View {
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query private var allSummaries: [CoachSummary]
     @State private var range: SleepRangeKey
+    @State private var coachStore = CoachSettingsStore.shared
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
@@ -13,6 +14,7 @@ struct SleepView: View {
     }
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
+    private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
 
     private var daySummary: CoachSummary? {
         allSummaries.filter { $0.kind == "sleep_day" }.max(by: { $0.updatedAt < $1.updatedAt })
@@ -46,6 +48,7 @@ struct SleepView: View {
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .task(id: range) {
+            guard coachEnabled else { return }
             if range == .day { await summaryService.refreshSleepDayIfNeeded() }
             else { await summaryService.refreshSleepRangeIfNeeded(range) }
         }
@@ -53,15 +56,18 @@ struct SleepView: View {
 
     /// A summary-backed coach card; falls back to the scripted `SleepCoach` until
     /// the LLM summary is generated. Tapping opens the seeded chat thread.
+    /// Hidden entirely when the AI Coach master switch is off.
     @ViewBuilder
     private func summaryCard(_ summary: CoachSummary?, fallback: SleepCoach) -> some View {
-        if let summary {
-            Button { summaryService.openInChat(summary) } label: {
-                CoachMessageCard(headline: summary.title, body: summary.body, chips: summary.chips)
+        if coachEnabled {
+            if let summary {
+                Button { summaryService.openInChat(summary) } label: {
+                    CoachMessageCard(headline: summary.title, body: summary.body, chips: summary.chips)
+                }
+                .buttonStyle(.plain)
+            } else {
+                CoachMessageCard(headline: fallback.headline, body: fallback.body, chips: fallback.chips)
             }
-            .buttonStyle(.plain)
-        } else {
-            CoachMessageCard(headline: fallback.headline, body: fallback.body, chips: fallback.chips)
         }
     }
 
@@ -96,7 +102,9 @@ struct SleepView: View {
                     .frame(height: 180)
             }
             SleepStageSummaryCardsView(deep: "—", light: "—", awake: "—")
-            CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
+            if coachEnabled {
+                CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
+            }
         }
     }
 

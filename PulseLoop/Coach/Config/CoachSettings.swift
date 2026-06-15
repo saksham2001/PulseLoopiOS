@@ -48,6 +48,9 @@ enum CoachModel: String, CaseIterable, Identifiable {
 
 /// User-tunable coach configuration, persisted as JSON in `UserDefaults`.
 struct CoachSettings: Codable, Equatable {
+    /// Master switch for all AI Coach features (tab, summaries, notifications).
+    /// Off by default — users who only want metrics get a coach-free app.
+    var coachMasterEnabled: Bool = false
     var providerMode: CoachProviderMode = .userOpenAIKey
     /// Default matches the web app; user-configurable (never hard-coded in the client).
     var model: String = CoachModel.gpt54.rawValue
@@ -74,6 +77,7 @@ struct CoachSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CoachSettings.default
+        coachMasterEnabled = try c.decodeIfPresent(Bool.self, forKey: .coachMasterEnabled) ?? d.coachMasterEnabled
         providerMode = try c.decodeIfPresent(CoachProviderMode.self, forKey: .providerMode) ?? d.providerMode
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort)

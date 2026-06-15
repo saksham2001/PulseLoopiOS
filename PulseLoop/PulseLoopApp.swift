@@ -71,7 +71,11 @@ struct PulseLoopApp: App {
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
+            // Both calls are no-ops when the AI Coach master switch is off — the
+            // scheduler gates on `coachMasterEnabled`, and `runDueSlot` short
+            // -circuits via the feature-flags gate.
             CoachNotificationScheduler.shared.scheduleNext()
+            guard CoachSettingsStore.shared.settings.coachMasterEnabled else { return }
             // Foreground catch-up: deliver a due check-in we missed while away.
             let ctx = container.mainContext
             let coordinator = coordinator

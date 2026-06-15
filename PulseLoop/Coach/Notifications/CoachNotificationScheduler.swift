@@ -20,10 +20,11 @@ final class CoachNotificationScheduler {
         }
     }
 
-    /// Queue the next wake at the next morning/evening window. No-op when disabled.
+    /// Queue the next wake at the next morning/evening window. No-op when disabled
+    /// (either the master switch or the per-feature notifications toggle is off).
     func scheduleNext(now: Date = Date()) {
         let settings = CoachSettingsStore.shared.settings
-        guard settings.notificationsEnabled else { return }
+        guard settings.coachMasterEnabled, settings.notificationsEnabled else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = CoachNotificationSlot.nextWindowStart(
             after: now, morningHour: settings.morningHour, eveningHour: settings.eveningHour

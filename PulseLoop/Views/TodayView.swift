@@ -9,8 +9,10 @@ struct TodayView: View {
     @Binding var path: NavigationPath
     @Binding var selectedTab: MainTab
     @State private var measuring: MeasurementSheet.Kind?
+    @State private var coachStore = CoachSettingsStore.shared
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
+    private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
 
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
@@ -20,16 +22,18 @@ struct TodayView: View {
             VStack(spacing: 16) {
                 HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
 
-                Button { selectedTab = .coach } label: {
-                    Text("Ask Coach")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .foregroundStyle(.white)
-                        .background(PulseColors.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                if coachEnabled {
+                    Button { selectedTab = .coach } label: {
+                        Text("Ask Coach")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .foregroundStyle(.white)
+                            .background(PulseColors.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     MetricCardButton(
@@ -80,18 +84,20 @@ struct TodayView: View {
                     )
                 }
 
-                Button {
-                    if let coachSummary { summaryService.openInChat(coachSummary) } else { selectedTab = .coach }
-                } label: {
-                    CoachMessageCard(
-                        headline: coachSummary?.title ?? (summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?"),
-                        body: coachSummary?.body ?? (summary.calibration.isCalibrating
-                            ? "I can help explain what data is collected and what is still missing."
-                            : "Want a summary from the latest ring context? Tap to open the coach."),
-                        chips: coachSummary?.chips ?? []
-                    )
+                if coachEnabled {
+                    Button {
+                        if let coachSummary { summaryService.openInChat(coachSummary) } else { selectedTab = .coach }
+                    } label: {
+                        CoachMessageCard(
+                            headline: coachSummary?.title ?? (summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?"),
+                            body: coachSummary?.body ?? (summary.calibration.isCalibrating
+                                ? "I can help explain what data is collected and what is still missing."
+                                : "Want a summary from the latest ring context? Tap to open the coach."),
+                            chips: coachSummary?.chips ?? []
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TODAY SO FAR")
@@ -115,7 +121,9 @@ struct TodayView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
-        .task { await summaryService.refreshTodayIfNeeded() }
+        .task {
+            if coachEnabled { await summaryService.refreshTodayIfNeeded() }
+        }
         .sheet(item: Binding(get: { measuring.map(MeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
             MeasurementSheet(kind: item.kind)
         }

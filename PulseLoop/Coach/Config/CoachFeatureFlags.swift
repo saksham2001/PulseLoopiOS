@@ -7,9 +7,15 @@ struct CoachFeatureFlags {
     let settings: CoachSettings
     let hasAPIKey: Bool
 
+    /// User-facing master switch — when off, the coach tab, summaries and
+    /// notifications are all hidden. This is the gate the UI checks; the
+    /// `coachEnabled` flag below additionally factors in provider/key state.
+    var masterEnabled: Bool { settings.coachMasterEnabled }
+
     /// True when the real (LLM-backed) coach should run. Otherwise the
     /// orchestrator falls back to a deterministic scripted response.
     var coachEnabled: Bool {
+        guard settings.coachMasterEnabled else { return false }
         switch settings.providerMode {
         case .offlineStub:
             return false
@@ -30,6 +36,7 @@ struct CoachFeatureFlags {
 
     /// One-line status for the Settings UI.
     var statusLine: String {
+        if !settings.coachMasterEnabled { return "Off — turn on AI Coach to enable." }
         switch settings.providerMode {
         case .offlineStub:
             return "Offline — scripted replies only."

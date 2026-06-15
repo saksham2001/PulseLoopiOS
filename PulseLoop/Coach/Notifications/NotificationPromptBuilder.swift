@@ -18,7 +18,6 @@ enum NotificationPromptBuilder {
         - Be specific to today's actual numbers (steps, sleep, heart rate, SpO2, workouts) — never generic filler. Mention a real number when you have one.
         - Surface ONE clear insight or nudge, not a list.
         - Be warm and engaging, like a thoughtful coach. At most one emoji, and only if it fits.
-        - VARY it every time. You are given the recent notifications — do not repeat their wording, structure, opening, or focus. Make this one feel fresh.
         - Ground every claim in the provided data. If data is thin, keep it light and honest; never invent numbers.
         - No medical diagnosis or alarming language. Wellness tone only.
         """
@@ -30,7 +29,7 @@ enum NotificationPromptBuilder {
         Context (last ~12 hours):
         \(json)
 
-        Recent notifications to avoid repeating are in `recent_notifications`. Write a fresh \(packet.slot) check-in now as {"title","body"}.
+        Write a fresh \(packet.slot) check-in now as {"title","body"}.
         """
     }
 

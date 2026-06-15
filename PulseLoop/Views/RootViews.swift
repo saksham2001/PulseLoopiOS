@@ -87,12 +87,22 @@ struct MainTabView: View {
     @Binding var path: NavigationPath
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
+    @State private var coachStore = CoachSettingsStore.shared
 
     init(path: Binding<NavigationPath>) {
         self._path = path
         // Optional `-startTab vitals` launch arg (parsed into UserDefaults) for screenshot tooling.
         let raw = UserDefaults.standard.string(forKey: "startTab")
-        _selected = State(initialValue: MainTab.allCases.first { $0.rawValue.lowercased() == raw } ?? .today)
+        let requested = MainTab.allCases.first { $0.rawValue.lowercased() == raw } ?? .today
+        // If the coach is off, the coach tab doesn't exist — fall back to Today
+        // so a `-startTab coach` arg doesn't strand us on an empty selection.
+        let masterOn = CoachSettingsStore.shared.settings.coachMasterEnabled
+        _selected = State(initialValue: (requested == .coach && !masterOn) ? .today : requested)
+    }
+
+    private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
+    private var visibleTabs: [MainTab] {
+        coachEnabled ? MainTab.allCases : MainTab.allCases.filter { $0 != .coach }
     }
 
     var body: some View {
@@ -104,11 +114,13 @@ struct MainTabView: View {
                     VitalsView().tag(MainTab.vitals)
                     ActivityView(path: $path).tag(MainTab.activity)
                     SleepView().tag(MainTab.sleep)
-                    CoachView().tag(MainTab.coach)
+                    if coachEnabled {
+                        CoachView().tag(MainTab.coach)
+                    }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
 
-                BottomNavBar(selected: $selected)
+                BottomNavBar(selected: $selected, tabs: visibleTabs)
             }
             // Pin the whole tab layout so the keyboard never shifts the nav bar or
             // tab content. CoachView lifts its own composer via a keyboard observer.
@@ -116,7 +128,12 @@ struct MainTabView: View {
             .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
         .onChange(of: nav.requestedConversationId) { _, id in
-            if id != nil { selected = .coach }  // CoachView opens the thread + resets the flag
+            if id != nil && coachEnabled { selected = .coach }  // CoachView opens the thread + resets the flag
+        }
+        .onChange(of: coachEnabled) { _, enabled in
+            // Coach was turned off while on the coach tab — bounce home.
+            if !enabled && selected == .coach { selected = .today }
+            if !enabled { nav.requestedConversationId = nil }
         }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -248,10 +265,11 @@ func greetingForHour(_ date: Date = Date()) -> String {
 
 struct BottomNavBar: View {
     @Binding var selected: MainTab
+    var tabs: [MainTab] = MainTab.allCases
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(MainTab.allCases) { tab in
+            ForEach(tabs) { tab in
                 Button {
                     selected = tab
                 } label: {

@@ -46,7 +46,7 @@ final class CoachNotificationSlotTests: XCTestCase {
             latestVitals: .init(latestHr: nil, latestHrAt: nil, latestSpo2: nil, latestSpo2At: nil, restingHrEstimate: nil, peakHrToday: nil),
             hrLast12h: .init(count: 0, avg: nil, min: nil, max: nil),
             spo2Last12h: .init(count: 0, avg: nil, min: nil, max: nil),
-            recentWorkouts: [], memories: [], dataQualityWarnings: [], recentNotifications: []
+            recentWorkouts: [], memories: [], dataQualityWarnings: []
         )
         let n = CoachNotificationGenerator.scripted(slot: .evening, packet: packet)
         XCTAssertTrue(n.body.contains("12000"))
@@ -74,13 +74,24 @@ final class CoachNotificationServiceTests: XCTestCase {
         let outcome = await service(c).runDueSlot(force: true)
         if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
 
-        // A record exists + a "Daily check-ins" message was written.
+        // A record exists + a fresh per-notification conversation was created.
         let records = (try? c.fetch(FetchDescriptor<CoachNotificationRecord>())) ?? []
         XCTAssertEqual(records.count, 1)
         let convos = (try? c.fetch(FetchDescriptor<CoachConversation>())) ?? []
-        XCTAssertTrue(convos.contains { $0.title == CoachNotificationService.dailyCheckinsTitle })
+        XCTAssertEqual(convos.count, 1)
         let messages = (try? c.fetch(FetchDescriptor<CoachMessage>())) ?? []
         XCTAssertTrue(messages.contains { $0.body.contains("Good morning") })
+    }
+
+    /// Two consecutive notifications must each get their own conversation —
+    /// never funnel into one shared "Daily check-ins" log.
+    func testEachNotificationGetsItsOwnConversation() async throws {
+        let c = try TestSupport.makeContext()
+        let svc = service(c)
+        _ = await svc.runDueSlot(force: true)
+        _ = await svc.runDueSlot(force: true)
+        let convos = (try? c.fetch(FetchDescriptor<CoachConversation>())) ?? []
+        XCTAssertEqual(convos.count, 2)
     }
 
     func testDuplicateSlotIsSkipped() async throws {
@@ -100,17 +111,15 @@ final class CoachNotificationServiceTests: XCTestCase {
         XCTAssertTrue(svc.hasRecentData(now: Date()))
     }
 
-    func testContextBuilderKeepsLast12hAndRecentHistory() throws {
+    func testContextBuilderKeepsLast12h() throws {
         let c = try TestSupport.makeContext()
         let now = Date()
         TestSupport.insertMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(-1 * 3600), into: c)
         TestSupport.insertMeasurement(kind: .heartRate, value: 200, timestamp: now.addingTimeInterval(-20 * 3600), into: c)
-        c.insert(CoachNotificationRecord(slot: .morning, dateKey: "2026-06-04", title: "Past one", body: "b"))
         try c.save()
 
         let packet = NotificationContextBuilder.build(slot: .evening, context: c, now: now)
         XCTAssertEqual(packet.hrLast12h.count, 1)  // 20h-old sample excluded
-        XCTAssertTrue(packet.recentNotifications.contains { $0.contains("Past one") })
     }
 }
 

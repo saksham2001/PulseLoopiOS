@@ -450,13 +450,35 @@ enum SleepService {
     
     static func sleepRange(_ range: SleepRangeKey, context: ModelContext) -> SleepRangeSummary {
         let expected = expectedNights(for: range)
-        let anchor = sleepAnchor(context: context)
+        // Day view is "last night" — anchored on the current reference night, not
+        // the latest recorded one. If nothing was captured we want to show the
+        // empty state, not a stale night from days ago. Week/Month/Year keep the
+        // last-recorded anchor so historical data still surfaces.
+        let anchor = range == .day
+            ? dayReferenceNight(now: Date())
+            : sleepAnchor(context: context)
         let start = Calendar.current.date(byAdding: .day, value: -(expected - 1), to: anchor) ?? anchor
+        // End-of-day cap on the anchor so sessions stored mid-day are included.
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: anchor)?.addingTimeInterval(-1) ?? anchor
         let includeStages = range == .day
         let sessions = SleepRepository.sessions(context: context)
-            .filter { $0.date >= start && $0.date <= anchor }
+            .filter { $0.date >= start && $0.date <= end }
             .map { summary(for: $0, includeStages: includeStages, context: context) }
         return SleepRangeSummary(range: range, start: start, end: anchor, expectedNights: expected, sessions: sessions)
+    }
+
+    /// The "night to show on the Day view." Sessions are keyed by the date the
+    /// night belongs to (the morning of waking). Before 4 AM local we still want
+    /// to show the night that is currently in progress / just ended — i.e.
+    /// yesterday's date. From 4 AM onwards we flip to today; if no session
+    /// landed under today's key by then, the view shows "no sleep last night".
+    static func dayReferenceNight(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        let startOfToday = calendar.startOfDay(for: now)
+        let hour = calendar.component(.hour, from: now)
+        if hour < 4 {
+            return calendar.date(byAdding: .day, value: -1, to: startOfToday) ?? startOfToday
+        }
+        return startOfToday
     }
     
     static func summary(for session: SleepSession, context: ModelContext) -> SleepSummary {
