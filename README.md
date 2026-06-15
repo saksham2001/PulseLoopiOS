@@ -56,9 +56,9 @@ your sleep, heart rate, activity, and recovery.
 > under the same name, change prices, and your unit may behave differently from mine. Buy at
 > your own risk and treat any data the ring produces as approximate.
 
-| Ring | BLE Family | Original App | Price |Where I bought it |
-|---|---|---|---|
-| JRing (generic smart ring) | `56ff` | JRing | $7-12| [AliExpress listing](https://www.aliexpress.us/item/3256810466598469.html) |
+| Ring | BLE Family | Original App | Price | Where I bought it |
+|---|---|---|---|---|
+| JRing (generic smart ring) | `56ff` | JRing | $7–12 | [AliExpress listing](https://www.aliexpress.us/item/3256810466598469.html) |
 
 ---
 
