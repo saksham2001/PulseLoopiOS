@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 
-/// "AI Coach" block for `SettingsView`: provider mode, model, OpenAI key
+/// "AI Coach" block for `SettingsView`: provider mode, model, API key
 /// (stored in Keychain), action/measurement toggles, daily notifications, and
 /// saved coach memory. Visuals reuse the existing design system.
 struct CoachSettingsSection: View {
@@ -10,17 +10,27 @@ struct CoachSettingsSection: View {
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
-    private let keyStore = OpenAIKeychainStore()
+    private let openAIKeyStore = OpenAIKeychainStore()
+    private let geminiKeyStore = GeminiKeychainStore()
 
+    // OpenAI key state
     @State private var keyDraft: String = ""
     @State private var hasSavedKey: Bool = false
     @State private var showKey: Bool = false
     @State private var keyError: String?
+
+    // Gemini key state
+    @State private var geminiKeyDraft: String = ""
+    @State private var hasGeminiKey: Bool = false
+    @State private var showGeminiKey: Bool = false
+    @State private var geminiKeyError: String?
+
     @State private var notifPermissionDenied = false
     @State private var testStatus: String?
 
     private var flags: CoachFeatureFlags {
-        CoachFeatureFlags(settings: store.settings, hasAPIKey: hasSavedKey)
+        let hasKey = store.settings.providerMode == .userGeminiKey ? hasGeminiKey : hasSavedKey
+        return CoachFeatureFlags(settings: store.settings, hasAPIKey: hasKey)
     }
 
     var body: some View {
@@ -41,8 +51,14 @@ struct CoachSettingsSection: View {
 
             labeledRow("Model") {
                 Picker("Model", selection: modelBinding) {
-                    ForEach(CoachModel.allCases) { model in
-                        Text(model.label).tag(model.rawValue)
+                    if store.settings.providerMode == .userGeminiKey {
+                        ForEach(GeminiModel.allCases) { model in
+                            Text(model.label).tag(model.rawValue)
+                        }
+                    } else {
+                        ForEach(CoachModel.allCases) { model in
+                            Text(model.label).tag(model.rawValue)
+                        }
                     }
                 }
                 .pickerStyle(.menu)
@@ -50,7 +66,27 @@ struct CoachSettingsSection: View {
             }
 
             if store.settings.providerMode == .userOpenAIKey {
-                keyField
+                apiKeyField(
+                    placeholder: "sk-…",
+                    hint: "Stored only in your device Keychain. Used to call OpenAI directly.",
+                    draft: $keyDraft,
+                    showRaw: $showKey,
+                    hasSaved: hasSavedKey,
+                    error: keyError,
+                    onSave: saveOpenAIKey,
+                    onRemove: removeOpenAIKey
+                )
+            } else if store.settings.providerMode == .userGeminiKey {
+                apiKeyField(
+                    placeholder: "AIza…",
+                    hint: "Stored only in your device Keychain. Used to call Gemini directly.",
+                    draft: $geminiKeyDraft,
+                    showRaw: $showGeminiKey,
+                    hasSaved: hasGeminiKey,
+                    error: geminiKeyError,
+                    onSave: saveGeminiKey,
+                    onRemove: removeGeminiKey
+                )
             }
 
             toggleRow("Web search", isOn: webSearchBinding)
@@ -96,16 +132,25 @@ struct CoachSettingsSection: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
-    // MARK: - Key field
+    // MARK: - Key field (reused for both providers)
 
-    private var keyField: some View {
+    private func apiKeyField(
+        placeholder: String,
+        hint: String,
+        draft: Binding<String>,
+        showRaw: Binding<Bool>,
+        hasSaved: Bool,
+        error: String?,
+        onSave: @escaping () -> Void,
+        onRemove: @escaping () -> Void
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Group {
-                    if showKey {
-                        TextField("sk-…", text: $keyDraft)
+                    if showRaw.wrappedValue {
+                        TextField(placeholder, text: draft)
                     } else {
-                        SecureField("sk-…", text: $keyDraft)
+                        SecureField(placeholder, text: draft)
                     }
                 }
                 .textInputAutocapitalization(.never)
@@ -116,8 +161,8 @@ struct CoachSettingsSection: View {
                 .background(PulseColors.cardSoft, in: Capsule())
                 .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
 
-                Button { showKey.toggle() } label: {
-                    Image(systemName: showKey ? "eye.slash" : "eye")
+                Button { showRaw.wrappedValue.toggle() } label: {
+                    Image(systemName: showRaw.wrappedValue ? "eye.slash" : "eye")
                         .font(.system(size: 15))
                         .foregroundStyle(PulseColors.textMuted)
                         .frame(width: 40, height: 40)
@@ -126,18 +171,17 @@ struct CoachSettingsSection: View {
             }
 
             HStack(spacing: 8) {
-                QuickActionButton(label: hasSavedKey ? "Update key" : "Save key", accent: true) { saveKey() }
-                    .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if hasSavedKey {
-                    QuickActionButton(label: "Remove") { removeKey() }
+                QuickActionButton(label: hasSaved ? "Update key" : "Save key", accent: true) { onSave() }
+                    .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if hasSaved {
+                    QuickActionButton(label: "Remove") { onRemove() }
                 }
             }
 
-            if let keyError {
-                Text(keyError).font(.caption).foregroundStyle(PulseColors.danger)
+            if let error {
+                Text(error).font(.caption).foregroundStyle(PulseColors.danger)
             } else {
-                Text("Stored only in your device Keychain. Used to call OpenAI directly.")
-                    .font(.caption).foregroundStyle(PulseColors.textMuted)
+                Text(hint).font(.caption).foregroundStyle(PulseColors.textMuted)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,7 +225,6 @@ struct CoachSettingsSection: View {
             set: { newValue in
                 store.settings.coachMasterEnabled = newValue
                 if !newValue {
-                    // Tear down anything scheduled so a future re-enable starts clean.
                     CoachNotificationScheduler.shared.cancel()
                 } else if store.settings.notificationsEnabled {
                     CoachNotificationScheduler.shared.scheduleNext()
@@ -191,8 +234,21 @@ struct CoachSettingsSection: View {
     }
 
     private var providerBinding: Binding<CoachProviderMode> {
-        Binding(get: { store.settings.providerMode }, set: { store.settings.providerMode = $0 })
+        Binding(
+            get: { store.settings.providerMode },
+            set: { newProvider in
+                store.settings.providerMode = newProvider
+                // Reset model to the default for the selected provider.
+                switch newProvider {
+                case .userGeminiKey:
+                    store.settings.model = GeminiModel.flash25.rawValue
+                default:
+                    store.settings.model = CoachModel.gpt54.rawValue
+                }
+            }
+        )
     }
+
     private var modelBinding: Binding<String> {
         Binding(get: { store.settings.model }, set: { store.settings.model = $0 })
     }
@@ -273,13 +329,14 @@ struct CoachSettingsSection: View {
     // MARK: - Key actions
 
     private func refreshKeyState() {
-        hasSavedKey = ((try? keyStore.readKey()) ?? nil) != nil
+        hasSavedKey = ((try? openAIKeyStore.readKey()) ?? nil) != nil
+        hasGeminiKey = ((try? geminiKeyStore.readKey()) ?? nil) != nil
     }
 
-    private func saveKey() {
+    private func saveOpenAIKey() {
         keyError = nil
         do {
-            try keyStore.saveKey(keyDraft)
+            try openAIKeyStore.saveKey(keyDraft)
             keyDraft = ""
             showKey = false
             refreshKeyState()
@@ -288,14 +345,37 @@ struct CoachSettingsSection: View {
         }
     }
 
-    private func removeKey() {
+    private func removeOpenAIKey() {
         keyError = nil
         do {
-            try keyStore.deleteKey()
+            try openAIKeyStore.deleteKey()
             keyDraft = ""
             refreshKeyState()
         } catch {
             keyError = error.localizedDescription
+        }
+    }
+
+    private func saveGeminiKey() {
+        geminiKeyError = nil
+        do {
+            try geminiKeyStore.saveKey(geminiKeyDraft)
+            geminiKeyDraft = ""
+            showGeminiKey = false
+            refreshKeyState()
+        } catch {
+            geminiKeyError = error.localizedDescription
+        }
+    }
+
+    private func removeGeminiKey() {
+        geminiKeyError = nil
+        do {
+            try geminiKeyStore.deleteKey()
+            geminiKeyDraft = ""
+            refreshKeyState()
+        } catch {
+            geminiKeyError = error.localizedDescription
         }
     }
 }

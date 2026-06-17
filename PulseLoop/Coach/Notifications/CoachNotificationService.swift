@@ -19,6 +19,7 @@ final class CoachNotificationService {
     private let modelContext: ModelContext
     private let coordinator: RingSyncCoordinator?
     private let keyStore: APIKeyStore
+    private let geminiKeyStore: APIKeyStore
     private let settingsStore: CoachSettingsStore
     private let clientFactory: (String) -> ResponsesClient
 
@@ -29,12 +30,14 @@ final class CoachNotificationService {
         modelContext: ModelContext,
         coordinator: RingSyncCoordinator? = nil,
         keyStore: APIKeyStore = OpenAIKeychainStore(),
+        geminiKeyStore: APIKeyStore = GeminiKeychainStore(),
         settingsStore: CoachSettingsStore = .shared,
         clientFactory: @escaping (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) {
         self.modelContext = modelContext
         self.coordinator = coordinator
         self.keyStore = keyStore
+        self.geminiKeyStore = geminiKeyStore
         self.settingsStore = settingsStore
         self.clientFactory = clientFactory
     }
@@ -50,7 +53,7 @@ final class CoachNotificationService {
 
         if !force, isDuplicate(slot: slot, now: now) { return .skippedDuplicate }
 
-        let apiKey = (try? keyStore.readKey()) ?? nil
+        let (apiKey, activeClient) = resolveClient()
         let flags = CoachFeatureFlags(settings: settings, hasAPIKey: apiKey != nil)
         guard force || flags.coachEnabled else { return .skippedDisabled }
 
@@ -61,7 +64,7 @@ final class CoachNotificationService {
 
         let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now)
         let notification = await CoachNotificationGenerator.generate(
-            slot: slot, packet: packet, flags: flags, client: clientFactory(apiKey ?? "")
+            slot: slot, packet: packet, flags: flags, client: activeClient
         )
         let conversation = record(notification, slot: slot, now: now)
         await deliver(notification, conversationId: conversation.id)
@@ -84,6 +87,17 @@ final class CoachNotificationService {
         if let lastSync = DeviceRepository.current(context: modelContext)?.lastSyncAt, lastSync >= cutoff { return true }
         if let latest = latestMeasurementTimestamp(), latest >= cutoff { return true }
         return false
+    }
+
+    private func resolveClient() -> (key: String?, client: ResponsesClient) {
+        switch settingsStore.settings.providerMode {
+        case .userGeminiKey:
+            let key = (try? geminiKeyStore.readKey()) ?? nil
+            return (key, GeminiClient(apiKey: key ?? ""))
+        default:
+            let key = (try? keyStore.readKey()) ?? nil
+            return (key, clientFactory(key ?? ""))
+        }
     }
 
     private func forcedSlot(now: Date) -> CoachNotificationSlot {

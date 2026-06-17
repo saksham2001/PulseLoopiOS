@@ -13,15 +13,18 @@ final class CoachViewModel {
     var errorBanner: String?
 
     private let keyStore: APIKeyStore
+    private let geminiKeyStore: APIKeyStore
     private let settingsStore: CoachSettingsStore
     private let clientFactory: (String) -> ResponsesClient
 
     init(
         keyStore: APIKeyStore = OpenAIKeychainStore(),
+        geminiKeyStore: APIKeyStore = GeminiKeychainStore(),
         settingsStore: CoachSettingsStore = .shared,
         clientFactory: @escaping (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) {
         self.keyStore = keyStore
+        self.geminiKeyStore = geminiKeyStore
         self.settingsStore = settingsStore
         self.clientFactory = clientFactory
     }
@@ -44,13 +47,13 @@ final class CoachViewModel {
         context.insert(userMessage)
         try? context.save()
 
-        let apiKey = (try? keyStore.readKey()) ?? nil
+        let (apiKey, activeClient) = resolveClient()
         let flags = CoachFeatureFlags(settings: settingsStore.settings, hasAPIKey: apiKey != nil)
         let packet = CoachContextBuilder.build(context: context)
         let recent = recentMessages(conversationId: conversationId, excluding: userMessage.id, context: context)
 
         let orchestrator = CoachOrchestrator(
-            client: clientFactory(apiKey ?? ""),
+            client: activeClient,
             registry: ToolRegistry(flags: flags),
             flags: flags,
             toolContext: ToolExecutionContext(modelContext: context, flags: flags, coordinator: coordinator)
@@ -65,6 +68,19 @@ final class CoachViewModel {
         }
 
         persist(result, conversationId: conversationId, context: context)
+    }
+
+    // MARK: - Provider resolution
+
+    private func resolveClient() -> (key: String?, client: ResponsesClient) {
+        switch settingsStore.settings.providerMode {
+        case .userGeminiKey:
+            let key = (try? geminiKeyStore.readKey()) ?? nil
+            return (key, GeminiClient(apiKey: key ?? ""))
+        default:
+            let key = (try? keyStore.readKey()) ?? nil
+            return (key, clientFactory(key ?? ""))
+        }
     }
 
     // MARK: - Confirmation cards

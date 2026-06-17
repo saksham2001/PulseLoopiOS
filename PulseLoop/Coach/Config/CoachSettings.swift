@@ -6,6 +6,7 @@ import Foundation
 enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     case offlineStub
     case userOpenAIKey
+    case userGeminiKey
     case backendProxy
 
     var id: String { rawValue }
@@ -14,7 +15,27 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .offlineStub: return "Offline"
         case .userOpenAIKey: return "OpenAI (your key)"
+        case .userGeminiKey: return "Gemini (your key)"
         case .backendProxy: return "Backend proxy"
+        }
+    }
+}
+
+/// Preset Gemini model choices surfaced in Settings.
+enum GeminiModel: String, CaseIterable, Identifiable {
+    case flash25 = "gemini-2.5-flash"
+    case flash20 = "gemini-2.0-flash"
+    case pro25   = "gemini-2.5-pro"
+
+    var id: String { rawValue }
+
+    var label: String { rawValue }
+
+    var blurb: String {
+        switch self {
+        case .flash25: return "Fast & capable (default)"
+        case .flash20: return "Previous generation"
+        case .pro25:   return "Best reasoning"
         }
     }
 }
