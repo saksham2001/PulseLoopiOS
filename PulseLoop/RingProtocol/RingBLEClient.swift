@@ -1,33 +1,44 @@
 import Foundation
 @preconcurrency import CoreBluetooth
 
-/// CoreBluetooth client for the SMART_RING.
+/// Device-agnostic CoreBluetooth client for any supported wearable.
 ///
-/// Scans for the ring, connects to service `000056ff…`, writes 20-byte commands to
-/// `000033f3…`, subscribes to notifications on `000033f4…`, and reads battery from
-/// `00002a19…`. Every outgoing and incoming frame is published as a `PulseEvent.rawPacket`
-/// (so the Debug feed and `RawPacketRow` table capture all traffic), and decoded
-/// notifications are fanned out to typed `PulseEvent`s via `RingEventBridge`.
+/// The client owns only the CoreBluetooth plumbing — scanning, connecting, discovering
+/// services/characteristics, serializing writes, and fanning out notifications. Every
+/// protocol-specific decision (which service/characteristics to use, how to frame a command, how to
+/// decode a notification, what the startup/history flow is) is delegated to the `WearableDriver` and
+/// `RingSyncEngine` selected at connect time from the coordinator registry.
 ///
-/// The central manager is created with `queue: nil`, so all delegate callbacks arrive on the
-/// main thread; the class is `@MainActor` and the delegate methods use
-/// `MainActor.assumeIsolated` to satisfy the compiler while staying on that thread. Writes are
-/// serialized (one outstanding `withResponse` write at a time) to mirror the Python client's
-/// write lock and keep the ring's framed responses in order.
+/// Discovery walks `Self.coordinators` and the first coordinator whose `matches` claims a
+/// peripheral wins; its driver is instantiated per connection (so per-connection state — big-data
+/// buffers, sync-machine state — never leaks across reconnects). Adding a new wearable is "append a
+/// coordinator to the registry."
 ///
-/// The app runs fine with no ring present: nothing happens until `startScanning()`/`connect`
-/// is called, and `centralManagerDidUpdateState` simply parks at `.idle` when Bluetooth is off.
+/// Every outgoing and incoming frame is still published as `PulseEvent.rawPacket` (for the hidden
+/// debug feed), and decoded notifications are fanned out to typed `PulseEvent`s via `RingEventBridge`.
+///
+/// The central manager is created with `queue: nil`, so all delegate callbacks arrive on the main
+/// thread; the class is `@MainActor` and the delegate methods use `MainActor.assumeIsolated`. Writes
+/// are serialized (one outstanding `withResponse` write at a time) to keep framed responses in order.
 @MainActor
 @Observable
 final class RingBLEClient: NSObject {
+    /// Registry of supported wearables. First coordinator whose `matches` claims a peripheral wins.
+    /// **Adding a wearable = append one entry here.**
+    static let coordinators: [WearableCoordinator.Type] = [
+        JringCoordinator.self,
+        // ColmiCoordinator.self,  // registered in Phase 2
+    ]
+
     struct DiscoveredRing: Identifiable, Equatable {
         let id: UUID          // CBPeripheral.identifier
         let name: String
         let rssi: Int
-        /// True when the advertisement matches the SMART_RING name / service / manufacturer
-        /// signature. Non-ring named peripherals are still listed (sorted below) so the user
-        /// can always find their device even if its advertisement is sparse.
+        /// True when the advertisement matches a known wearable signature. Non-matching named
+        /// peripherals are still listed (sorted below) so the user can always find their device.
         let isLikelyRing: Bool
+        /// The wearable family this advertisement matched, if any (drives the device card + icon).
+        let deviceType: RingDeviceType?
     }
 
     // MARK: Observable state (read by SwiftUI)
@@ -36,6 +47,11 @@ final class RingBLEClient: NSObject {
     private(set) var batteryPercent: Int?
     private(set) var isBluetoothReady = false
     private(set) var lastError: String?
+
+    /// The wearable family of the active connection (nil until a driver is selected).
+    private(set) var activeDeviceType: RingDeviceType?
+    /// What the active device can do — the single source the capability-gated UI consults.
+    private(set) var activeCapabilities: Set<WearableCapability> = []
 
     /// Invoked once, on the main actor, after a connection is fully established (notifications
     /// enabled). The sync coordinator hooks this to run the startup command sequence.
@@ -49,8 +65,13 @@ final class RingBLEClient: NSObject {
     /// nothing for a device the system has never connected to before.
     private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
     private var writeChar: CBCharacteristic?
-    private var notifyChar: CBCharacteristic?
+    private var notifyChars: [CBUUID: CBCharacteristic] = [:]
     private var batteryCharacteristic: CBCharacteristic?
+
+    // MARK: Active driver / engine (selected per connection)
+    private var activeCoordinator: WearableCoordinator?
+    private var activeDriver: WearableDriver?
+    private var activeSyncEngine: RingSyncEngine?
 
     // MARK: Write serialization
     private var writeQueue: [Data] = []
@@ -59,17 +80,11 @@ final class RingBLEClient: NSObject {
     /// When true, an unexpected disconnect triggers an automatic reconnect attempt.
     private var autoReconnect = true
 
-    private let decoder = RingDecoder()
-
-    private let serviceCBUUID = CBUUID(string: RingUUIDs.service)
-    private let writeCBUUID = CBUUID(string: RingUUIDs.write)
-    private let notifyCBUUID = CBUUID(string: RingUUIDs.notify)
-    private let batteryServiceCBUUID = CBUUID(string: "180F")
-    private let batteryCBUUID = CBUUID(string: RingUUIDs.battery)
-
-    private static let advertisedName = "SMART_RING"
-    private static let manufacturerHexNeedle = "41422ec75b6a"
     private static let lastPeripheralKey = "ring.lastPeripheralIdentifier"
+    private static let lastDeviceTypeKey = "ring.lastDeviceType"
+
+    /// The 0x180F battery service, used only when the active driver exposes GATT battery.
+    private let batteryServiceCBUUID = CBUUID(string: "180F")
 
     override init() {
         super.init()
@@ -88,8 +103,8 @@ final class RingBLEClient: NSObject {
         lastError = nil
         autoReconnect = true
         state = .scanning
-        // Scan with no service filter so we also catch firmwares that don't advertise the
-        // 0x56ff service UUID; matching is done in didDiscover.
+        // Scan with no service filter so we also catch firmwares that don't advertise their service
+        // UUID; matching is done in didDiscover via the coordinator registry.
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     }
 
@@ -104,14 +119,16 @@ final class RingBLEClient: NSObject {
             lastError = "Ring no longer available; scan again."
             return
         }
-        beginConnect(to: target)
+        // Use the matched device type from discovery if we have it.
+        let matchedType = discovered.first { $0.id == id }?.deviceType
+        beginConnect(to: target, deviceType: matchedType)
     }
 
     /// Silently reconnect to the last paired ring (used on launch). Falls back to scanning.
     func connectLastKnown() {
         guard isBluetoothReady, let id = lastKnownIdentifier else { return }
         if let known = central.retrievePeripherals(withIdentifiers: [id]).first {
-            beginConnect(to: known)
+            beginConnect(to: known, deviceType: lastKnownDeviceType)
         } else {
             startScanning()
         }
@@ -127,9 +144,21 @@ final class RingBLEClient: NSObject {
         }
     }
 
-    /// Queue a 20-byte command for writing. Writes are serialized.
+    /// Forget the active/last ring: disconnect and clear the remembered identifier + device type so
+    /// the app no longer auto-reconnects to it.
+    func forget() {
+        disconnect()
+        UserDefaults.standard.removeObject(forKey: Self.lastPeripheralKey)
+        UserDefaults.standard.removeObject(forKey: Self.lastDeviceTypeKey)
+        activeDeviceType = nil
+        activeCapabilities = []
+    }
+
+    /// Queue a logical command for writing. The active driver's framing (padding/checksum) is applied
+    /// here, so callers/engines deal in unframed commands. Writes are serialized.
     func enqueueWrite(_ data: Data) {
-        writeQueue.append(data)
+        let framed = activeDriver?.frame(data) ?? data
+        writeQueue.append(framed)
         pumpWrites()
     }
 
@@ -142,17 +171,40 @@ final class RingBLEClient: NSObject {
         UserDefaults.standard.string(forKey: Self.lastPeripheralKey).flatMap(UUID.init)
     }
 
+    var lastKnownDeviceType: RingDeviceType? {
+        UserDefaults.standard.string(forKey: Self.lastDeviceTypeKey).flatMap(RingDeviceType.init)
+    }
+
     var hasLastKnownRing: Bool { lastKnownIdentifier != nil }
+
+    /// The active sync engine, exposed so the `RingSyncCoordinator` façade can drive command flows.
+    var syncEngine: RingSyncEngine? { activeSyncEngine }
 
     // MARK: - Internal
 
-    private func beginConnect(to target: CBPeripheral) {
+    private func beginConnect(to target: CBPeripheral, deviceType: RingDeviceType?) {
         central.stopScan()
         autoReconnect = true
         peripheral = target
         target.delegate = self
+        // Select the coordinator/driver for this connection. Default to jring if discovery didn't
+        // tag a type (e.g. reconnect to an unknown cached peripheral) — preserves prior behavior.
+        let coordinatorType = Self.coordinators.first { $0.deviceType == deviceType } ?? JringCoordinator.self
+        installDriver(coordinatorType)
         state = .connecting
         central.connect(target, options: nil)
+    }
+
+    /// Instantiate the coordinator's driver + sync engine for the upcoming connection. A fresh driver
+    /// per connection keeps per-connection state from leaking across reconnects.
+    private func installDriver(_ coordinatorType: WearableCoordinator.Type) {
+        let coordinator = coordinatorType.init()
+        let driver = coordinator.makeDriver(writer: self)
+        activeCoordinator = coordinator
+        activeDriver = driver
+        activeSyncEngine = driver.makeSyncEngine()
+        activeDeviceType = coordinatorType.deviceType
+        activeCapabilities = coordinator.capabilities
     }
 
     private func pumpWrites() {
@@ -167,7 +219,10 @@ final class RingBLEClient: NSObject {
     }
 
     private func publishRawPacket(direction: PacketDirection, data: Data) {
-        let decoded = decoder.decode(data)
+        // Outgoing frames are logged raw for the debug feed. We do NOT route them through the
+        // driver's `ingest` (that is the inbound path and, for big-data devices, would corrupt the
+        // reassembly buffer). The command id is enough annotation for the trace.
+        let decoded = RingDecodedEvent.commandAck(commandId: data.first ?? 0)
         publish(.rawPacket(direction: direction, data: data, decoded: decoded))
     }
 
@@ -175,17 +230,26 @@ final class RingBLEClient: NSObject {
         Task { await PulseEventBus.shared.publish(event) }
     }
 
-    private func matchesRing(name: String?, advertisementData: [String: Any]) -> Bool {
-        if let name, name == Self.advertisedName { return true }
-        if let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID],
-           services.contains(serviceCBUUID) {
-            return true
+    /// Walk the coordinator registry to claim a discovered peripheral. Returns the first matching
+    /// device type, or nil if no coordinator recognizes it.
+    private func matchDeviceType(name: String?, advertisementData: [String: Any]) -> RingDeviceType? {
+        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let info = AdvertisementInfo(serviceUUIDs: serviceUUIDs, manufacturerData: mfg)
+        for coordinatorType in Self.coordinators where coordinatorType.matches(name: name, advertisement: info) {
+            return coordinatorType.deviceType
         }
-        if let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-           mfg.hexString.contains(Self.manufacturerHexNeedle) {
-            return true
-        }
-        return false
+        return nil
+    }
+}
+
+// MARK: - RingCommandWriter
+
+extension RingBLEClient: RingCommandWriter {
+    /// Drivers / sync engines enqueue logical commands through this seam; framing is applied in
+    /// `enqueueWrite`.
+    func enqueue(_ command: Data) {
+        enqueueWrite(command)
     }
 }
 
@@ -217,12 +281,18 @@ extension RingBLEClient: CBCentralManagerDelegate {
     ) {
         MainActor.assumeIsolated {
             let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
-            let isRing = matchesRing(name: name, advertisementData: advertisementData)
+            let matchedType = matchDeviceType(name: name, advertisementData: advertisementData)
             // List any *named* peripheral so the user can always find their ring, even if its
-            // advertisement omits the service UUID / manufacturer bytes; ring matches sort first.
+            // advertisement omits the service UUID / manufacturer bytes; recognized rings sort first.
             guard let displayName = name, !displayName.isEmpty else { return }
             discoveredPeripherals[peripheral.identifier] = peripheral
-            let ring = DiscoveredRing(id: peripheral.identifier, name: displayName, rssi: RSSI.intValue, isLikelyRing: isRing)
+            let ring = DiscoveredRing(
+                id: peripheral.identifier,
+                name: displayName,
+                rssi: RSSI.intValue,
+                isLikelyRing: matchedType != nil,
+                deviceType: matchedType
+            )
             if let index = discovered.firstIndex(where: { $0.id == ring.id }) {
                 discovered[index] = ring
             } else {
@@ -235,7 +305,9 @@ extension RingBLEClient: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         MainActor.assumeIsolated {
             peripheral.delegate = self
-            peripheral.discoverServices([serviceCBUUID, batteryServiceCBUUID])
+            var services = activeDriver?.serviceUUIDs ?? []
+            if let battery = activeDriver?.batteryServiceUUID { services.append(battery) }
+            peripheral.discoverServices(services.isEmpty ? nil : services)
         }
     }
 
@@ -266,7 +338,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
     ) {
         MainActor.assumeIsolated {
             writeChar = nil
-            notifyChar = nil
+            notifyChars = [:]
             batteryCharacteristic = nil
             writeInFlight = false
             writeQueue = []
@@ -287,11 +359,16 @@ extension RingBLEClient: CBCentralManagerDelegate {
 extension RingBLEClient: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
+            guard let driver = activeDriver else { return }
             for service in peripheral.services ?? [] {
-                if service.uuid == serviceCBUUID {
-                    peripheral.discoverCharacteristics([writeCBUUID, notifyCBUUID], for: service)
-                } else if service.uuid == batteryServiceCBUUID {
-                    peripheral.discoverCharacteristics([batteryCBUUID], for: service)
+                if driver.serviceUUIDs.contains(service.uuid) {
+                    var chars = driver.notifyUUIDs
+                    chars.append(driver.writeUUID)
+                    peripheral.discoverCharacteristics(chars, for: service)
+                } else if service.uuid == driver.batteryServiceUUID {
+                    if let batteryChar = driver.batteryCharUUID {
+                        peripheral.discoverCharacteristics([batteryChar], for: service)
+                    }
                 }
             }
         }
@@ -303,18 +380,16 @@ extension RingBLEClient: CBPeripheralDelegate {
         error: Error?
     ) {
         MainActor.assumeIsolated {
+            guard let driver = activeDriver else { return }
             for characteristic in service.characteristics ?? [] {
-                switch characteristic.uuid {
-                case writeCBUUID:
+                if characteristic.uuid == driver.writeUUID {
                     writeChar = characteristic
-                case notifyCBUUID:
-                    notifyChar = characteristic
+                } else if driver.notifyUUIDs.contains(characteristic.uuid) {
+                    notifyChars[characteristic.uuid] = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)
-                case batteryCBUUID:
+                } else if characteristic.uuid == driver.batteryCharUUID {
                     batteryCharacteristic = characteristic
                     peripheral.readValue(for: characteristic)
-                default:
-                    break
                 }
             }
         }
@@ -326,10 +401,17 @@ extension RingBLEClient: CBPeripheralDelegate {
         error: Error?
     ) {
         MainActor.assumeIsolated {
-            guard characteristic.uuid == notifyCBUUID, characteristic.isNotifying else { return }
-            // Fully connected once notifications are live.
+            guard let driver = activeDriver,
+                  driver.notifyUUIDs.contains(characteristic.uuid),
+                  characteristic.isNotifying else { return }
+            // Fully connected once at least one notify char is live. (Multi-notify devices may fire
+            // this twice; guard against re-running startup.)
+            guard state != .connected else { return }
             state = .connected
             UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.lastPeripheralKey)
+            if let type = activeDeviceType {
+                UserDefaults.standard.set(type.rawValue, forKey: Self.lastDeviceTypeKey)
+            }
             publish(.deviceStateChanged(state: .connected, address: nil))
             readBattery()
             onConnected?()
@@ -344,20 +426,21 @@ extension RingBLEClient: CBPeripheralDelegate {
     ) {
         MainActor.assumeIsolated {
             guard let value = characteristic.value else { return }
-            switch characteristic.uuid {
-            case batteryCBUUID:
+            if characteristic.uuid == activeDriver?.batteryCharUUID {
                 if let first = value.first {
                     batteryPercent = Int(first)
                     publish(.batteryLevel(percent: Int(first)))
                 }
-            case notifyCBUUID:
-                let decoded = decoder.decode(value)
+                return
+            }
+            guard let driver = activeDriver, driver.notifyUUIDs.contains(characteristic.uuid) else { return }
+            for decoded in driver.ingest(value, from: characteristic.uuid) {
                 publish(.rawPacket(direction: .incoming, data: value, decoded: decoded))
                 for event in RingEventBridge.events(for: decoded) {
                     publish(event)
                 }
-            default:
-                break
+                // Advance any response-driven sync machine (no-op for jring).
+                activeSyncEngine?.handle(decoded)
             }
         }
     }

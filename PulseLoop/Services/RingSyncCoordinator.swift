@@ -34,7 +34,11 @@ final class RingSyncCoordinator {
 
     private let client: RingBLEClient
     private let context: ModelContext
-    private let encoder = RingEncoder()
+
+    /// The active connection's protocol engine. Command construction is delegated here so this
+    /// coordinator stays device-agnostic — it owns timing/warm-up windows and UI state, the engine
+    /// owns the protocol bytes and (for response-driven devices) the history machine.
+    private var engine: RingSyncEngine? { client.syncEngine }
 
     private var streamTask: Task<Void, Never>?
 
@@ -56,15 +60,10 @@ final class RingSyncCoordinator {
 
     // MARK: - Actions
 
-    /// Canonical startup sequence run on connect: status → time sync → locale → activity query
-    /// → history (which yields the sleep timeline) → history measurements.
+    /// Canonical startup sequence run on connect. Delegated to the active device's sync engine
+    /// (jring fires its commands up front; Colmi drives a response-driven history machine).
     func runStartupSequence() {
-        client.enqueueWrite(encoder.makeStatusCommand())
-        client.enqueueWrite(encoder.makeTimeSyncCommand())
-        client.enqueueWrite(encoder.makeLocaleCommand())
-        client.enqueueWrite(encoder.makeActivityQueryCommand())
-        client.enqueueWrite(encoder.makeHistoryQueryCommand())
-        client.enqueueWrite(encoder.makeHistoryMeasurementQueryCommand())
+        engine?.runStartup()
         lastSyncAt = Date()
     }
 
@@ -94,31 +93,30 @@ final class RingSyncCoordinator {
     /// session through `ActivityRecorderService.linkSample`.
     func startWorkoutHeartRate() {
         guard client.state == .connected else { return }
-        client.enqueueWrite(encoder.makeHeartRateStartCommand())
+        engine?.startHeartRate()
         workoutHRActive = true
     }
 
     /// Stop the workout's live HR stream and restore the ring's normal background cadence.
     func stopWorkoutHeartRate() {
         guard workoutHRActive else { return }
-        client.enqueueWrite(encoder.makeHeartRateStopCommand())
-        client.enqueueWrite(encoder.makeAutomaticHeartRateCommand(enabled: true, cadenceMinutes: 30))
+        engine?.stopHeartRate()
         workoutHRActive = false
     }
 
     func querySleep() {
         guard client.state == .connected else { return }
-        client.enqueueWrite(encoder.makeHistoryQueryCommand())
+        engine?.runStartup()
     }
 
     func findRing() {
         guard client.state == .connected else { return }
-        client.enqueueWrite(encoder.makeFindRingCommand())
+        engine?.findDevice()
     }
 
     func setGoal(steps: Int) {
         if client.state == .connected {
-            client.enqueueWrite(encoder.makeGoalCommand(steps: steps))
+            engine?.setGoal(steps: steps)
         }
         if let goal = MetricsRepository.goals(context: context) {
             goal.steps = steps
@@ -137,9 +135,9 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { hrState = .failed; return nil }
         hrState = .measuring
         latestHRValue = nil
-        client.enqueueWrite(encoder.makeHeartRateStartCommand())
+        engine?.startHeartRate()
         try? await Task.sleep(nanoseconds: hrMeasureSeconds * 1_000_000_000)
-        client.enqueueWrite(encoder.makeHeartRateStopCommand())
+        engine?.stopHeartRate()
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         let result = latestHRValue
         hrState = result.map { .done($0) } ?? .failed
@@ -152,9 +150,9 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
-        client.enqueueWrite(encoder.makeSpO2StartCommand())
+        engine?.startSpO2()
         try? await Task.sleep(nanoseconds: spo2MeasureSeconds * 1_000_000_000)
-        client.enqueueWrite(encoder.makeSpO2StopCommand())
+        engine?.stopSpO2()
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         let result = latestSpO2Value
         spo2State = result.map { .done($0) } ?? .failed
