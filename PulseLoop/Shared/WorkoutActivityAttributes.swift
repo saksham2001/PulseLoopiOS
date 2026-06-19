@@ -44,7 +44,7 @@ struct WorkoutActivityAttributes: ActivityAttributes {
 /// `nonisolated` so the App Intents' nonisolated `perform()` can call it under Swift 6
 /// (this target defaults to MainActor isolation).
 nonisolated enum WorkoutAppGroup {
-    static let suite = "group.xyz.sakshambhutani.PulseLoop"
+    static let suite = "group.xyz.sakshambhutani.pulseloop2"
     static let commandKey = "pendingWorkoutCommand"          // "pause" | "resume" | "finish"
     static let commandSessionKey = "pendingWorkoutCommandSession"
     static let commandTimeKey = "pendingWorkoutCommandTime"  // Date for de-dupe

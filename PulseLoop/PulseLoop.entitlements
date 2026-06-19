@@ -6,7 +6,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.xyz.sakshambhutani.PulseLoop</string>
+		<string>group.xyz.sakshambhutani.pulseloop2</string>
 	</array>
 </dict>
 </plist>

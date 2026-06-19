@@ -12,7 +12,7 @@ import Combine
 import ActivityKit
 import os.log
 
-private let liveActivityLog = Logger(subsystem: "xyz.sakshambhutani.PulseLoop", category: "LiveActivity")
+private let liveActivityLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "LiveActivity")
 
 @MainActor
 final class WorkoutLiveActivityService: ObservableObject {
