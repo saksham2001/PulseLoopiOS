@@ -27,7 +27,7 @@ final class RingBLEClient: NSObject {
     /// **Adding a wearable = append one entry here.**
     static let coordinators: [WearableCoordinator.Type] = [
         JringCoordinator.self,
-        // ColmiCoordinator.self,  // registered in Phase 2
+        ColmiCoordinator.self,
     ]
 
     struct DiscoveredRing: Identifiable, Equatable {
@@ -413,6 +413,9 @@ extension RingBLEClient: CBPeripheralDelegate {
                 UserDefaults.standard.set(type.rawValue, forKey: Self.lastDeviceTypeKey)
             }
             publish(.deviceStateChanged(state: .connected, address: nil))
+            if let type = activeDeviceType {
+                publish(.deviceIdentified(deviceType: type, capabilities: activeCapabilities))
+            }
             readBattery()
             onConnected?()
             pumpWrites()

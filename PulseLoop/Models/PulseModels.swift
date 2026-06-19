@@ -14,6 +14,21 @@ enum RingConnectionState: String, Codable, CaseIterable {
 enum MeasurementKind: String, Codable, CaseIterable {
     case heartRate = "hr"
     case spo2
+    // Colmi R02 metrics jring lacks. Raw values are persisted — append, never rename.
+    case stress
+    case hrv
+    case temperature = "temp"
+
+    /// Display unit for a measurement of this kind.
+    var unit: String {
+        switch self {
+        case .heartRate: return "bpm"
+        case .spo2: return "%"
+        case .stress: return ""
+        case .hrv: return "ms"
+        case .temperature: return "°C"
+        }
+    }
 }
 
 enum MeasurementSource: String, Codable, CaseIterable {
@@ -23,6 +38,7 @@ enum MeasurementSource: String, Codable, CaseIterable {
     case workout
     case manual
     case live
+    case colmi
 }
 
 enum SleepStage: String, Codable, CaseIterable {
@@ -30,6 +46,7 @@ enum SleepStage: String, Codable, CaseIterable {
     case deep
     case awake
     case unknown
+    case rem
 }
 
 enum ActivitySessionStatus: String, Codable, CaseIterable {
@@ -71,9 +88,13 @@ final class Device {
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
     var firmwareVersion: String?
+    // Defaulted so SwiftData lightweight migration is additive (existing rows become jring with no
+    // declared capabilities until the next connect stamps them).
+    var deviceTypeRaw: String = RingDeviceType.jring.rawValue
+    var capabilitiesRaw: String = ""   // CSV of WearableCapability raw values
     var createdAt: Date
     var updatedAt: Date
-    
+
     init(
         id: UUID = UUID(),
         name: String = "SMART_RING",
@@ -81,7 +102,9 @@ final class Device {
         peripheralIdentifier: String? = nil,
         bleAddressHint: String? = nil,
         batteryPercent: Int? = nil,
-        state: RingConnectionState = .idle
+        state: RingConnectionState = .idle,
+        deviceType: RingDeviceType = .jring,
+        capabilities: Set<WearableCapability> = []
     ) {
         self.id = id
         self.name = name
@@ -90,14 +113,32 @@ final class Device {
         self.bleAddressHint = bleAddressHint
         self.batteryPercent = batteryPercent
         self.stateRaw = state.rawValue
+        self.deviceTypeRaw = deviceType.rawValue
+        self.capabilitiesRaw = capabilities.csv
         self.createdAt = Date()
         self.updatedAt = Date()
     }
-    
+
     var state: RingConnectionState {
         get { RingConnectionState(rawValue: stateRaw) ?? .idle }
         set {
             stateRaw = newValue.rawValue
+            updatedAt = Date()
+        }
+    }
+
+    var deviceType: RingDeviceType {
+        get { RingDeviceType(rawValue: deviceTypeRaw) ?? .jring }
+        set {
+            deviceTypeRaw = newValue.rawValue
+            updatedAt = Date()
+        }
+    }
+
+    var capabilities: Set<WearableCapability> {
+        get { Set(csv: capabilitiesRaw) }
+        set {
+            capabilitiesRaw = newValue.csv
             updatedAt = Date()
         }
     }

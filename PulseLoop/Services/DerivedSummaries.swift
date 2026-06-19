@@ -9,6 +9,24 @@ enum MetricKey: String, CaseIterable {
     case distance
     case activeMinutes = "active_minutes"
     case battery
+    // Colmi R02 metrics (capability-gated in the UI).
+    case stress
+    case hrv
+    case temperature = "temp"
+
+    /// The wearable capability that must be present for this metric to be shown.
+    var requiredCapability: WearableCapability? {
+        switch self {
+        case .heartRate: return .heartRate
+        case .spo2: return .spo2
+        case .stress: return .stress
+        case .hrv: return .hrv
+        case .temperature: return .temperature
+        case .steps, .calories, .distance, .activeMinutes: return .steps
+        case .sleep: return .sleep
+        case .battery: return .battery
+        }
+    }
 }
 
 enum MetricRange: String, CaseIterable {

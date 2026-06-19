@@ -21,6 +21,8 @@ struct PulseLoopApp: App {
     private let persistence: EventPersistenceSubscriber
     /// Retained so it keeps regenerating Today/Sleep coach summaries on new data.
     private let summaryCoordinator: CoachSummaryCoordinator
+    /// Retained so it keeps recording the structured wearable diagnostics timeline.
+    private let diagnostics: DiagnosticsSubscriber
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
 
@@ -45,12 +47,15 @@ struct PulseLoopApp: App {
         let subscriber = EventPersistenceSubscriber(context: container.mainContext)
         self.persistence = subscriber
         self.summaryCoordinator = CoachSummaryCoordinator(context: container.mainContext)
+        let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
+        self.diagnostics = diagnostics
 
         // Start persistence + coordinator draining the bus; auto-reconnect happens when
         // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).
         subscriber.start()
         coordinator.start()
         summaryCoordinator.start()
+        diagnostics.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate

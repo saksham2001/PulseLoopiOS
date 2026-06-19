@@ -3,6 +3,9 @@ import SwiftData
 
 enum PulseEvent: Sendable {
     case deviceStateChanged(state: RingConnectionState, address: String?)
+    /// Emitted on connect once the active wearable's type + capabilities are known, so persistence
+    /// can stamp the `Device` and the UI can capability-gate its surfaces.
+    case deviceIdentified(deviceType: RingDeviceType, capabilities: Set<WearableCapability>)
     case batteryLevel(percent: Int)
     case rawPacket(direction: PacketDirection, data: Data, decoded: RingDecodedEvent)
     case derivedUpdate(kind: String, entityType: String, entityId: String, payloadJSON: String?)
@@ -14,6 +17,11 @@ enum PulseEvent: Sendable {
     case spo2Complete(timestamp: Date)
     case sleepTimeline(timestamp: Date, stages: [SleepStage])
     case historyMeasurement(kind: MeasurementKind, value: Double, timestamp: Date)
+    case stressSample(value: Int, timestamp: Date)
+    case hrvSample(value: Int, timestamp: Date)
+    case temperatureSample(celsius: Double, timestamp: Date)
+    /// Friendly history-sync progress for the product UI (e.g. "Syncing sleep…"). Never protocol terms.
+    case syncProgress(stage: String)
     case workoutStarted(UUID)
     case workoutPaused(UUID)
     case workoutResumed(UUID)
@@ -85,11 +93,19 @@ final class EventPersistenceSubscriber {
                 device.lastSyncAt = Date()
             }
             context.insert(device)
+        case let .deviceIdentified(deviceType, capabilities):
+            let device = MetricsService.fetchDevices(context).first ?? Device()
+            device.deviceType = deviceType
+            device.capabilities = capabilities
+            context.insert(device)
         case let .batteryLevel(percent):
             let device = MetricsService.fetchDevices(context).first ?? Device()
             device.batteryPercent = percent
             context.insert(device)
         case let .rawPacket(direction, data, decoded):
+            // The raw byte trace is a developer diagnostic only — never stored in release builds, so
+            // production never persists protocol hex/opcodes.
+            #if DEBUG
             context.insert(
                 RawPacketRow(
                     direction: direction,
@@ -100,6 +116,7 @@ final class EventPersistenceSubscriber {
                     confidence: decoded.confidence
                 )
             )
+            #endif
         case let .derivedUpdate(kind, entityType, entityId, payloadJSON):
             context.insert(DerivedUpdateRow(kind: kind, entityType: entityType, entityId: entityId, payloadJSON: payloadJSON))
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):
@@ -127,6 +144,12 @@ final class EventPersistenceSubscriber {
             persistMeasurement(kind: .spo2, value: Double(value), timestamp: timestamp, source: .live, kindLabel: "spo2_result")
         case let .historyMeasurement(kind, value, timestamp):
             persistMeasurement(kind: kind, value: value, timestamp: timestamp, source: .history, kindLabel: "history_measurement")
+        case let .stressSample(value, timestamp):
+            persistMeasurement(kind: .stress, value: Double(value), timestamp: timestamp, source: .colmi, kindLabel: "stress_sample")
+        case let .hrvSample(value, timestamp):
+            persistMeasurement(kind: .hrv, value: Double(value), timestamp: timestamp, source: .colmi, kindLabel: "hrv_sample")
+        case let .temperatureSample(celsius, timestamp):
+            persistMeasurement(kind: .temperature, value: celsius, timestamp: timestamp, source: .colmi, kindLabel: "temperature_sample")
         case let .sleepTimeline(timestamp, stages):
             persistSleepTimeline(start: timestamp, stages: stages)
         case let .gpsPoint(sessionId, latitude, longitude, altitude, horizontalAccuracy, speed, course, accepted, rejectionReason, timestamp):
@@ -150,7 +173,7 @@ final class EventPersistenceSubscriber {
                     session.rejectedGpsPointCount += 1
                 }
             }
-        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
+        case .heartRateComplete, .spo2Progress, .spo2Complete, .syncProgress, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
         }
         try? context.save()
@@ -159,8 +182,7 @@ final class EventPersistenceSubscriber {
     /// Persist one live/history measurement, record a derived-update audit row, and link it to
     /// an in-progress workout if one is recording. Mirrors `persistence._on_hr_sample`.
     private func persistMeasurement(kind: MeasurementKind, value: Double, timestamp: Date, source: MeasurementSource, kindLabel: String) {
-        let unit = kind == .heartRate ? "bpm" : "%"
-        let row = Measurement(kind: kind, value: value, unit: unit, timestamp: timestamp, source: source)
+        let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: source)
         context.insert(row)
         context.insert(DerivedUpdateRow(kind: kindLabel, entityType: "measurement", entityId: row.id.uuidString))
         _ = ActivityRecorderService.linkSample(

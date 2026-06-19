@@ -81,6 +81,12 @@ enum MetricsService {
             return rangeSamples(kind: .heartRate, range: range, context: context)
         case .spo2:
             return rangeSamples(kind: .spo2, range: range, context: context)
+        case .stress:
+            return rangeSamples(kind: .stress, range: range, context: context)
+        case .hrv:
+            return rangeSamples(kind: .hrv, range: range, context: context)
+        case .temperature:
+            return rangeSamples(kind: .temperature, range: range, context: context)
         case .steps, .calories, .distance, .activeMinutes:
             return activitySamples(metric: metric, range: range, context: context)
         default:
@@ -95,6 +101,23 @@ enum MetricsService {
     static func fetchActivity(_ context: ModelContext) -> [ActivityDaily] {
         MetricsRepository.activityRows(descending: context)
     }
+
+    /// The current device's capabilities, used to gate metric UI. Falls back to the jring base set
+    /// for legacy rows that predate capability stamping (empty `capabilitiesRaw`), so existing users
+    /// keep seeing HR / SpO₂ / steps / sleep / battery.
+    static func deviceCapabilities(_ context: ModelContext) -> Set<WearableCapability> {
+        let caps = fetchDevices(context).first?.capabilities ?? []
+        if caps.isEmpty {
+            return [.heartRate, .spo2, .steps, .sleep, .battery]
+        }
+        return caps
+    }
+
+    /// Whether a metric should be shown for the current device.
+    static func supports(_ metric: MetricKey, context: ModelContext) -> Bool {
+        guard let required = metric.requiredCapability else { return true }
+        return deviceCapabilities(context).contains(required)
+    }
     
     static func fetchDevices(_ context: ModelContext) -> [Device] {
         DeviceRepository.devices(context: context)
@@ -102,24 +125,27 @@ enum MetricsService {
     
     static func insertMockMeasurement(kind: MeasurementKind, context: ModelContext) {
         let value: Double
-        let unit: String
         switch kind {
         case .heartRate:
             value = Double(Int.random(in: 62...86))
-            unit = "bpm"
         case .spo2:
             value = Double(Int.random(in: 96...99))
-            unit = "%"
+        case .stress:
+            value = Double(Int.random(in: 20...70))
+        case .hrv:
+            value = Double(Int.random(in: 30...90))
+        case .temperature:
+            value = Double.random(in: 33...36)
         }
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,
             value: value,
-            unit: unit,
+            unit: kind.unit,
             timestamp: Date(),
             source: .mock,
             context: context
         )
-        context.insert(DerivedUpdateRow(kind: kind == .heartRate ? "hr_sample" : "spo2_result", entityType: "measurement", entityId: row.id.uuidString))
+        context.insert(DerivedUpdateRow(kind: "\(kind.rawValue)_sample", entityType: "measurement", entityId: row.id.uuidString))
         _ = ActivityRecorderService.linkSample(kind: kind, value: value, timestamp: row.timestamp, measurementId: row.id, source: .mock, confidence: .known, context: context)
         try? context.save()
     }

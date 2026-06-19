@@ -9,12 +9,14 @@ import Charts
 enum SleepStageColors {
     static let deep = Color(hex: "#3F2DD8")
     static let light = Color(hex: "#7C5CFF")
+    static let rem = Color(hex: "#2DD4D8")
     static let awake = Color(hex: "#FFB86B")
 
     static func color(for stage: SleepStage) -> Color {
         switch stage {
         case .deep: return deep
         case .light: return light
+        case .rem: return rem
         case .awake: return awake
         case .unknown: return PulseColors.textMuted
         }
@@ -40,6 +42,134 @@ struct HRLineChart: View {
                 .interpolationMethod(.monotone)
                 .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                 .foregroundStyle(PulseColors.heartRate)
+            }
+        }
+        .chartYScale(domain: lo...hi)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: height)
+    }
+}
+
+// MARK: - Stress gauge (Vitals, Colmi)
+
+/// Radial gauge showing the latest stress score on a zoned arc:
+/// relaxed (0–29) · normal (30–59) · medium (60–79) · high (80–100).
+struct StressGaugeChart: View {
+    let value: Double          // 0...100
+    var height: CGFloat = 160
+
+    private let zones: [(upper: Double, color: Color, label: String)] = [
+        (29, PulseColors.success, "Relaxed"),
+        (59, PulseColors.info, "Normal"),
+        (79, PulseColors.warning, "Medium"),
+        (100, PulseColors.danger, "High"),
+    ]
+
+    private var zone: (upper: Double, color: Color, label: String) {
+        zones.first { value <= $0.upper } ?? zones[zones.count - 1]
+    }
+
+    var body: some View {
+        let fraction = max(0, min(1, value / 100))
+        ZStack {
+            // Background track
+            Circle()
+                .trim(from: 0, to: 0.75)
+                .stroke(PulseColors.elevated, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(135))
+            // Value arc
+            Circle()
+                .trim(from: 0, to: 0.75 * fraction)
+                .stroke(zone.color, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(135))
+            VStack(spacing: 2) {
+                Text("\(Int(value))")
+                    .font(.system(size: 38, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(PulseColors.textPrimary)
+                Text(zone.label.uppercased())
+                    .font(.system(size: 10, weight: .semibold)).tracking(1.2)
+                    .foregroundStyle(zone.color)
+            }
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - HRV trend band (Vitals, Colmi)
+
+/// HRV trend line with a shaded baseline band around the mean, so a glance shows whether recent
+/// values sit above or below the user's typical range.
+struct HRVTrendBandChart: View {
+    let samples: [MetricSample]   // value in ms
+    var height: CGFloat = 150
+
+    var body: some View {
+        let values = samples.map(\.value)
+        let mean = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+        let lo = (values.min() ?? 0) - 8
+        let hi = (values.max() ?? 100) + 8
+        let bandHalf = max(6, mean * 0.12)   // ±12% baseline band
+
+        Chart {
+            // Baseline band
+            RectangleMark(
+                xStart: .value("x0", 0),
+                xEnd: .value("x1", max(1, samples.count - 1)),
+                yStart: .value("lo", mean - bandHalf),
+                yEnd: .value("hi", mean + bandHalf)
+            )
+            .foregroundStyle(PulseColors.hrv.opacity(0.12))
+
+            RuleMark(y: .value("mean", mean))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .foregroundStyle(PulseColors.hrv.opacity(0.4))
+
+            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+                LineMark(x: .value("i", index), y: .value("ms", sample.value))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .foregroundStyle(PulseColors.hrv)
+            }
+        }
+        .chartYScale(domain: lo...hi)
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .frame(height: height)
+    }
+}
+
+// MARK: - Temperature range (Vitals, Colmi)
+
+/// Skin-temperature trend as a filled range around the series, emphasizing daily min/max swing.
+struct TemperatureRangeChart: View {
+    let samples: [MetricSample]   // value in °C
+    var height: CGFloat = 150
+
+    var body: some View {
+        let values = samples.map(\.value)
+        let lo = (values.min() ?? 30) - 0.5
+        let hi = (values.max() ?? 38) + 0.5
+
+        Chart {
+            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+                AreaMark(
+                    x: .value("i", index),
+                    yStart: .value("lo", lo),
+                    yEnd: .value("temp", sample.value)
+                )
+                .interpolationMethod(.monotone)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [PulseColors.temperature.opacity(0.28), PulseColors.temperature.opacity(0.02)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                LineMark(x: .value("i", index), y: .value("temp", sample.value))
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .foregroundStyle(PulseColors.temperature)
             }
         }
         .chartYScale(domain: lo...hi)
@@ -283,16 +413,17 @@ struct SleepHypnogramView: View {
     let startTs: Date?
     var height: CGFloat = 210
 
-    private let lanes: [SleepStage] = [.awake, .light, .deep]
+    private let lanes: [SleepStage] = [.awake, .rem, .light, .deep]
 
     private func laneY(_ stage: SleepStage, in size: CGSize) -> CGFloat {
-        // awake=top lane, light=middle, deep=bottom — matches STAGE_Y 20/50/80 of 100.
+        // awake=top lane, then REM, light, deep=bottom (standard hypnogram ordering).
         let frac: CGFloat
         switch stage {
-        case .awake: frac = 0.20
-        case .light: frac = 0.50
-        case .deep: frac = 0.80
-        case .unknown: frac = 0.50
+        case .awake: frac = 0.15
+        case .rem: frac = 0.38
+        case .light: frac = 0.62
+        case .deep: frac = 0.85
+        case .unknown: frac = 0.62
         }
         return size.height * frac
     }

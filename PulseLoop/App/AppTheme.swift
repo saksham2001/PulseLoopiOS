@@ -53,6 +53,10 @@ enum PulseColors {
     static let distance = Color(hex: "#4DA3FF")
     static let readiness = Color(hex: "#D6FF65")
     static let battery = Color(hex: "#A7F3D0")
+    // Colmi R02 metrics
+    static let stress = Color(hex: "#FF8A4C")
+    static let hrv = Color(hex: "#9D7CFF")
+    static let temperature = Color(hex: "#2DD4D8")
     static let borderSubtle = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
 }

@@ -165,11 +165,6 @@ struct AppHeader: View {
                 ConnectionStatusPill(state: effectiveState, batteryPercent: effectiveBattery)
                     .onTapGesture { path.append(AppRoute.settings) }
                 Button {
-                    path.append(AppRoute.debug)
-                } label: {
-                    Image(systemName: "waveform.path")
-                }
-                Button {
                     path.append(AppRoute.settings)
                 } label: {
                     Image(systemName: "gearshape")
@@ -381,22 +376,19 @@ struct OnboardingPairView: View {
     let finish: () -> Void
     var body: some View {
         VStack(spacing: 18) {
-            OnboardingHeader(title: "Pair ring", subtitle: "BLE pairing is a later phase. Demo mode uses local SwiftData now.")
+            OnboardingHeader(title: "Add your ring", subtitle: "Connect your ring now, or explore with demo data and pair later from Settings.")
             PulseCard {
                 HStack {
-                    Image(systemName: "dot.radiowaves.left.and.right")
+                    Image(systemName: "circle.hexagongrid.circle.fill")
                         .foregroundStyle(PulseColors.accent)
                     VStack(alignment: .leading) {
-                        Text("SMART_RING")
+                        Text("Compatible rings")
                             .font(.headline)
-                        Text("Demo data active")
+                        Text("jring · Colmi R02")
                             .font(.caption)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                     Spacer()
-                    Text("82%")
-                        .monospacedDigit()
-                        .foregroundStyle(PulseColors.battery)
                 }
             }
             PrimaryButton(title: "Finish setup", systemImage: "checkmark", action: finish)

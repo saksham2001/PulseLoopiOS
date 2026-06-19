@@ -60,6 +60,11 @@ enum RingDecodedEvent: Sendable {
     case spo2Complete(timestamp: Date)
     case sleepTimeline(timestamp: Date, stages: [SleepStage])
     case historyMeasurement(kind: MeasurementKind, value: Double, timestamp: Date)
+    case stressSample(value: Int, timestamp: Date)
+    case hrvSample(value: Int, timestamp: Date)            // milliseconds
+    case temperatureSample(celsius: Double, timestamp: Date)
+    case historySyncProgress(stage: String)
+    case historySyncFinished
     case battery(percent: Int)
     case status(address: String?)
     case timeSyncAck(timestamp: Date)
@@ -76,6 +81,11 @@ enum RingDecodedEvent: Sendable {
         case .spo2Complete: return "spo2_complete"
         case .sleepTimeline: return "sleep_timeline"
         case .historyMeasurement: return "history_measurement"
+        case .stressSample: return "stress_sample"
+        case .hrvSample: return "hrv_sample"
+        case .temperatureSample: return "temperature_sample"
+        case .historySyncProgress: return "history_sync_progress"
+        case .historySyncFinished: return "history_sync_finished"
         case .battery: return "battery"
         case .status: return "status"
         case .timeSyncAck: return "time_sync_ack"
@@ -103,6 +113,14 @@ enum RingDecodedEvent: Sendable {
             return #"{"bpm":\#(bpm)}"#
         case let .spo2Result(value, _):
             return #"{"spo2":\#(value)}"#
+        case let .stressSample(value, _):
+            return #"{"stress":\#(value)}"#
+        case let .hrvSample(value, _):
+            return #"{"hrv_ms":\#(value)}"#
+        case let .temperatureSample(celsius, _):
+            return #"{"temp_c":\#(celsius)}"#
+        case let .historySyncProgress(stage):
+            return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):
             return #"{"percent":\#(percent)}"#
         case let .status(address):

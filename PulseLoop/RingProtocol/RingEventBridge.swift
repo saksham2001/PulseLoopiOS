@@ -13,6 +13,12 @@ import Foundation
 enum RingEventBridge {
     /// Plausible instantaneous heart rate, in bpm. Drops 0-bpm warm-up frames and noise.
     static let hrRange: ClosedRange<Int> = 30...220
+    /// Plausible stress score (Colmi reports 1–100; 0 = no sample).
+    static let stressRange: ClosedRange<Int> = 1...100
+    /// Plausible HRV, in milliseconds.
+    static let hrvRange: ClosedRange<Int> = 1...300
+    /// Plausible skin/body temperature, in °C.
+    static let temperatureRange: ClosedRange<Double> = 30...45
 
     static func events(for decoded: RingDecodedEvent, now: Date = Date()) -> [PulseEvent] {
         switch decoded {
@@ -38,6 +44,24 @@ enum RingEventBridge {
         case let .historyMeasurement(kind, value, timestamp):
             if kind == .heartRate, !hrRange.contains(Int(value)) { return [] }
             return [.historyMeasurement(kind: kind, value: value, timestamp: timestamp)]
+
+        case let .stressSample(value, timestamp):
+            guard stressRange.contains(value) else { return [] }
+            return [.stressSample(value: value, timestamp: timestamp)]
+
+        case let .hrvSample(value, timestamp):
+            guard hrvRange.contains(value) else { return [] }
+            return [.hrvSample(value: value, timestamp: timestamp)]
+
+        case let .temperatureSample(celsius, timestamp):
+            guard temperatureRange.contains(celsius) else { return [] }
+            return [.temperatureSample(celsius: celsius, timestamp: timestamp)]
+
+        case let .historySyncProgress(stage):
+            return [.syncProgress(stage: stage)]
+
+        case .historySyncFinished:
+            return [.syncProgress(stage: "done")]
 
         case let .sleepTimeline(timestamp, stages):
             guard isPlausibleSleepStart(timestamp, now: now), !stages.isEmpty else { return [] }
