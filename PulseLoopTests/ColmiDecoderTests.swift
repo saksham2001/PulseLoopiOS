@@ -290,6 +290,26 @@ final class ColmiDecoderTests: XCTestCase {
         let errFrame = ColmiPacket.frame([ColmiCommandID.manualHeartRate, 0, 1, 72])
         XCTAssertFalse(decoder.decodeNormal(errFrame).contains { if case .heartRateSample = $0 { return true }; return false })
     }
+
+    // MARK: Big-data command-channel routing
+
+    @MainActor
+    func testColmiRoutesBigDataToCommandChannel() {
+        let driver = ColmiDriver(writer: NullWriter())
+        // Big-data (0xbc) requests must go to the command characteristic.
+        XCTAssertTrue(driver.usesCommandChannel(for: Data([ColmiCommandID.bigDataV2, ColmiCommandID.bigDataSleep])))
+        // Normal commands (battery 0x03, etc.) use the write characteristic.
+        XCTAssertFalse(driver.usesCommandChannel(for: ColmiPacket.frame([ColmiCommandID.battery])))
+        // The command characteristic UUID is exposed.
+        XCTAssertEqual(driver.commandUUID, CBUUID(string: ColmiUUIDs.command))
+    }
+
+    @MainActor
+    func testJringHasNoCommandChannel() {
+        let driver = JringDriver(writer: NullWriter())
+        XCTAssertNil(driver.commandUUID)
+        XCTAssertFalse(driver.usesCommandChannel(for: Data([0x14])))
+    }
 }
 
 /// A no-op command writer for driver tests.

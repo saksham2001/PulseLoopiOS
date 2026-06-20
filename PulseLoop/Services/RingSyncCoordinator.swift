@@ -23,13 +23,17 @@ final class RingSyncCoordinator {
     private(set) var latestHRValue: Int?
     private(set) var latestSpO2Value: Int?
     private(set) var workoutHRActive = false
+    /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
+    /// spot measurement can fail fast instead of waiting out the full window.
+    private var hrNoReadingReported = false
 
     /// Ring connection state, surfaced for the workout polling layer + UI.
     var connectionState: RingConnectionState { client.state }
     var isConnected: Bool { client.state == .connected }
 
-    /// Warm-up windows from Protocol.md (HR ~10–15s, SpO2 ~35–45s).
-    private let hrMeasureSeconds: UInt64 = 12
+    /// Max time to wait for an on-demand reading before giving up. A Colmi manual HR reading can need
+    /// 15–30s of on-finger warm-up, so we poll up to this window and succeed the moment a value lands.
+    private let hrMeasureSeconds: UInt64 = 30
     private let spo2MeasureSeconds: UInt64 = 40
 
     private let client: RingBLEClient
@@ -135,14 +139,31 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { hrState = .failed; return nil }
         hrState = .measuring
         latestHRValue = nil
+        hrNoReadingReported = false
         // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69).
         engine?.measureHeartRateSpot()
-        try? await Task.sleep(nanoseconds: hrMeasureSeconds * 1_000_000_000)
+        // Poll until a real reading arrives (fast path) or the warm-up window elapses. Bail early if
+        // the ring explicitly reports "no reading / not worn".
+        let result = await pollForValue(
+            window: hrMeasureSeconds,
+            value: { self.latestHRValue },
+            abort: { self.hrNoReadingReported }
+        )
         engine?.stopHeartRate()
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        let result = latestHRValue
         hrState = result.map { .done($0) } ?? .failed
         return result
+    }
+
+    /// Poll a value getter every 0.5s up to `window` seconds; returns as soon as it's non-nil, or when
+    /// `abort` becomes true, else nil at timeout.
+    private func pollForValue(window: UInt64, value: () -> Int?, abort: () -> Bool) async -> Int? {
+        let steps = Int(window) * 2   // 0.5s granularity
+        for _ in 0..<steps {
+            if let v = value() { return v }
+            if abort() { return nil }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return value()
     }
 
     @discardableResult
@@ -152,10 +173,12 @@ final class RingSyncCoordinator {
         spo2State = .measuring
         latestSpO2Value = nil
         engine?.startSpO2()
-        try? await Task.sleep(nanoseconds: spo2MeasureSeconds * 1_000_000_000)
+        let result = await pollForValue(
+            window: spo2MeasureSeconds,
+            value: { self.latestSpO2Value },
+            abort: { false }
+        )
         engine?.stopSpO2()
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        let result = latestSpO2Value
         spo2State = result.map { .done($0) } ?? .failed
         return result
     }
@@ -166,6 +189,9 @@ final class RingSyncCoordinator {
         switch event {
         case let .heartRateSample(bpm, _):
             latestHRValue = bpm
+        case .heartRateComplete:
+            // The ring finished a measurement without a usable reading (not worn / temporary error).
+            if hrState == .measuring, latestHRValue == nil { hrNoReadingReported = true }
         case let .spo2Result(value, _):
             latestSpO2Value = value
         case let .spo2Progress(percent, _):

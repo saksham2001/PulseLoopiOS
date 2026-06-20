@@ -75,6 +75,48 @@ final class ColmiSyncEngine: RingSyncEngine {
         // Zero the ring-history activity days we're about to re-sum, so re-syncs stay idempotent.
         Task { await PulseEventBus.shared.publish(.activitySyncReset(sinceDaysAgo: 7)) }
         requestActivity()
+        armWatchdog()
+    }
+
+    // MARK: History-sync watchdog
+
+    /// If a stage's expected reply never arrives (empty history / non-replying firmware), advance to
+    /// the next stage instead of stalling the whole chain. Re-armed on every stage request; cancelled
+    /// on each advance and on disconnect/finish.
+    private var watchdog: Task<Void, Never>?
+    private let watchdogTimeout: UInt64 = 10_000_000_000   // 10s
+
+    private func armWatchdog() {
+        watchdog?.cancel()
+        let expected = stage
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: self?.watchdogTimeout ?? 10_000_000_000)
+            guard !Task.isCancelled, let self, self.stage == expected else { return }
+            self.forceAdvanceStage(from: expected)
+        }
+    }
+
+    /// Skip a stuck stage and request the next one. Mirrors the normal stage order.
+    private func forceAdvanceStage(from stuck: Stage) {
+        switch stuck {
+        case .activity:
+            daysAgo = 0; stage = .heartRate; requestHeartRate()
+        case .heartRate:
+            stage = .stress; requestStress()
+        case .stress:
+            stage = .spo2; requestSpo2()
+        case .spo2:
+            stage = .sleep; requestSleep()
+        case .sleep:
+            daysAgo = 0; stage = .hrv; requestHRV()
+        case .hrv:
+            stage = .temperature; requestTemperature()
+        case .temperature:
+            finishSync()
+        case .idle, .done:
+            break
+        }
+        if stage != .done { armWatchdog() }
     }
 
     /// Generic `RingSyncEngine.handle` — for Colmi, big-data completion and history paging are driven
@@ -119,6 +161,7 @@ final class ColmiSyncEngine: RingSyncEngine {
     func handleHistoryFrame(_ data: Data) -> [RingDecodedEvent] {
         let events = decoder.decodeHistory(data, day: syncDay, calendar: calendar)
         advanceAfterPagedFrame(data)
+        armWatchdog()   // progress made — reset the stall timer
         return events
     }
 
@@ -128,10 +171,12 @@ final class ColmiSyncEngine: RingSyncEngine {
         case ColmiCommandID.bigDataSpo2:
             stage = .sleep
             requestSleep()
+            armWatchdog()
         case ColmiCommandID.bigDataSleep:
             stage = .hrv
             daysAgo = 0
             requestHRV()
+            armWatchdog()
         case ColmiCommandID.bigDataTemperature:
             finishSync()
         default:
@@ -196,6 +241,9 @@ final class ColmiSyncEngine: RingSyncEngine {
 
     private func finishSync() {
         stage = .done
+        watchdog?.cancel()
+        watchdog = nil
+        Task { await PulseEventBus.shared.publish(.syncProgress(stage: "done")) }
     }
 
     // MARK: Realtime HR keepalive

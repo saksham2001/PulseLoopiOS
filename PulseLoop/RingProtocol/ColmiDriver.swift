@@ -24,6 +24,7 @@ final class ColmiDriver: WearableDriver {
     // MARK: BLE topology
     let serviceUUIDs: [CBUUID] = [CBUUID(string: ColmiUUIDs.serviceV1), CBUUID(string: ColmiUUIDs.serviceV2)]
     let writeUUID = CBUUID(string: ColmiUUIDs.write)
+    let commandUUID: CBUUID? = CBUUID(string: ColmiUUIDs.command)   // big-data requests go here
     let notifyUUIDs: [CBUUID] = [CBUUID(string: ColmiUUIDs.notifyV1), CBUUID(string: ColmiUUIDs.notifyV2)]
     let batteryServiceUUID: CBUUID? = nil   // battery is in-band (cmd 0x03 / notification 0x73·0x0c)
     let batteryCharUUID: CBUUID? = nil
@@ -35,6 +36,12 @@ final class ColmiDriver: WearableDriver {
         // Big-data requests (0xbc) are sent raw, not 16-byte framed.
         if command.first == ColmiCommandID.bigDataV2 { return command }
         return ColmiPacket.frame([UInt8](command))
+    }
+
+    /// Big-data (`0xbc`) requests must go to the Command characteristic (`de5bf72a`), not the normal
+    /// write char — replies come back on the V2 notify char. Everything else uses the write char.
+    func usesCommandChannel(for frame: Data) -> Bool {
+        frame.first == ColmiCommandID.bigDataV2
     }
 
     // MARK: Inbound decode (+ reassembly + history routing)

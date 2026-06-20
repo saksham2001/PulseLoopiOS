@@ -23,6 +23,11 @@ protocol WearableDriver: AnyObject {
     var writeUUID: CBUUID { get }
     var notifyUUIDs: [CBUUID] { get }          // jring: 1; Colmi: 2 (V1 normal + V2 big-data)
 
+    /// Optional second write characteristic for out-of-band / big-data requests. Colmi sends `0xbc`
+    /// big-data requests (SpO2/sleep/temperature) here (`de5bf72a`), with replies on the V2 notify
+    /// char. `nil` ⇒ the device has a single write characteristic (jring).
+    var commandUUID: CBUUID? { get }
+
     /// GATT battery, when the device exposes it. `nil` ⇒ battery arrives in-band as a decoded event
     /// (Colmi reports battery via command `0x03` / notification, not a GATT characteristic).
     var batteryServiceUUID: CBUUID? { get }
@@ -32,6 +37,10 @@ protocol WearableDriver: AnyObject {
     /// append the trailing-sum checksum byte (16 total).
     func frame(_ command: Data) -> Data
 
+    /// Whether an outbound frame must go to the `commandUUID` characteristic instead of `writeUUID`.
+    /// Colmi: true for `0xbc` big-data requests. Default: false.
+    func usesCommandChannel(for frame: Data) -> Bool
+
     /// Decode one inbound notify frame, tagged with the characteristic it arrived on. Returns 0..n
     /// fully-decoded events (0 while a multi-packet big-data frame is still being reassembled). All
     /// checksum verification and reassembly is hidden here.
@@ -39,6 +48,12 @@ protocol WearableDriver: AnyObject {
 
     /// The stateful brain: startup sequence + (for Colmi) the response-driven history machine.
     func makeSyncEngine() -> RingSyncEngine
+}
+
+extension WearableDriver {
+    /// Most devices have a single write characteristic.
+    var commandUUID: CBUUID? { nil }
+    func usesCommandChannel(for frame: Data) -> Bool { false }
 }
 
 /// Per-device orchestration of command flows. The jring engine is fire-and-forget (`handle` is a

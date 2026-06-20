@@ -65,6 +65,8 @@ final class RingBLEClient: NSObject {
     /// nothing for a device the system has never connected to before.
     private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
     private var writeChar: CBCharacteristic?
+    /// Optional second write characteristic for big-data requests (Colmi `de5bf72a`).
+    private var commandChar: CBCharacteristic?
     private var notifyChars: [CBUUID: CBCharacteristic] = [:]
     private var batteryCharacteristic: CBCharacteristic?
 
@@ -74,7 +76,8 @@ final class RingBLEClient: NSObject {
     private var activeSyncEngine: RingSyncEngine?
 
     // MARK: Write serialization
-    private var writeQueue: [Data] = []
+    /// Each queued write carries its already-framed bytes and which characteristic to send it to.
+    private var writeQueue: [(data: Data, useCommandChannel: Bool)] = []
     private var writeInFlight = false
 
     /// When true, an unexpected disconnect triggers an automatic reconnect attempt.
@@ -155,10 +158,12 @@ final class RingBLEClient: NSObject {
     }
 
     /// Queue a logical command for writing. The active driver's framing (padding/checksum) is applied
-    /// here, so callers/engines deal in unframed commands. Writes are serialized.
+    /// here, so callers/engines deal in unframed commands. The driver also decides whether the frame
+    /// goes to the normal write char or the big-data command char. Writes are serialized.
     func enqueueWrite(_ data: Data) {
         let framed = activeDriver?.frame(data) ?? data
-        writeQueue.append(framed)
+        let useCommand = activeDriver?.usesCommandChannel(for: framed) ?? false
+        writeQueue.append((data: framed, useCommandChannel: useCommand))
         pumpWrites()
     }
 
@@ -212,10 +217,13 @@ final class RingBLEClient: NSObject {
               let peripheral,
               let writeChar,
               !writeQueue.isEmpty else { return }
-        let data = writeQueue.removeFirst()
+        let item = writeQueue.removeFirst()
+        // Big-data requests go to the command char (`de5bf72a`); fall back to the write char if the
+        // device/firmware didn't expose a separate one.
+        let target = (item.useCommandChannel ? commandChar : writeChar) ?? writeChar
         writeInFlight = true
-        publishRawPacket(direction: .outgoing, data: data)
-        peripheral.writeValue(data, for: writeChar, type: .withResponse)
+        publishRawPacket(direction: .outgoing, data: item.data)
+        peripheral.writeValue(item.data, for: target, type: .withResponse)
     }
 
     private func publishRawPacket(direction: PacketDirection, data: Data) {
@@ -338,6 +346,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
     ) {
         MainActor.assumeIsolated {
             writeChar = nil
+            commandChar = nil
             notifyChars = [:]
             batteryCharacteristic = nil
             writeInFlight = false
@@ -364,6 +373,7 @@ extension RingBLEClient: CBPeripheralDelegate {
                 if driver.serviceUUIDs.contains(service.uuid) {
                     var chars = driver.notifyUUIDs
                     chars.append(driver.writeUUID)
+                    if let command = driver.commandUUID { chars.append(command) }
                     peripheral.discoverCharacteristics(chars, for: service)
                 } else if service.uuid == driver.batteryServiceUUID {
                     if let batteryChar = driver.batteryCharUUID {
@@ -384,6 +394,8 @@ extension RingBLEClient: CBPeripheralDelegate {
             for characteristic in service.characteristics ?? [] {
                 if characteristic.uuid == driver.writeUUID {
                     writeChar = characteristic
+                } else if characteristic.uuid == driver.commandUUID {
+                    commandChar = characteristic
                 } else if driver.notifyUUIDs.contains(characteristic.uuid) {
                     notifyChars[characteristic.uuid] = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)

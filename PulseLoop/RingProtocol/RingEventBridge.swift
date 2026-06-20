@@ -92,11 +92,11 @@ enum RingEventBridge {
         }
     }
 
-    /// A sleep session start is plausible if it falls within roughly the last two days and is
-    /// not in the future. Ring timestamps are "local-like" (see Protocol.md), so a wildly
-    /// off value indicates a misdecoded frame.
+    /// A sleep session start is plausible if it falls within roughly the last week and is not in the
+    /// future. The Colmi sleep big-data payload can carry several recent nights (day-indexed), so the
+    /// window matches the ~8-day history horizon; a value outside it indicates a misdecoded frame.
     static func isPlausibleSleepStart(_ start: Date, now: Date = Date()) -> Bool {
-        let lower = now.addingTimeInterval(-2 * 24 * 3600)
+        let lower = now.addingTimeInterval(-8 * 24 * 3600)
         let upper = now.addingTimeInterval(3600)
         return start >= lower && start <= upper
     }
