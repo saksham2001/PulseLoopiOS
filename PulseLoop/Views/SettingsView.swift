@@ -40,53 +40,13 @@ struct SettingsView: View {
                     SecondaryButton(title: "Forget ring", systemImage: "trash") { ble.forget() }
                 } else {
                     StatusCopy(title: "Status", body: ble.state.rawValue.capitalized)
-                    if ble.state == .scanning {
-                        SecondaryButton(title: "Stop scanning", systemImage: "stop.circle") { ble.stopScanning() }
-                    } else {
-                        SecondaryButton(title: "Scan for ring", systemImage: "dot.radiowaves.left.and.right") { ble.startScanning() }
+                    PrimaryButton(title: "Add a ring", systemImage: "plus.circle") {
+                        path.append(AppRoute.pairing)
                     }
                     if ble.hasLastKnownRing && ble.state != .reconnecting {
                         SecondaryButton(title: "Reconnect last ring", systemImage: "arrow.clockwise") { ble.connectLastKnown() }
+                        SecondaryButton(title: "Forget ring", systemImage: "trash") { ble.forget() }
                     }
-                    if ble.state == .scanning && ble.discovered.isEmpty {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Scanning… wake the ring by tapping or moving it.")
-                                .font(.caption)
-                                .foregroundStyle(PulseColors.textMuted)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    ForEach(ble.discovered) { ring in
-                        Button {
-                            ble.connect(to: ring.id)
-                        } label: {
-                            HStack {
-                                Image(systemName: ring.isLikelyRing ? "circle.hexagongrid.circle.fill" : "dot.radiowaves.left.and.right")
-                                    .foregroundStyle(ring.isLikelyRing ? PulseColors.accent : PulseColors.textMuted)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(ring.name).font(.subheadline.weight(.medium))
-                                    if let type = ring.deviceType {
-                                        Text(type.displayName).font(.caption2).foregroundStyle(PulseColors.accent)
-                                    }
-                                }
-                                Spacer()
-                                Text("\(ring.rssi) dBm")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(PulseColors.textMuted)
-                            }
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                if let error = ble.lastError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(PulseColors.heartRate)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 CoachSettingsSection()

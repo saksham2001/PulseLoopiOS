@@ -6,6 +6,7 @@ enum AppRoute: Hashable {
     case recordLive(UUID)
     case recordSummary(UUID)
     case settings
+    case pairing
     case debug
     case componentGallery
 }

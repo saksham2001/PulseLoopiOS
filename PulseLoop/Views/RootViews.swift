@@ -62,6 +62,8 @@ struct RootAppView: View {
                     RecordSummaryView(sessionId: id, path: $path)
                 case .settings:
                     SettingsView(path: $path)
+                case .pairing:
+                    PairingView(onConnected: { path.removeLast() })
                 case .debug:
                     DebugView()
                 case .componentGallery:
@@ -375,25 +377,9 @@ struct OnboardingGoalsView: View {
 struct OnboardingPairView: View {
     let finish: () -> Void
     var body: some View {
-        VStack(spacing: 18) {
-            OnboardingHeader(title: "Add your ring", subtitle: "Connect your ring now, or explore with demo data and pair later from Settings.")
-            PulseCard {
-                HStack {
-                    Image(systemName: "circle.hexagongrid.circle.fill")
-                        .foregroundStyle(PulseColors.accent)
-                    VStack(alignment: .leading) {
-                        Text("Compatible rings")
-                            .font(.headline)
-                        Text("jring · Colmi R02")
-                            .font(.caption)
-                            .foregroundStyle(PulseColors.textMuted)
-                    }
-                    Spacer()
-                }
-            }
-            PrimaryButton(title: "Finish setup", systemImage: "checkmark", action: finish)
-        }
-        .padding(24)
+        // The real pairing experience: swipe a model, scan, connect — or skip. Connecting OR skipping
+        // completes onboarding.
+        PairingView(onConnected: finish, onSkip: finish)
     }
 }
 

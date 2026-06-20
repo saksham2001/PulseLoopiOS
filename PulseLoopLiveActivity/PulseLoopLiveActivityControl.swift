@@ -12,7 +12,7 @@ import WidgetKit
 struct PulseLoopLiveActivityControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(
-            kind: "xyz.sakshambhutani.PulseLoop.PulseLoopLiveActivity",
+            kind: "xyz.sakshambhutani.pulseloop2.PulseLoopLiveActivity",
             provider: Provider()
         ) { value in
             ControlWidgetToggle(
