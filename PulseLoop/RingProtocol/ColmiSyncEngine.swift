@@ -84,13 +84,17 @@ final class ColmiSyncEngine: RingSyncEngine {
     /// the next stage instead of stalling the whole chain. Re-armed on every stage request; cancelled
     /// on each advance and on disconnect/finish.
     private var watchdog: Task<Void, Never>?
-    private let watchdogTimeout: UInt64 = 10_000_000_000   // 10s
+    private let watchdogTimeout: UInt64 = 10_000_000_000          // 10s for most stages
+    private let activityWatchdogTimeout: UInt64 = 20_000_000_000  // 20s — activity spans 8 days, can be slow
 
     private func armWatchdog() {
         watchdog?.cancel()
         let expected = stage
+        // Activity is the one destructive stage (its days are reset on first bucket), so be extra
+        // lenient: give it longer, and re-arm on every bucket so a brief ring pause can't skip days.
+        let timeout = (expected == .activity) ? activityWatchdogTimeout : watchdogTimeout
         watchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: self?.watchdogTimeout ?? 10_000_000_000)
+            try? await Task.sleep(nanoseconds: timeout)
             guard !Task.isCancelled, let self, self.stage == expected else { return }
             self.forceAdvanceStage(from: expected)
         }
@@ -258,16 +262,24 @@ final class ColmiSyncEngine: RingSyncEngine {
     }
 
     func stopHeartRate() {
+        // Stop whichever HR mode is active. Spot uses the manual 0x69 stream; workout uses realtime 0x1e.
+        if manualHRActive {
+            manualHRActive = false
+            writer?.enqueue(Data(encoder.manualHeartRate(enable: false)))
+        }
         guard realtimeHRActive else { return }
         realtimeHRActive = false
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: false)))
     }
 
-    /// Spot HR uses the ring's manual single measurement (0x69) — the reply carries an error byte the
-    /// decoder maps to a sample or `.heartRateComplete` (no-reading). Realtime 0x1e is reserved for
-    /// the workout live stream.
+    /// Spot HR uses the ring's manual single measurement (0x69) — a *continuous* stream that warms up
+    /// from 0 to a real bpm. The decoder maps each reply to a sample or `.heartRateComplete`
+    /// (no-reading). Realtime 0x1e is reserved for the workout live stream. The coordinator settles
+    /// over a short window then calls `stopHeartRate()`, which sends `0x69 02` to stop the stream.
+    private var manualHRActive = false
     func measureHeartRateSpot() {
-        writer?.enqueue(Data(encoder.manualHeartRate()))
+        manualHRActive = true
+        writer?.enqueue(Data(encoder.manualHeartRate(enable: true)))
     }
 
     // Colmi has no instant single-SpO2 reading; SpO2 is an all-day background metric. A "spot" SpO2

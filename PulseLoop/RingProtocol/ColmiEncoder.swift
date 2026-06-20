@@ -59,7 +59,10 @@ struct ColmiEncoder {
 
     // MARK: Measurements / actions
 
-    func manualHeartRate() -> [UInt8] { [ColmiCommandID.manualHeartRate, 0x01] }
+    /// Manual single HR is a continuous stream: `0x69 01` starts, `0x69 02` stops it.
+    func manualHeartRate(enable: Bool = true) -> [UInt8] {
+        [ColmiCommandID.manualHeartRate, enable ? 0x01 : 0x02]
+    }
 
     func realtimeHeartRate(enable: Bool) -> [UInt8] {
         [ColmiCommandID.realtimeHeartRate, enable ? 0x01 : 0x02]

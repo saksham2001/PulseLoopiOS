@@ -65,7 +65,10 @@ actor PulseEventBus {
 final class EventPersistenceSubscriber {
     private let context: ModelContext
     private var task: Task<Void, Never>?
-    
+    /// Days (midnight) whose ring-history activity total has been reset during the current sync run, so
+    /// each day is zeroed once on its first bucket rather than all days up front.
+    private var activityDaysResetThisRun: Set<Date> = []
+
     init(context: ModelContext) {
         self.context = context
     }
@@ -145,11 +148,16 @@ final class EventPersistenceSubscriber {
             ))
         case let .activityBucket(timestamp, steps, distanceMeters):
             // Per-quarter-hour ring history: sum into the day (calories omitted — unverified field).
-            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, context: context)
-        case let .activitySyncReset(sinceDaysAgo):
-            // A fresh ring history sync is starting; zero the days we're about to re-sum so re-syncs
-            // stay idempotent (cleared data can't reappear inflated).
-            ActivityService.zeroRingActivityDays(sinceDaysAgo: sinceDaysAgo, context: context)
+            // Reset a day's total only on the *first* bucket seen for it this sync run, so a stalled or
+            // aborted sync never leaves a day zeroed-but-empty (idempotent re-sync without up-front wipe).
+            let dayKey = Calendar.current.startOfDay(for: timestamp)
+            let resetThisDay = !activityDaysResetThisRun.contains(dayKey)
+            if resetThisDay { activityDaysResetThisRun.insert(dayKey) }
+            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, resetDay: resetThisDay, context: context)
+        case .activitySyncReset:
+            // A fresh ring history sync is starting: clear the per-run reset tracking so each day gets
+            // zeroed once on its first incoming bucket (not all days up front).
+            activityDaysResetThisRun.removeAll()
         case let .heartRateSample(bpm, timestamp):
             persistMeasurement(kind: .heartRate, value: Double(bpm), timestamp: timestamp, source: .live, kindLabel: "hr_sample")
         case let .spo2Result(value, timestamp):

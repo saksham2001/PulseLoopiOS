@@ -12,9 +12,11 @@ final class ColmiDriver: WearableDriver {
     private let decoder = ColmiDecoder()
     private let engine: ColmiSyncEngine
 
-    // Big-data reassembly state (V2 channel).
-    private var bigDataBuffer: Data?
-    private var bigDataExpectedLength = 0
+    // Big-data reassembly state (V2 channel), keyed by the 0xbc *type* byte so interleaved/fragmented
+    // SpO2 / sleep / temperature replies reassemble independently instead of corrupting one buffer.
+    private var bigDataBuffers: [UInt8: Data] = [:]
+    /// The type of the most recently started buffer — a continuation chunk (no 0xbc header) appends here.
+    private var activeBigDataType: UInt8?
 
     init(writer: RingCommandWriter) {
         self.writer = writer
@@ -66,28 +68,39 @@ final class ColmiDriver: WearableDriver {
     }
 
     /// Accumulate V2 notifications until a full `0xbc` frame (length + 6 bytes) is present, then decode.
+    /// Buffers are keyed by the `0xbc` *type* byte so a fragmented SpO2 reply and an interleaved sleep
+    /// reply reassemble independently. A header chunk (`0xbc <type> <lenLo> <lenHi> …`) starts/replaces
+    /// that type's buffer and becomes the active type; a continuation chunk appends to the active type.
     private func ingestBigData(_ data: Data) -> [RingDecodedEvent] {
-        if bigDataBuffer != nil {
-            bigDataBuffer!.append(data)
-        } else if data.first == ColmiCommandID.bigDataV2 {
+        let type: UInt8
+        if data.first == ColmiCommandID.bigDataV2 {
             let v = [UInt8](data)
             guard v.count >= 4 else { return [] }
-            bigDataExpectedLength = ColmiBytes.u16(v[2], v[3])
-            bigDataBuffer = data
+            type = v[1]
+            bigDataBuffers[type] = data        // start (or restart) this type's buffer
+        } else if let active = activeBigDataType, bigDataBuffers[active] != nil {
+            type = active
+            bigDataBuffers[active]!.append(data)   // continuation of the in-flight frame
         } else {
             return [.unknown(commandId: data.first ?? 0, raw: data)]
         }
 
-        guard let buffer = bigDataBuffer else { return [] }
-        if buffer.count < bigDataExpectedLength + 6 {
-            return []   // wait for more packets
+        guard let buffer = bigDataBuffers[type] else { return [] }
+        let bytes = [UInt8](buffer)
+        guard bytes.count >= 4 else { return [] }
+        let expectedLength = ColmiBytes.u16(bytes[2], bytes[3])
+        if buffer.count < expectedLength + 6 {
+            // Still incomplete — this type is the one continuation chunks should append to.
+            activeBigDataType = type
+            return []
         }
-        let complete = buffer
-        bigDataBuffer = nil
-        bigDataExpectedLength = 0
-        let events = decoder.decodeBigData(complete)
+        // Complete — consume this type's buffer. Point `activeBigDataType` at whatever buffer is still
+        // open (if any), so a frame that completes in one packet doesn't orphan another in-flight one.
+        bigDataBuffers[type] = nil
+        activeBigDataType = bigDataBuffers.keys.first
+        let events = decoder.decodeBigData(buffer)
         // Big-data completion advances the history machine to its next stage.
-        engine.handleBigDataComplete(type: [UInt8](complete).count > 1 ? complete[1] : 0)
+        engine.handleBigDataComplete(type: type)
         return events
     }
 

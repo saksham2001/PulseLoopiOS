@@ -25,6 +25,7 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
 
     // Interaction capabilities
     case manualHeartRate      // single-shot on-demand HR
+    case manualSpo2           // single-shot on-demand SpO2 (jring; Colmi has no instant SpO2)
     case realtimeHeartRate    // live HR stream
     case realtimeSteps        // live activity stream
     case findDevice

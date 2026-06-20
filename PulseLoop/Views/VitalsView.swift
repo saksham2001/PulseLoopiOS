@@ -21,9 +21,18 @@ struct VitalsView: View {
                     Text("Live measurements and trends").font(.system(size: 14)).foregroundStyle(PulseColors.textSecondary)
                 }
 
-                HStack(spacing: 8) {
-                    QuickActionButton(label: "Start HR", accent: true) { measuring = .hr }
-                    QuickActionButton(label: "Start SpO₂") { measuring = .spo2 }
+                // On-demand measurement buttons are capability-gated: a ring that can't do an instant
+                // reading (e.g. Colmi has no spot SpO2) simply doesn't show that button.
+                let caps = MetricsService.deviceCapabilities(modelContext)
+                if caps.contains(.manualHeartRate) || caps.contains(.manualSpo2) {
+                    HStack(spacing: 8) {
+                        if caps.contains(.manualHeartRate) {
+                            QuickActionButton(label: "Start HR", accent: true) { measuring = .hr }
+                        }
+                        if caps.contains(.manualSpo2) {
+                            QuickActionButton(label: "Start SpO₂") { measuring = .spo2 }
+                        }
+                    }
                 }
 
                 DetailCard(title: "Heart rate", color: PulseColors.heartRate) {

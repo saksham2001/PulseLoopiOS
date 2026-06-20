@@ -23,6 +23,7 @@ final class JringCoordinator: WearableCoordinator {
 
     let capabilities: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .sleep, .battery,
+        .manualHeartRate, .manualSpo2,   // jring supports on-demand HR + SpO2 spot readings
         .realtimeHeartRate, .findDevice,
     ]
 

@@ -36,6 +36,16 @@ final class CapabilityGatingTests: XCTestCase {
         XCTAssertTrue(MetricsService.supports(.temperature, context: context))
     }
 
+    func testManualSpo2GatingDiffersByDevice() {
+        // jring supports an on-demand SpO2 spot reading; Colmi does not (SpO2 is all-day only).
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.manualSpo2))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.manualSpo2))
+        // Both still expose SpO2 history (the graph) and manual HR.
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.spo2))
+        XCTAssertTrue(ColmiCoordinator().capabilities.contains(.spo2))
+        XCTAssertTrue(ColmiCoordinator().capabilities.contains(.manualHeartRate))
+    }
+
     func testLegacyDeviceFallsBackToBaseMetrics() throws {
         // A device row that predates capability stamping (empty capabilitiesRaw) should still show
         // the base metrics so existing users don't lose HR/SpO₂.

@@ -34,6 +34,9 @@ final class RingSyncCoordinator {
     /// Max time to wait for an on-demand reading before giving up. A Colmi manual HR reading can need
     /// 15–30s of on-finger warm-up, so we poll up to this window and succeed the moment a value lands.
     private let hrMeasureSeconds: UInt64 = 30
+    /// After the first valid bpm, keep reading this long so the reported value is settled, not a jumpy
+    /// first sample.
+    private let hrSettleSeconds: Int = 4
     private let spo2MeasureSeconds: UInt64 = 40
 
     private let client: RingBLEClient
@@ -140,15 +143,23 @@ final class RingSyncCoordinator {
         hrState = .measuring
         latestHRValue = nil
         hrNoReadingReported = false
-        // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69).
+        // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69
+        // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
         engine?.measureHeartRateSpot()
-        // Poll until a real reading arrives (fast path) or the warm-up window elapses. Bail early if
-        // the ring explicitly reports "no reading / not worn".
-        let result = await pollForValue(
+        // Phase 1 — warm up: poll until the first real reading or the window elapses / no-reading.
+        let firstReading = await pollForValue(
             window: hrMeasureSeconds,
             value: { self.latestHRValue },
             abort: { self.hrNoReadingReported }
         )
+        // Phase 2 — settle: keep reading briefly so the reported value is stable, not a first jump.
+        var result = firstReading
+        if firstReading != nil {
+            for _ in 0..<(hrSettleSeconds * 2) {   // 0.5s granularity
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if let v = latestHRValue { result = v }   // latest stable sample
+            }
+        }
         engine?.stopHeartRate()
         hrState = result.map { .done($0) } ?? .failed
         return result

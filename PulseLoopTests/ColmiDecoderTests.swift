@@ -212,6 +212,45 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertFalse(temps.isEmpty, "reassembled frame should decode")
     }
 
+    /// A fragmented SpO2 reply must not be corrupted by a complete sleep reply arriving mid-reassembly
+    /// (the real-capture bug). Type-keyed buffers should let both decode independently.
+    @MainActor
+    func testInterleavedBigDataDoesNotCorrupt() {
+        let driver = ColmiDriver(writer: NullWriter())
+        let notifyV2 = CBUUID(string: ColmiUUIDs.notifyV2)
+
+        // SpO2 frame: one day, hour 0 has min=96,max=98 (→ 97); pad to 24 hourly pairs.
+        var spo2Payload: [UInt8] = [0x00, 96, 98]
+        spo2Payload.append(contentsOf: [UInt8](repeating: 0, count: 46))
+        let spo2Full = bigData(type: ColmiCommandID.bigDataSpo2, payload: spo2Payload)
+        // Sleep frame: complete in one notification (daysInPacket=1, one session deep+rem).
+        let start = 480, end = 540
+        let sleepPayload: [UInt8] = [
+            0x01, 0x00, 0x08,
+            UInt8(start & 0xff), UInt8(start >> 8), UInt8(end & 0xff), UInt8(end >> 8),
+            ColmiCommandID.sleepDeep, 30, ColmiCommandID.sleepREM, 30,
+        ]
+        let len = sleepPayload.count
+        var sleepBytes: [UInt8] = [ColmiCommandID.bigDataV2, ColmiCommandID.bigDataSleep,
+                                   UInt8(len & 0xff), UInt8((len >> 8) & 0xff), 0, 0]
+        sleepBytes.append(contentsOf: sleepPayload)
+
+        // Interleave: SpO2 header chunk → complete sleep frame → SpO2 continuation.
+        let spo2First = spo2Full.prefix(12)
+        let spo2Rest = spo2Full.suffix(from: 12)
+        _ = driver.ingest(Data(spo2First), from: notifyV2)         // SpO2 partial
+        let sleepEvents = driver.ingest(Data(sleepBytes), from: notifyV2)   // complete sleep mid-SpO2
+        let spo2Events = driver.ingest(Data(spo2Rest), from: notifyV2)      // SpO2 completes
+
+        XCTAssertTrue(sleepEvents.contains { if case .sleepTimeline = $0 { return true }; return false },
+                      "sleep should decode even though it arrived mid-SpO2 reassembly")
+        let spo2s = spo2Events.compactMap { event -> Double? in
+            if case let .historyMeasurement(kind, value, _) = event, kind == .spo2 { return value }
+            return nil
+        }
+        XCTAssertEqual(spo2s.first, 97, "SpO2 should reassemble uncorrupted")
+    }
+
     // MARK: Real captured R11 packets (from a diagnostics export)
 
     /// The 7 real `0x43` activity buckets from the capture. Each is one quarter-hour bucket dated
@@ -250,13 +289,17 @@ final class ColmiDecoderTests: XCTestCase {
     func testActivityBucketSummingIsIdempotentAcrossResync() throws {
         let context = try TestSupport.makeContext()
 
+        // Mirror EventPersistenceSubscriber: reset each day once on its first bucket of the run.
         func runSync() {
-            ActivityService.zeroRingActivityDays(sinceDaysAgo: 7, context: context)
+            var resetDays: Set<Date> = []
             for hex in Self.realActivityBuckets {
                 guard let data = try? Data(hexString: hex) else { continue }
                 let events = decoder.decodeHistory(data, day: activityNow, calendar: calendar, now: activityNow)
                 if case let .activityBucket(ts, steps, dist) = events.first {
-                    ActivityService.applyActivityBucket(date: ts, steps: steps, distanceMeters: dist, context: context)
+                    let dayKey = calendar.startOfDay(for: ts)
+                    let reset = !resetDays.contains(dayKey)
+                    resetDays.insert(dayKey)
+                    ActivityService.applyActivityBucket(date: ts, steps: steps, distanceMeters: dist, resetDay: reset, context: context)
                 }
             }
             try? context.save()
