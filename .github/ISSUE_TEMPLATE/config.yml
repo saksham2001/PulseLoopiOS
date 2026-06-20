@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & discussion
+    url: https://github.com/saksham2001/PulseLoopIOS/discussions
+    about: Ask questions, share setups, or discuss ideas before filing an issue.
+  - name: 🔒 Report a security or privacy vulnerability
+    url: https://github.com/saksham2001/PulseLoopIOS/security/advisories/new
+    about: Please report vulnerabilities privately — do NOT open a public issue.
+  - name: 📖 Project writeup
+    url: https://sakshambhutani.xyz/projects/20_project/
+    about: How PulseLoop works, in depth.

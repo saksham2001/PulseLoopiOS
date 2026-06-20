@@ -1,0 +1,10 @@
+# Code owners for PulseLoop.
+#
+# When branch protection is set to "require review from Code Owners", every PR
+# will require an approving review from the owner(s) listed here before it can
+# be merged. Right now that's the maintainer.
+#
+# Syntax: <path pattern>  <@owner ...>
+
+# Default owner for everything in the repo.
+*       @saksham2001

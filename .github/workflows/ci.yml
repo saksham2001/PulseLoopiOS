@@ -1,0 +1,82 @@
+name: CI
+
+# Build the app + Live Activity extension and run the unit-test suite on a
+# simulator. Everything here is hermetic: the tests use in-memory SwiftData and
+# a mocked OpenAI client (api key "sk-test"), so no secrets are required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      # Pick the newest booted-capable iPhone simulator available on the runner.
+      # The app targets a recent iOS, so we resolve the latest iOS runtime at
+      # build time instead of hard-coding a device/OS that an image bump may drop.
+      - name: Resolve simulator destination
+        id: sim
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+              cands=[dev for runtime,devs in d.items() if 'iOS' in runtime for dev in devs \
+              if dev.get('isAvailable') and dev['name'].startswith('iPhone')]; \
+              cands.sort(key=lambda x: x['name']); \
+              print(cands[-1]['udid'] if cands else '')")
+          if [ -z "$DEVICE" ]; then
+            echo "No available iPhone simulator found"; exit 1
+          fi
+          echo "Using simulator UDID: $DEVICE"
+          echo "udid=$DEVICE" >> "$GITHUB_OUTPUT"
+
+      - name: Build & run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project PulseLoop.xcodeproj \
+            -scheme PulseLoop \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcbeautify --renderer github-actions
+        env:
+          # Belt-and-suspenders: keep tests offline even if a code path tries the network.
+          OPENAI_API_KEY: sk-test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore

@@ -1,0 +1,82 @@
+# SwiftLint configuration for PulseLoop.
+#
+# Tuned to be helpful, not hostile, for an open-source project taking outside
+# PRs: catch real smells and keep the codebase consistent, but don't reject
+# contributions over cosmetic line-length or whitespace nits. Tighten over time.
+
+included:
+  - PulseLoop
+  - PulseLoopLiveActivity
+  - PulseLoopTests
+
+excluded:
+  - .build
+  - DerivedData
+  - "**/*.generated.swift"
+
+# Rules that are off by default but worth opting into.
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - closure_spacing
+  - contains_over_first_not_nil
+  - first_where
+  - last_where
+  - sorted_first_last
+  - redundant_nil_coalescing
+  - unneeded_parentheses_in_closure_argument
+  - toggle_bool
+  - yoda_condition
+
+# Rules we deliberately relax for this project.
+disabled_rules:
+  - todo                 # TODO/FIXME markers are fine in an evolving codebase.
+  - trailing_comma       # Multiline trailing commas are a matter of taste here.
+
+line_length:
+  warning: 140
+  error: 200
+  ignores_urls: true
+  ignores_comments: true
+
+type_body_length:
+  warning: 400
+  error: 600
+
+file_length:
+  warning: 600
+  error: 1000
+  ignore_comment_only_lines: true
+
+function_body_length:
+  warning: 80
+  error: 150
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+# Allow short, conventional names common in Swift / BLE / math code.
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  excluded:
+    - id
+    - x
+    - y
+    - z
+    - dx
+    - dy
+    - hr   # heart rate
+    - rr   # RR interval
+    - i
+    - j
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 50
+    error: 60
+
+reporter: "xcode"
