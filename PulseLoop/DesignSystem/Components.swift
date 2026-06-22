@@ -542,7 +542,7 @@ struct ActivityKind: Identifiable {
 
 enum ActivityMeta {
     /// Canonical types in display order (matches web `ACTIVITY_ORDER`).
-    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "hike", "other"]
+    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "dance", "hike", "other"]
 
     private static let table: [String: ActivityKind] = [
         "walk":   ActivityKind(type: "walk",   label: "Walk",   helper: "Outdoor or indoor walk",     symbol: "figure.walk",          gpsCapable: true),
@@ -552,6 +552,7 @@ enum ActivityMeta {
         "squash": ActivityKind(type: "squash", label: "Squash", helper: "Court session",              symbol: "figure.tennis",        gpsCapable: false),
         "sport":  ActivityKind(type: "sport",  label: "Sport",  helper: "General sport",              symbol: "figure.soccer",        gpsCapable: true),
         "yoga":   ActivityKind(type: "yoga",   label: "Yoga",   helper: "Mobility or stretching",     symbol: "figure.yoga",          gpsCapable: false),
+        "dance":  ActivityKind(type: "dance",  label: "Dance",  helper: "Studio, cardio, or freestyle", symbol: "figure.dance",       gpsCapable: false),
         "hike":   ActivityKind(type: "hike",   label: "Hike",   helper: "Trail or long walk",         symbol: "figure.hiking",        gpsCapable: true),
         "other":  ActivityKind(type: "other",  label: "Other",  helper: "Custom activity",            symbol: "sparkles",             gpsCapable: false)
     ]
@@ -589,10 +590,12 @@ enum ActivityMeta {
     /// Pace in min/km from distance + duration; nil when not meaningful.
     static func pace(distanceMeters: Double?, durationSeconds: Int?) -> String? {
         guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
-        let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
-        let m = Int(paceSecPerKm) / 60
-        let s = Int(paceSecPerKm.rounded()) % 60
-        return String(format: "%d:%02d /km", m, s)
+        let isImperial = WorkoutAppGroup.useImperialUnits
+        let factor = isImperial ? 1609.34 : 1000.0
+        let paceSecPerUnit = Double(durationSeconds) / (distanceMeters / factor)
+        let m = Int(paceSecPerUnit) / 60
+        let s = Int(paceSecPerUnit.rounded()) % 60
+        return String(format: "%d:%02d /%@", m, s, isImperial ? "mi" : "km")
     }
 }
 
@@ -624,7 +627,9 @@ struct ActivityWorkoutRow: View {
                     HStack(spacing: 12) {
                         Text(durationLabel).font(.system(size: 12).monospacedDigit())
                         if let distance = session.distanceMeters {
-                            Text(String(format: "%.2f km", distance / 1000)).font(.system(size: 12).monospacedDigit())
+                            let isImperial = WorkoutAppGroup.useImperialUnits
+                            let divisor = isImperial ? 1609.34 : 1000.0
+                            Text(String(format: "%.2f %@", distance / divisor, isImperial ? "mi" : "km")).font(.system(size: 12).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
                             Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())

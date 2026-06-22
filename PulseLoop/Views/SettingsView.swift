@@ -10,6 +10,9 @@ struct SettingsView: View {
     @Binding var path: NavigationPath
     @State private var diagnosticsURL: URL?
 
+    @AppStorage("useImperialUnits", store: UserDefaults(suiteName: WorkoutAppGroup.suite))
+    private var useImperialUnits = false
+
     private var appVersionLabel: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
@@ -49,7 +52,13 @@ struct SettingsView: View {
                     }
                 }
 
+                HealthSettingsSection()
+
                 CoachSettingsSection()
+
+                SectionHeader(title: "Preferences", action: nil)
+                Toggle("Use Imperial Units", isOn: $useImperialUnits)
+                    .tint(PulseColors.accent)
 
                 SectionHeader(title: "About", action: nil)
                 StatusCopy(title: "Version", body: appVersionLabel)

@@ -111,11 +111,14 @@ struct VitalsView: View {
 
                 if MetricsService.supports(.temperature, context: modelContext) {
                     DetailCard(title: "Skin temperature", color: PulseColors.temperature) {
-                        let label = tempSamples.last.map { String(format: "%.1f", $0.value) } ?? "--"
+                        let isImperial = WorkoutAppGroup.useImperialUnits
+                        let tempFormatter: (Double) -> Double = { isImperial ? ($0 * 9/5 + 32) : $0 }
+                        let unitStr = isImperial ? "°F" : "°C"
+                        let label = tempSamples.last.map { String(format: "%.1f", tempFormatter($0.value)) } ?? "--"
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
                             if !tempSamples.isEmpty {
-                                Text("°C").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                                Text(unitStr).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
                             }
                         }
                         .padding(.top, 12)

@@ -13,6 +13,9 @@ struct TodayView: View {
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
     private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
+    private var isImperial: Bool { WorkoutAppGroup.useImperialUnits }
+    private var distanceDivisor: Double { isImperial ? 1609.34 : 1000.0 }
+    private var distanceUnit: String { isImperial ? "mi" : "km" }
 
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
@@ -79,10 +82,10 @@ struct TodayView: View {
                     )
                     MetricCardButton(
                         metric: "distance", label: "Distance",
-                        value: summary.distanceMeters.map { String(format: "%.2f", $0 / 1000) } ?? "—",
-                        unit: summary.distanceMeters == nil ? nil : "km",
+                        value: summary.distanceMeters.map { String(format: "%.2f", $0 / distanceDivisor) } ?? "—",
+                        unit: summary.distanceMeters == nil ? nil : distanceUnit,
                         color: PulseColors.distance,
-                        delta: TodayInsights.deltaFor(summary, value: summary.distanceMeters.map { $0 / 1000 }, series: summary.trends.distance7d.map { $0.value / 1000 }),
+                        delta: TodayInsights.deltaFor(summary, value: summary.distanceMeters.map { $0 / distanceDivisor }, series: summary.trends.distance7d.map { $0.value / distanceDivisor }),
                         sparkline: summary.trends.distance7d.map(\.value)
                     )
                 }
