@@ -109,6 +109,18 @@ jobs:
           # Belt-and-suspenders: keep tests offline even if a code path tries the network.
           OPENAI_API_KEY: sk-test
 
+      # On failure, print the failure summary inline. xcbeautify's annotations hide
+      # crash reasons (e.g. a SIGABRT in a test runner), so surface the result bundle's
+      # own summary — including crash backtraces — directly in the job log.
+      - name: Test failure summary
+        if: failure()
+        run: |
+          echo "::group::Test failures (from TestResults.xcresult)"
+          xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); [print("•", f.get("testIdentifierString") or f.get("testName"), "—", f.get("failureText","")) for f in d.get("testFailures",[])]' \
+            || xcrun xcresulttool get test-results summary --path TestResults.xcresult
+          echo "::endgroup::"
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

@@ -377,4 +377,8 @@ final class ColmiDecoderTests: XCTestCase {
 @MainActor
 private final class NullWriter: RingCommandWriter {
     func enqueue(_ command: Data) {}
+    // An explicit deinit keeps deallocation off the `swift_task_deinitOnExecutorImpl`
+    // executor-hop path, which double-frees a @MainActor class with no deinit on the
+    // iOS 26.2 simulator runtime used by CI (SIGABRT: "pointer being freed was not allocated").
+    deinit {}
 }
