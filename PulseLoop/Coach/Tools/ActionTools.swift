@@ -12,7 +12,7 @@ enum ActionTools {
     }
     static var measurementTools: [AnyCoachTool] { [triggerMeasurement] }
 
-    private static let activityEnum = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "hike", "other"]
+    private static let activityEnum = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "dance", "hike", "other"]
 
     // MARK: set_goal
 
@@ -157,6 +157,7 @@ enum ActionTools {
             ctx.modelContext.insert(session)
             _ = ActivityService.finishSummary(for: session, endedAt: end, context: ctx.modelContext)
             try? ctx.modelContext.save()
+            HealthSyncService.shared.triggerAutomaticSync(context: ctx.modelContext, delaySeconds: 1.0)
             return .object(["ok": true, "created": true, "activity_id": session.id.uuidString,
                             "type": args.activityType, "duration_min": duration])
         }
@@ -202,6 +203,7 @@ enum ActionTools {
             let isToday = Calendar.current.isDateInToday(session.startedAt)
             if isToday {
                 applyUpdatesNow(updates, to: session, context: ctx.modelContext)
+                HealthSyncService.shared.triggerAutomaticSync(context: ctx.modelContext, delaySeconds: 1.0)
                 return .object(["ok": true, "updated": true, "activity_id": args.activityId])
             }
             // Older session → confirm.

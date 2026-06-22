@@ -216,6 +216,10 @@ final class RingSyncCoordinator {
             latestSpO2Value = value
         case let .spo2Progress(percent, _):
             if let percent { latestSpO2Value = percent }
+        case let .historyMeasurement(kind, value, _):
+            if kind == .spo2 {
+                latestSpO2Value = Int(value)
+            }
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
         default:

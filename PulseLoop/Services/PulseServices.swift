@@ -581,7 +581,7 @@ enum ActivityService {
     /// `resetDay: true` on the first bucket of each day in a sync run (replace, then sum). Calories are
     /// intentionally not summed (the ring's calorie field is unverified).
     @discardableResult
-    static func applyActivityBucket(date: Date, steps: Int, distanceMeters: Double, resetDay: Bool = false, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+    static func applyActivityBucket(date: Date, steps: Int, distanceMeters: Double, resetDay: Bool = false, syncedAt: Date? = nil, context: ModelContext) -> ActivityDaily {
         let row: ActivityDaily
         if let existing = MetricsRepository.activity(on: date, context: context) {
             row = existing
@@ -790,6 +790,7 @@ enum ActivityRecorderService {
         context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
         context.insert(ActivityEvent(sessionId: session.id, kind: "finished"))
         try? context.save()
+        HealthSyncService.shared.triggerAutomaticSync(context: context, delaySeconds: 1.0)
     }
     
     static func cancel(_ session: ActivitySession, context: ModelContext) {

@@ -21,6 +21,12 @@ enum MetricsRepository {
     }
     
     @MainActor
+    static func unsyncedActivityRows(context: ModelContext) -> [ActivityDaily] {
+        let descriptor = FetchDescriptor<ActivityDaily>(predicate: #Predicate { $0.syncedAt == nil }, sortBy: [SortDescriptor(\.date)])
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    @MainActor
     static func activityRows(descending context: ModelContext) -> [ActivityDaily] {
         let descriptor = FetchDescriptor<ActivityDaily>(sortBy: [SortDescriptor(\.date, order: .reverse)])
         return (try? context.fetch(descriptor)) ?? []
@@ -40,6 +46,14 @@ enum MetricsRepository {
     @MainActor
     static func measurements(kind: MeasurementKind? = nil, context: ModelContext) -> [Measurement] {
         let descriptor = FetchDescriptor<Measurement>(sortBy: [SortDescriptor(\.timestamp)])
+        let rows = (try? context.fetch(descriptor)) ?? []
+        guard let kind else { return rows }
+        return rows.filter { $0.kind == kind }
+    }
+    
+    @MainActor
+    static func unsyncedMeasurements(kind: MeasurementKind? = nil, context: ModelContext) -> [Measurement] {
+        let descriptor = FetchDescriptor<Measurement>(predicate: #Predicate { $0.syncedAt == nil }, sortBy: [SortDescriptor(\.timestamp)])
         let rows = (try? context.fetch(descriptor)) ?? []
         guard let kind else { return rows }
         return rows.filter { $0.kind == kind }
@@ -98,6 +112,12 @@ enum SleepRepository {
     }
     
     @MainActor
+    static func unsyncedSessions(context: ModelContext) -> [SleepSession] {
+        let descriptor = FetchDescriptor<SleepSession>(predicate: #Predicate { $0.syncedAt == nil }, sortBy: [SortDescriptor(\.date)])
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    @MainActor
     static func latestSession(context: ModelContext) -> SleepSession? {
         let descriptor = FetchDescriptor<SleepSession>(sortBy: [SortDescriptor(\.startAt, order: .reverse)])
         return (try? context.fetch(descriptor))?.first
@@ -114,6 +134,12 @@ enum ActivityRepository {
     @MainActor
     static func sessions(context: ModelContext) -> [ActivitySession] {
         let descriptor = FetchDescriptor<ActivitySession>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        return (try? context.fetch(descriptor)) ?? []
+    }
+    
+    @MainActor
+    static func unsyncedSessions(context: ModelContext) -> [ActivitySession] {
+        let descriptor = FetchDescriptor<ActivitySession>(predicate: #Predicate { $0.syncedAt == nil }, sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
         return (try? context.fetch(descriptor)) ?? []
     }
     

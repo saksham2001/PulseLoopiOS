@@ -19,12 +19,14 @@ enum PendingActionExecutor {
             for event in ActivityRepository.events(sessionId: id, context: context) { context.delete(event) }
             context.delete(session)
             try? context.save()
+            HealthSyncService.shared.triggerAutomaticSync(context: context, delaySeconds: 1.0)
             return "Deleted the \(typeLabel) session."
 
         case .updateActivitySession:
             apply(action.updates, to: session)
             session.updatedAt = Date()
             try? context.save()
+            HealthSyncService.shared.triggerAutomaticSync(context: context, delaySeconds: 1.0)
             return "Updated the \(typeLabel) session."
         }
     }
