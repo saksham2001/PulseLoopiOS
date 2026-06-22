@@ -15,6 +15,10 @@ struct ActivityView: View {
     @State private var goalsOpen = false
     @State private var historyOpen = false
 
+    private var isImperial: Bool { WorkoutAppGroup.useImperialUnits }
+    private var distanceDivisor: Double { isImperial ? 1609.34 : 1000.0 }
+    private var distanceUnit: String { isImperial ? "mi" : "km" }
+
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
         let stale = ActivityRecorderService.recoverStaleSession(context: modelContext)
@@ -111,7 +115,7 @@ struct ActivityView: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     MetricCardButton(metric: "steps", label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", color: PulseColors.steps)
                     MetricCardButton(metric: "calories", label: "Calories", value: summary.calories.map { Int($0).formatted() } ?? "—", unit: summary.calories == nil ? nil : "kcal", color: PulseColors.calories)
-                    MetricCardButton(metric: "distance", label: "Distance", value: summary.distanceMeters.map { String(format: "%.2f", $0 / 1000) } ?? "—", unit: summary.distanceMeters == nil ? nil : "km", color: PulseColors.distance)
+                    MetricCardButton(metric: "distance", label: "Distance", value: summary.distanceMeters.map { String(format: "%.2f", $0 / distanceDivisor) } ?? "—", unit: summary.distanceMeters == nil ? nil : distanceUnit, color: PulseColors.distance)
                     MetricCardButton(metric: "readiness", label: "Active min", value: summary.activeMinutes.map { "\($0)" } ?? "—", unit: summary.activeMinutes == nil ? nil : "min", color: PulseColors.readiness)
                 }
 
@@ -164,7 +168,7 @@ struct ActivityView: View {
     }
     private func distanceValues(_ summary: TodaySummary) -> [Double] {
         let raw = distanceRange == .sevenDays ? summary.trends.distance7d.map(\.value) : MetricsService.metricRange(metric: .distance, range: distanceRange, context: modelContext).map(\.value)
-        return raw.map { $0 / 1000 }
+        return raw.map { $0 / distanceDivisor }
     }
     private func caloriesValues(_ summary: TodaySummary) -> [Double] {
         caloriesRange == .sevenDays ? summary.trends.calories7d.map(\.value) : MetricsService.metricRange(metric: .calories, range: caloriesRange, context: modelContext).map(\.value)
