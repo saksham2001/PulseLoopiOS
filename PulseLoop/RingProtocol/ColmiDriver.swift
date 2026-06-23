@@ -8,6 +8,8 @@ import Foundation
 /// is decoded directly.
 @MainActor
 final class ColmiDriver: WearableDriver {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private weak var writer: RingCommandWriter?
     private let decoder = ColmiDecoder()
     private let engine: ColmiSyncEngine

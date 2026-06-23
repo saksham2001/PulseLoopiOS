@@ -5,6 +5,8 @@ import Foundation
 /// Declares the rich capability set and recognizes the ring by its advertised name / service UUIDs.
 @MainActor
 final class ColmiCoordinator: WearableCoordinator {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     static let deviceType: RingDeviceType = .colmiR02
 
     /// The whole Colmi/Yawell ring family advertises under many names but shares one protocol, so

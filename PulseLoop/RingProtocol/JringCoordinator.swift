@@ -6,6 +6,8 @@ import Foundation
 /// from the old `RingBLEClient.matchesRing`.
 @MainActor
 final class JringCoordinator: WearableCoordinator {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     static let deviceType: RingDeviceType = .jring
 
     private static let advertisedName = "SMART_RING"

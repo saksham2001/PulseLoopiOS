@@ -9,6 +9,8 @@ import Foundation
 /// multi-packet reassembly, so `ingest` is a straight `RingDecoder.decode`.
 @MainActor
 final class JringDriver: WearableDriver {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private weak var writer: RingCommandWriter?
     private let decoder = RingDecoder()
 

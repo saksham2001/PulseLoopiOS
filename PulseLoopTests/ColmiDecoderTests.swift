@@ -376,9 +376,6 @@ final class ColmiDecoderTests: XCTestCase {
 /// A no-op command writer for driver tests.
 @MainActor
 private final class NullWriter: RingCommandWriter {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
     func enqueue(_ command: Data) {}
-    // An explicit deinit keeps deallocation off the `swift_task_deinitOnExecutorImpl`
-    // executor-hop path, which double-frees a @MainActor class with no deinit on the
-    // iOS 26.2 simulator runtime used by CI (SIGABRT: "pointer being freed was not allocated").
-    deinit {}
 }

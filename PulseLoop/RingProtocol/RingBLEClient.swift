@@ -23,6 +23,8 @@ import Foundation
 @MainActor
 @Observable
 final class RingBLEClient: NSObject {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     /// Registry of supported wearables. First coordinator whose `matches` claims a peripheral wins.
     /// **Adding a wearable = append one entry here.**
     static let coordinators: [WearableCoordinator.Type] = [

@@ -38,6 +38,12 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# Test results
+*.xcresult
+
+# Local scratch / planning notes
+tasks/
+
 # Misc
 *.log
 *~

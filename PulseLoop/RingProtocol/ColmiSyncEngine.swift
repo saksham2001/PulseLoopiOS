@@ -12,6 +12,8 @@ import Foundation
 /// and paged terminal conditions. These are the spots to re-check against a real ring.
 @MainActor
 final class ColmiSyncEngine: RingSyncEngine {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private weak var writer: RingCommandWriter?
     private let decoder: ColmiDecoder
     private let encoder = ColmiEncoder()
