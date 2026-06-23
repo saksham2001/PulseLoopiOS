@@ -499,6 +499,32 @@ final class ActivitySample {
     }
 }
 
+/// One intraday activity bucket from a ring's history sync (e.g. a Colmi quarter-hour `0x43` sample).
+/// Keyed by `startEpoch` (the bucket's unix start time) so re-syncing the same bucket **replaces** it
+/// rather than accumulating — the daily total is then the sum of distinct buckets at read time. This
+/// is the GadgetBridge model and the fix for daily totals drifting upward across repeated syncs.
+@Model
+final class ActivityBucketSample {
+    /// Bucket start time in unix seconds — unique, so the same bucket upserts instead of duplicating.
+    @Attribute(.unique) var startEpoch: Int
+    var date: Date          // startOfDay for the bucket, for fast per-day queries
+    var timestamp: Date     // bucket start instant
+    var steps: Int
+    var distanceMeters: Double
+    var source: String
+    var updatedAt: Date
+
+    init(timestamp: Date, steps: Int, distanceMeters: Double, source: String = "ring_history") {
+        self.startEpoch = Int(timestamp.timeIntervalSince1970)
+        self.date = Calendar.current.startOfDay(for: timestamp)
+        self.timestamp = timestamp
+        self.steps = steps
+        self.distanceMeters = distanceMeters
+        self.source = source
+        self.updatedAt = Date()
+    }
+}
+
 @Model
 final class ActivityGpsPoint {
     @Attribute(.unique) var id: UUID

@@ -14,6 +14,36 @@ final class ActivityServiceTests: XCTestCase {
         XCTAssertEqual(row?.steps, 6000, "counters only ratchet upward")
     }
 
+    func testActivityBucketsSumPerDayAndResyncIsIdempotent() throws {
+        let context = try TestSupport.makeContext()
+        let day = Calendar.current.startOfDay(for: Date())
+        // Three 15-min buckets on the same day.
+        let buckets: [(min: Int, steps: Int, dist: Double)] = [
+            (0, 100, 70), (15, 250, 180), (30, 50, 35),
+        ]
+        func runSync() {
+            for b in buckets {
+                let ts = Calendar.current.date(byAdding: .minute, value: b.min, to: day)!
+                ActivityService.applyActivityBucket(date: ts, steps: b.steps, distanceMeters: b.dist, context: context)
+            }
+        }
+        runSync()
+        let afterFirst = MetricsRepository.activity(on: day, context: context)
+        XCTAssertEqual(afterFirst?.steps, 400, "day total = sum of distinct buckets")
+        XCTAssertEqual(afterFirst?.distanceMeters ?? 0, 285, accuracy: 0.001)
+
+        // Re-sync the exact same buckets — must NOT accumulate (upsert by timestamp).
+        runSync()
+        let afterResync = MetricsRepository.activity(on: day, context: context)
+        XCTAssertEqual(afterResync?.steps, 400, "re-sync is idempotent (no drift)")
+
+        // A bucket re-sent with the same timestamp but updated value replaces, not adds.
+        let firstTs = day
+        ActivityService.applyActivityBucket(date: firstTs, steps: 999, distanceMeters: 700, context: context)
+        let afterUpdate = MetricsRepository.activity(on: day, context: context)
+        XCTAssertEqual(afterUpdate?.steps, 400 - 100 + 999, "updated bucket replaces its old value")
+    }
+
     func testHRActiveMinutesLiveDense() throws {
         let context = try TestSupport.makeContext()
         // 6 dense live samples in one minute, all above the active threshold (>=100 bpm floor).

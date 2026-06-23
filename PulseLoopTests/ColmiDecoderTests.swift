@@ -289,17 +289,13 @@ final class ColmiDecoderTests: XCTestCase {
     func testActivityBucketSummingIsIdempotentAcrossResync() throws {
         let context = try TestSupport.makeContext()
 
-        // Mirror EventPersistenceSubscriber: reset each day once on its first bucket of the run.
+        // Buckets are upserted by timestamp, so a re-sync of the same packets must not inflate.
         func runSync() {
-            var resetDays: Set<Date> = []
             for hex in Self.realActivityBuckets {
                 guard let data = try? Data(hexString: hex) else { continue }
                 let events = decoder.decodeHistory(data, day: activityNow, calendar: calendar, now: activityNow)
                 if case let .activityBucket(ts, steps, dist) = events.first {
-                    let dayKey = calendar.startOfDay(for: ts)
-                    let reset = !resetDays.contains(dayKey)
-                    resetDays.insert(dayKey)
-                    ActivityService.applyActivityBucket(date: ts, steps: steps, distanceMeters: dist, resetDay: reset, context: context)
+                    ActivityService.applyActivityBucket(date: ts, steps: steps, distanceMeters: dist, context: context)
                 }
             }
             try? context.save()
@@ -370,6 +366,20 @@ final class ColmiDecoderTests: XCTestCase {
         let driver = JringDriver(writer: NullWriter())
         XCTAssertNil(driver.commandUUID)
         XCTAssertFalse(driver.usesCommandChannel(for: Data([0x14])))
+    }
+
+    // MARK: Auto-HR enable (0x16) — distinct shape from the other prefs
+
+    func testAutoHeartRateEnableFormat() {
+        let enc = ColmiEncoder()
+        // Enabled at 5-min interval: 16 02 01 05 (on/off flag is 0x01/0x02, plus interval minutes).
+        XCTAssertEqual(enc.autoHeartRate(enabled: true, intervalMinutes: 5), [0x16, 0x02, 0x01, 0x05])
+        // Disabled uses 0x02 (not 0x00).
+        XCTAssertEqual(enc.autoHeartRate(enabled: false, intervalMinutes: 5)[2], 0x02)
+        // Interval is rounded to a 5-min multiple and clamped to 5...60.
+        XCTAssertEqual(enc.autoHeartRate(enabled: true, intervalMinutes: 0)[3], 5)
+        XCTAssertEqual(enc.autoHeartRate(enabled: true, intervalMinutes: 999)[3], 60)
+        XCTAssertEqual(enc.autoHeartRate(enabled: true, intervalMinutes: 12)[3], 10)
     }
 }
 

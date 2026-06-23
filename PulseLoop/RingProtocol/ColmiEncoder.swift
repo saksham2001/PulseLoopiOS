@@ -53,6 +53,16 @@ struct ColmiEncoder {
     func writePref(_ command: UInt8, enabled: Bool) -> [UInt8] {
         [command, ColmiCommandID.prefWrite, enabled ? 0x01 : 0x00]
     }
+
+    /// Enable/disable all-day **heart-rate** monitoring. Auto-HR (`0x16`) has a different shape from the
+    /// other prefs (per GadgetBridge `onSetHeartRateMeasurementInterval`): the on/off flag is
+    /// `0x01`(on)/`0x02`(off) — *not* `0x01`/`0x00` — and it carries the sampling interval in minutes.
+    /// The interval is rounded to a 5-minute multiple, 5…60. Without this the ring records no background
+    /// HR, so the HR-history sync (`0x15`) comes back empty.
+    func autoHeartRate(enabled: Bool, intervalMinutes: Int = 5) -> [UInt8] {
+        let interval = UInt8(min(60, max(5, (intervalMinutes / 5) * 5)))
+        return [ColmiCommandID.autoHRPref, ColmiCommandID.prefWrite, enabled ? 0x01 : 0x02, interval]
+    }
     /// Temperature pref has an extra `0x03` byte before the read/write flag.
     func readTempPref() -> [UInt8] { [ColmiCommandID.autoTempPref, 0x03, ColmiCommandID.prefRead] }
     func readGoals() -> [UInt8] { [ColmiCommandID.goals, ColmiCommandID.prefRead] }

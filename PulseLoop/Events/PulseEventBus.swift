@@ -65,9 +65,6 @@ actor PulseEventBus {
 final class EventPersistenceSubscriber {
     private let context: ModelContext
     private var task: Task<Void, Never>?
-    /// Days (midnight) whose ring-history activity total has been reset during the current sync run, so
-    /// each day is zeroed once on its first bucket rather than all days up front.
-    private var activityDaysResetThisRun: Set<Date> = []
 
     init(context: ModelContext) {
         self.context = context
@@ -147,17 +144,13 @@ final class EventPersistenceSubscriber {
                 payloadJSON: #"{"steps":\#(row.steps),"calories":\#(Int(row.calories)),"distance_m":\#(Int(row.distanceMeters))}"#
             ))
         case let .activityBucket(timestamp, steps, distanceMeters):
-            // Per-quarter-hour ring history: sum into the day (calories omitted — unverified field).
-            // Reset a day's total only on the *first* bucket seen for it this sync run, so a stalled or
-            // aborted sync never leaves a day zeroed-but-empty (idempotent re-sync without up-front wipe).
-            let dayKey = Calendar.current.startOfDay(for: timestamp)
-            let resetThisDay = !activityDaysResetThisRun.contains(dayKey)
-            if resetThisDay { activityDaysResetThisRun.insert(dayKey) }
-            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, resetDay: resetThisDay, context: context)
+            // Per-quarter-hour ring history: upserted by timestamp + the day total recomputed as the
+            // sum of distinct buckets, so re-syncs are idempotent (no drift). Calories omitted.
+            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, context: context)
         case .activitySyncReset:
-            // A fresh ring history sync is starting: clear the per-run reset tracking so each day gets
-            // zeroed once on its first incoming bucket (not all days up front).
-            activityDaysResetThisRun.removeAll()
+            // No longer needed — bucket upsert-by-timestamp makes re-syncs idempotent on its own.
+            // Kept as a no-op so the (still-published) event doesn't fall through to `unknown`.
+            break
         case let .heartRateSample(bpm, timestamp):
             persistMeasurement(kind: .heartRate, value: Double(bpm), timestamp: timestamp, source: .live, kindLabel: "hr_sample")
         case let .spo2Result(value, timestamp):

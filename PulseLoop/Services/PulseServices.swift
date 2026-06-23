@@ -575,30 +575,60 @@ enum ActivityService {
     /// Tag for days whose totals are summed from ring history buckets (vs. live cumulative updates).
     static let ringHistorySource = "ring_history"
 
-    /// Add one intraday activity **bucket** into its day. Unlike `applyActivityUpdate` (which ratchets
-    /// cumulative live totals with `max()`), buckets are *summed* — the ring sends ~96 quarter-hour
-    /// buckets per day and the daily total is their sum. Idempotency across re-syncs comes from
-    /// `resetDay: true` on the first bucket of each day in a sync run (replace, then sum). Calories are
-    /// intentionally not summed (the ring's calorie field is unverified).
+    /// One-time cleanup of `ActivityDaily` rows inflated by the old `+=` accumulator bug (steps that
+    /// compounded into the millions across repeated syncs). Deletes ring-history daily rows so they get
+    /// recomputed cleanly from buckets on the next sync. Idempotent + UserDefaults-gated so it runs once.
+    static func migrateInflatedActivityIfNeeded(context: ModelContext) {
+        let key = "activityBucketMigration.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        for row in MetricsRepository.activityRows(context: context) where row.source == ringHistorySource {
+            context.delete(row)
+        }
+        try? context.save()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Persist one intraday activity **bucket** from ring history (e.g. a Colmi quarter-hour `0x43`
+    /// sample) and recompute its day's total. The bucket is **upserted by its start time** into
+    /// `ActivityBucketSample`, so re-syncing the same bucket *replaces* it (never accumulates), and the
+    /// day's `ActivityDaily.steps/distance` is recomputed as the **sum of distinct buckets** for that
+    /// day. This is the GadgetBridge model and fixes daily totals drifting upward across repeated syncs.
+    /// Calories are intentionally not summed (the ring's calorie field is unverified).
     @discardableResult
-    static func applyActivityBucket(date: Date, steps: Int, distanceMeters: Double, resetDay: Bool = false, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+    static func applyActivityBucket(date timestamp: Date, steps: Int, distanceMeters: Double, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+        let dayStart = Calendar.current.startOfDay(for: timestamp)
+        let epoch = Int(timestamp.timeIntervalSince1970)
+
+        // Upsert the bucket sample by its unique start epoch (replace on re-sync).
+        if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+            predicate: #Predicate { $0.startEpoch == epoch }
+        )))?.first {
+            existing.steps = steps
+            existing.distanceMeters = distanceMeters
+            existing.updatedAt = Date()
+        } else {
+            context.insert(ActivityBucketSample(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, source: ringHistorySource))
+        }
+        // Persist the upsert so the recompute fetch below reliably sees it (SwiftData fetches don't
+        // always include pending inserts).
+        try? context.save()
+
+        // Recompute the day's total from all its buckets (sum of distinct samples).
+        let buckets = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+            predicate: #Predicate { $0.date == dayStart }
+        ))) ?? []
+        let totalSteps = buckets.reduce(0) { $0 + $1.steps }
+        let totalDistance = buckets.reduce(0.0) { $0 + $1.distanceMeters }
+
         let row: ActivityDaily
-        if let existing = MetricsRepository.activity(on: date, context: context) {
+        if let existing = MetricsRepository.activity(on: dayStart, context: context) {
             row = existing
         } else {
-            row = ActivityDaily(date: date, source: ringHistorySource)
+            row = ActivityDaily(date: dayStart, source: ringHistorySource)
             context.insert(row)
         }
-        // On the first bucket of a fresh sync run, replace the day's totals (don't accumulate across
-        // re-syncs). Subsequent buckets for the same day sum in. This keeps re-syncs idempotent without
-        // zeroing days up front (so a stalled sync can't blank a day that gets no data).
-        if resetDay {
-            row.steps = steps
-            row.distanceMeters = distanceMeters
-        } else {
-            row.steps += steps
-            row.distanceMeters += distanceMeters
-        }
+        row.steps = totalSteps
+        row.distanceMeters = totalDistance
         row.source = ringHistorySource
         row.syncedAt = syncedAt
         row.updatedAt = Date()

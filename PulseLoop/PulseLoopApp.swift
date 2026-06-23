@@ -35,6 +35,9 @@ struct PulseLoopApp: App {
         }
         self.container = container
 
+        // One-time cleanup of activity totals inflated by the old accumulator bug.
+        ActivityService.migrateInflatedActivityIfNeeded(context: container.mainContext)
+
         let client = RingBLEClient()
         let coordinator = RingSyncCoordinator(client: client, context: container.mainContext)
         client.onConnected = { [weak coordinator] in coordinator?.runStartupSequence() }
