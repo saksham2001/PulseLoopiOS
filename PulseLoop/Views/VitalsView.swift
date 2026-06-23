@@ -45,6 +45,7 @@ struct VitalsView: View {
                     }
                     .padding(.top, 12)
 
+                    // swiftlint:disable:next line_length
                     Text("Resting estimate: \(summary.restingHeartRateEstimate.map { "\(Int($0))" } ?? "Calibrating")  ·  Peak today: \(summary.peakHeartRateToday.map { "\(Int($0))" } ?? "Not enough data")")
                         .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
                         .padding(.top, 8)

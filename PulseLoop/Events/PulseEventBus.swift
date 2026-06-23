@@ -31,7 +31,18 @@ enum PulseEvent: Sendable {
     case workoutPaused(UUID)
     case workoutResumed(UUID)
     case workoutFinished(UUID)
-    case gpsPoint(sessionId: UUID, latitude: Double, longitude: Double, altitude: Double?, horizontalAccuracy: Double?, speed: Double?, course: Double?, accepted: Bool, rejectionReason: String?, timestamp: Date)
+    case gpsPoint(
+        sessionId: UUID,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double?,
+        horizontalAccuracy: Double?,
+        speed: Double?,
+        course: Double?,
+        accepted: Bool,
+        rejectionReason: String?,
+        timestamp: Date
+    )
     case coachTrace(String)
 }
 

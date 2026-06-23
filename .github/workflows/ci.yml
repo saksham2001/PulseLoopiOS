@@ -1,0 +1,144 @@
+name: CI
+
+# Build the app + Live Activity extension and run the unit-test suite on a
+# simulator. Everything here is hermetic: the tests use in-memory SwiftData and
+# a mocked OpenAI client (api key "sk-test"), so no secrets are required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch to save runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install xcbeautify
+        run: brew install xcbeautify
+
+      # Resolve an iPhone simulator from whatever the runner image ships.
+      #
+      # IMPORTANT: prefer an **iOS 18.x** runtime. The runner's iOS 26.0–26.2
+      # simulators have a Swift concurrency runtime bug that double-frees when a
+      # main-actor-isolated class (this project sets SWIFT_DEFAULT_ACTOR_ISOLATION
+      # = MainActor, so ~all classes) is deallocated without an explicit deinit —
+      # it crashes the test runner with SIGABRT (fixed in iOS 26.5, which the
+      # runners don't have yet). iOS 18.x predates that machinery and runs the
+      # same tests cleanly. The app targets iOS 18+ and uses no iOS 26-only APIs.
+      - name: Resolve simulator destination
+        id: sim
+        run: |
+          resolve_dest() {
+            # arg1: "prefer18" to pick the newest iOS 18.x; otherwise newest overall.
+            xcrun simctl list devices available --json | PREFER="$1" python3 -c '
+          import json, os, sys
+          prefer18 = os.environ.get("PREFER") == "prefer18"
+          data = json.load(sys.stdin)["devices"]
+          best = None
+          for runtime, devices in data.items():
+              if "iOS" not in runtime:
+                  continue
+              # runtime id looks like com.apple.CoreSimulator.SimRuntime.iOS-18-6
+              ver = runtime.rsplit(".", 1)[-1].replace("iOS-", "").replace("-", ".")
+              parts = tuple(int(p) for p in ver.split(".") if p.isdigit())
+              if prefer18 and (not parts or parts[0] != 18):
+                  continue
+              for dev in devices:
+                  if dev.get("isAvailable") and dev["name"].startswith("iPhone"):
+                      key = (parts, dev["name"])
+                      if best is None or key > best[0]:
+                          best = (key, ver, dev["name"])
+          if best is not None:
+              _, ver, name = best
+              print(f"platform=iOS Simulator,name={name},OS={ver}")
+          '
+          }
+
+          echo "Installed iOS runtimes:"
+          xcrun simctl list runtimes | grep -i ios || true
+
+          # Prefer iOS 18.x; fall back to newest available if the image has no 18.x.
+          DEST="$(resolve_dest prefer18)"
+          if [ -z "$DEST" ]; then
+            echo "No iOS 18.x simulator found; falling back to the newest available iOS runtime."
+            DEST="$(resolve_dest any)"
+          fi
+          if [ -z "$DEST" ]; then
+            echo "No iOS simulator runtime found — downloading one (this can be slow/flaky)…"
+            xcodebuild -downloadPlatform iOS || true
+            DEST="$(resolve_dest any)"
+          fi
+          if [ -z "$DEST" ]; then
+            echo "::error::No iOS simulator runtime available on this runner."
+            exit 1
+          fi
+          echo "Using destination: $DEST"
+          echo "destination=$DEST" >> "$GITHUB_OUTPUT"
+
+      # Pre-boot the resolved simulator so the test run doesn't race a cold device,
+      # and so a broken runtime fails here with a clear message rather than inside xcodebuild.
+      - name: Boot simulator
+        run: |
+          NAME="$(printf '%s' "${{ steps.sim.outputs.destination }}" | sed -E 's/.*name=([^,]+).*/\1/')"
+          echo "Booting: $NAME"
+          xcrun simctl boot "$NAME" || true
+          xcrun simctl bootstatus "$NAME" -b || true
+
+      - name: Build & run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project PulseLoop.xcodeproj \
+            -scheme PulseLoop \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcbeautify --renderer github-actions
+        env:
+          # Belt-and-suspenders: keep tests offline even if a code path tries the network.
+          OPENAI_API_KEY: sk-test
+
+      # On failure, print the failure summary inline. xcbeautify's annotations hide
+      # crash reasons (e.g. a SIGABRT in a test runner), so surface the result bundle's
+      # own summary — including crash backtraces — directly in the job log.
+      - name: Test failure summary
+        if: failure()
+        run: |
+          echo "::group::Test failures (from TestResults.xcresult)"
+          xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); [print("•", f.get("testIdentifierString") or f.get("testName"), "—", f.get("failureText","")) for f in d.get("testFailures",[])]' \
+            || xcrun xcresulttool get test-results summary --path TestResults.xcresult
+          echo "::endgroup::"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore

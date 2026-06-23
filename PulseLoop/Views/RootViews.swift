@@ -343,21 +343,39 @@ struct OnboardingFlowView: View {
 struct OnboardingWelcomeView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "PulseLoop", subtitle: "Your ring data, activity, sleep, and coach in one native app.", systemImage: "circle.hexagongrid.circle.fill", actionTitle: "Get started", action: next)
+        OnboardingPage(
+            title: "PulseLoop",
+            subtitle: "Your ring data, activity, sleep, and coach in one native app.",
+            systemImage: "circle.hexagongrid.circle.fill",
+            actionTitle: "Get started",
+            action: next
+        )
     }
 }
 
 struct OnboardingProfileView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "Set profile", subtitle: "Age, body metrics, and preferences help PulseLoop tune goals and summaries.", systemImage: "person.crop.circle", actionTitle: "Save profile", action: next)
+        OnboardingPage(
+            title: "Set profile",
+            subtitle: "Age, body metrics, and preferences help PulseLoop tune goals and summaries.",
+            systemImage: "person.crop.circle",
+            actionTitle: "Save profile",
+            action: next
+        )
     }
 }
 
 struct OnboardingBaselineView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "Learning your baseline", subtitle: "Wear the ring through the day and sync after sleep so trends become personal.", systemImage: "chart.line.uptrend.xyaxis", actionTitle: "Continue", action: next)
+        OnboardingPage(
+            title: "Learning your baseline",
+            subtitle: "Wear the ring through the day and sync after sleep so trends become personal.",
+            systemImage: "chart.line.uptrend.xyaxis",
+            actionTitle: "Continue",
+            action: next
+        )
     }
 }
 

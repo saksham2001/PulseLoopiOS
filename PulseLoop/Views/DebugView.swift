@@ -45,7 +45,15 @@ struct DebugView: View {
                 SecondaryButton(title: "Log mock packet", systemImage: "plus") {
                     let data = RingEncoder().makeStatusCommand()
                     let decoded = RingDecoder().decode(data)
-                    DebugRepository.insertRawPacket(direction: .outgoing, commandId: Int(data.first ?? 0), hexPayload: data.hexString, decodedKind: decoded.kind, decodedJSON: decoded.debugJSON, confidence: decoded.confidence, context: modelContext)
+                    DebugRepository.insertRawPacket(
+                        direction: .outgoing,
+                        commandId: Int(data.first ?? 0),
+                        hexPayload: data.hexString,
+                        decodedKind: decoded.kind,
+                        decodedJSON: decoded.debugJSON,
+                        confidence: decoded.confidence,
+                        context: modelContext
+                    )
                     try? modelContext.save()
                     refreshToken = UUID()
                 }

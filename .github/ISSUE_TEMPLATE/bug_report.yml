@@ -1,0 +1,105 @@
+name: "🐛 Bug report"
+description: Something isn't working the way it should.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please search [existing issues](https://github.com/saksham2001/PulseLoopIOS/issues) first to avoid duplicates.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+      placeholder: When I sync sleep from my Colmi R02, REM minutes show as 0…
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps so we can see it too.
+      placeholder: |
+        1. Connect ring
+        2. Open Sleep tab
+        3. Pull to sync
+        4. See …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ring
+    attributes:
+      label: Which ring are you using?
+      options:
+        - "jring (generic SMART_RING / 56ff)"
+        - "Colmi R02"
+        - "Colmi R03 / R06 / R07 / R09 / R10 / R12"
+        - "Colmi R11"
+        - "Yawell R05 / R10 / R11 / H59"
+        - "Other / not sure"
+        - "No ring — using demo data"
+    validations:
+      required: true
+
+  - type: input
+    id: ios-version
+    attributes:
+      label: iOS version
+      placeholder: "e.g. iOS 26.4"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: iPhone model
+      placeholder: "e.g. iPhone 16 Pro"
+    validations:
+      required: false
+
+  - type: input
+    id: app-version
+    attributes:
+      label: PulseLoop version / commit
+      description: Settings → About, or the git commit you built from.
+      placeholder: "e.g. main @ a1b2c3d"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area is affected?
+      options:
+        - "BLE connection / pairing"
+        - "Data sync / decoding"
+        - "Today / Vitals / Sleep / Activity UI"
+        - "Workout recording / Live Activity"
+        - "AI Coach"
+        - "Notifications"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Console logs, crash text, or screenshots. Please redact anything personal.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I removed any personal health data / secrets from logs and screenshots.
+          required: true

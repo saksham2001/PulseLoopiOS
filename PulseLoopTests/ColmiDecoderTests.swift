@@ -386,5 +386,6 @@ final class ColmiDecoderTests: XCTestCase {
 /// A no-op command writer for driver tests.
 @MainActor
 private final class NullWriter: RingCommandWriter {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
     func enqueue(_ command: Data) {}
 }

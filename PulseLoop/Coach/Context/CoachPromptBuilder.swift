@@ -4,6 +4,8 @@ import Foundation
 /// `backend/app/coach/prompts.py` and adapted to the iOS tool set
 /// (deterministic analysis tools instead of a code sandbox).
 enum CoachPromptBuilder {
+    // Prompt prose is kept verbatim (ported from the backend); don't hard-wrap it.
+    // swiftlint:disable line_length
     static let systemPrompt = """
     You are PulseLoop Coach, a transparent, evidence-grounded health and fitness coach for a smart-ring app.
 
@@ -53,6 +55,7 @@ enum CoachPromptBuilder {
         Use the provided tools to retrieve, analyze, chart, search, or act. Prefer compact retrieval first, then deeper analysis only if needed. Today's date and the user's timezone are in the context packet.
         """
     }
+    // swiftlint:enable line_length
 
     private static func encodePacket(_ packet: CoachContextPacket) -> String {
         let encoder = JSONEncoder()

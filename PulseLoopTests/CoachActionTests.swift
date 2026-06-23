@@ -89,7 +89,8 @@ final class CoachActionTests: XCTestCase {
         c.insert(session)
         try c.save()
         let context = ctx(c)
-        let result = try await tool("update_activity_session", c).run(Data(#"{"activity_id":"\#(session.id.uuidString)","type":"cycle","notes":null,"distance_km":null,"duration_min":null,"perceived_effort":null,"start_time":null,"reason":"misclassified"}"#.utf8), context)
+        let json = #"{"activity_id":"\#(session.id.uuidString)","type":"cycle","notes":null,"distance_km":null,"duration_min":null,"perceived_effort":null,"start_time":null,"reason":"misclassified"}"#
+        let result = try await tool("update_activity_session", c).run(Data(json.utf8), context)
         XCTAssertEqual((try parse(result))["needs_confirmation"] as? Bool, true)
         XCTAssertEqual(context.pendingActions.first?.kind, .updateActivitySession)
         XCTAssertEqual(session.type, "run")  // unchanged until confirmed

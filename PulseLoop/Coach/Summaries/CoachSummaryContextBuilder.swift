@@ -49,7 +49,7 @@ enum CoachSummaryContextBuilder {
     // MARK: Sleep — nightly
 
     static func sleepDay(context: ModelContext, now: Date = Date()) -> Built? {
-        let range = SleepService.sleepRange(.day, context: context)
+        let range = SleepService.sleepRange(.day, context: context, now: now)
         guard let night = SleepInsights.validSessions(range.sessions).last else { return nil }
         let score = SleepScore.calculate(night)
         let activitySteps = MetricsRepository.latestActivity(context: context)?.steps
@@ -83,7 +83,7 @@ enum CoachSummaryContextBuilder {
     // MARK: Sleep — aggregate
 
     static func sleepRange(_ range: SleepRangeKey, context: ModelContext, now: Date = Date()) -> Built {
-        let summary = SleepService.sleepRange(range, context: context)
+        let summary = SleepService.sleepRange(range, context: context, now: now)
         let valid = SleepInsights.validSessions(summary.sessions)
         let avgMin = SleepInsights.averageDuration(valid)
         let avgScore = SleepInsights.averageScore(valid)

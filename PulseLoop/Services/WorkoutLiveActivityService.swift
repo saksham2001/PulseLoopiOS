@@ -64,32 +64,8 @@ final class WorkoutLiveActivityService: ObservableObject {
 
     /// Pushes a new ContentState to the Live Activity for the session. Non-async:
     /// the actual `await` is dispatched onto a Task. Throttling is the caller's job.
-    func update(sessionID: String,
-                status: String,
-                elapsedSeconds: Int,
-                startDate: Date,
-                pausedAt: Date?,
-                usesGps: Bool,
-                distanceMeters: Double,
-                paceSecondsPerKm: Double?,
-                lastHeartRate: Int?,
-                lastSpO2: Int?,
-                activityType: String) {
+    func update(sessionID: String, state: WorkoutActivityAttributes.ContentState) {
         guard let activity = activities[sessionID] else { return }
-
-        let state = WorkoutActivityAttributes.ContentState(
-            status: status,
-            elapsedSeconds: elapsedSeconds,
-            startDate: startDate,
-            pausedAt: pausedAt,
-            usesGps: usesGps,
-            distanceMeters: distanceMeters,
-            paceSecondsPerKm: paceSecondsPerKm,
-            lastHeartRate: lastHeartRate,
-            lastSpO2: lastSpO2,
-            activityType: activityType,
-            lastUpdated: Date()
-        )
 
         Task {
             await activity.update(ActivityContent(state: state, staleDate: nil))

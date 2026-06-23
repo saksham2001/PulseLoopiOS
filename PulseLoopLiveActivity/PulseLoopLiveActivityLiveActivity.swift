@@ -139,13 +139,49 @@ extension WorkoutActivityAttributes {
 
 extension WorkoutActivityAttributes.ContentState {
     fileprivate static var recording: WorkoutActivityAttributes.ContentState {
-        WorkoutActivityAttributes.ContentState(status: "recording", elapsedSeconds: 1325, startDate: Date().addingTimeInterval(-1325), pausedAt: nil, usesGps: true, distanceMeters: 3450, paceSecondsPerKm: 312, lastHeartRate: 152, lastSpO2: 98, activityType: "run", lastUpdated: Date())
+        WorkoutActivityAttributes.ContentState(
+            status: "recording",
+            elapsedSeconds: 1325,
+            startDate: Date().addingTimeInterval(-1325),
+            pausedAt: nil,
+            usesGps: true,
+            distanceMeters: 3450,
+            paceSecondsPerKm: 312,
+            lastHeartRate: 152,
+            lastSpO2: 98,
+            activityType: "run",
+            lastUpdated: Date()
+        )
     }
     fileprivate static var paused: WorkoutActivityAttributes.ContentState {
-        WorkoutActivityAttributes.ContentState(status: "paused", elapsedSeconds: 1325, startDate: Date().addingTimeInterval(-1325), pausedAt: Date(), usesGps: true, distanceMeters: 3450, paceSecondsPerKm: 312, lastHeartRate: 138, lastSpO2: 97, activityType: "run", lastUpdated: Date())
+        WorkoutActivityAttributes.ContentState(
+            status: "paused",
+            elapsedSeconds: 1325,
+            startDate: Date().addingTimeInterval(-1325),
+            pausedAt: Date(),
+            usesGps: true,
+            distanceMeters: 3450,
+            paceSecondsPerKm: 312,
+            lastHeartRate: 138,
+            lastSpO2: 97,
+            activityType: "run",
+            lastUpdated: Date()
+        )
     }
     fileprivate static var indoor: WorkoutActivityAttributes.ContentState {
-        WorkoutActivityAttributes.ContentState(status: "recording", elapsedSeconds: 640, startDate: Date().addingTimeInterval(-640), pausedAt: nil, usesGps: false, distanceMeters: 0, paceSecondsPerKm: nil, lastHeartRate: 121, lastSpO2: 97, activityType: "gym", lastUpdated: Date())
+        WorkoutActivityAttributes.ContentState(
+            status: "recording",
+            elapsedSeconds: 640,
+            startDate: Date().addingTimeInterval(-640),
+            pausedAt: nil,
+            usesGps: false,
+            distanceMeters: 0,
+            paceSecondsPerKm: nil,
+            lastHeartRate: 121,
+            lastSpO2: 97,
+            activityType: "gym",
+            lastUpdated: Date()
+        )
     }
 }
 

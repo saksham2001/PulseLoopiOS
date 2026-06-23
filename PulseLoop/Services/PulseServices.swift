@@ -33,7 +33,7 @@ enum MetricsService {
             hrSamples24h: hrSamples,
             spo2Samples24h: spo2Samples
         )
-        let metricStates = buildMetricStates(
+        let metricStates = buildMetricStates(MetricStateInputs(
             today: today,
             sleep: sleep,
             latestHR: latestHR,
@@ -43,7 +43,7 @@ enum MetricsService {
             activityRows: activityRows,
             calibration: calibration,
             isDemo: isDemo
-        )
+        ))
         
         // The ring's calorie field is unverified, so ring-history days don't carry calories — show
         // "—" rather than a misleading 0. Steps/distance from the ring are trustworthy.
@@ -281,17 +281,30 @@ enum MetricsService {
         return resting.min()
     }
     
-    private static func buildMetricStates(
-        today: ActivityDaily?,
-        sleep: SleepSummary?,
-        latestHR: Measurement?,
-        latestSpO2: Measurement?,
-        hrFreshness: DataFreshness,
-        spo2Freshness: DataFreshness,
-        activityRows: [ActivityDaily],
-        calibration: CalibrationState,
-        isDemo: Bool
-    ) -> [MetricKey: MetricState] {
+    /// Inputs for `buildMetricStates`, bundled to keep the call site readable.
+    private struct MetricStateInputs {
+        let today: ActivityDaily?
+        let sleep: SleepSummary?
+        let latestHR: Measurement?
+        let latestSpO2: Measurement?
+        let hrFreshness: DataFreshness
+        let spo2Freshness: DataFreshness
+        let activityRows: [ActivityDaily]
+        let calibration: CalibrationState
+        let isDemo: Bool
+    }
+
+    private static func buildMetricStates(_ inputs: MetricStateInputs) -> [MetricKey: MetricState] {
+        let today = inputs.today
+        let sleep = inputs.sleep
+        let latestHR = inputs.latestHR
+        let latestSpO2 = inputs.latestSpO2
+        let hrFreshness = inputs.hrFreshness
+        let spo2Freshness = inputs.spo2Freshness
+        let activityRows = inputs.activityRows
+        let calibration = inputs.calibration
+        let isDemo = inputs.isDemo
+
         let activityFreshness = freshness(lastUpdatedAt: today?.syncedAt, isDemo: isDemo)
         let activitySampleCount = activityRows.count
         return [
@@ -477,14 +490,14 @@ enum SleepService {
         return summary(for: session, includeStages: true, context: context)
     }
     
-    static func sleepRange(_ range: SleepRangeKey, context: ModelContext) -> SleepRangeSummary {
+    static func sleepRange(_ range: SleepRangeKey, context: ModelContext, now: Date = Date()) -> SleepRangeSummary {
         let expected = expectedNights(for: range)
         // Day view is "last night" — anchored on the current reference night, not
         // the latest recorded one. If nothing was captured we want to show the
         // empty state, not a stale night from days ago. Week/Month/Year keep the
         // last-recorded anchor so historical data still surfaces.
         let anchor = range == .day
-            ? dayReferenceNight(now: Date())
+            ? dayReferenceNight(now: now)
             : sleepAnchor(context: context)
         let start = Calendar.current.date(byAdding: .day, value: -(expected - 1), to: anchor) ?? anchor
         // End-of-day cap on the anchor so sessions stored mid-day are included.
