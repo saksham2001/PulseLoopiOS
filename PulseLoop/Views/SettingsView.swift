@@ -52,8 +52,6 @@ struct SettingsView: View {
                     }
                 }
 
-                HealthSettingsSection()
-
                 CoachSettingsSection()
 
                 SectionHeader(title: "Preferences", action: nil)
