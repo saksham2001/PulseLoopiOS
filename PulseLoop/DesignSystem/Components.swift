@@ -586,15 +586,15 @@ enum ActivityMeta {
             : String(format: "%d:%02d", m, sec)
     }
 
-    /// Pace in min/km from distance + duration; nil when not meaningful.
-    static func pace(distanceMeters: Double?, durationSeconds: Int?) -> String? {
+    /// Pace from distance + duration; nil when not meaningful. In the user's units (min/km or min/mi),
+    /// defaulting to metric so existing callers compile unchanged.
+    static func pace(distanceMeters: Double?, durationSeconds: Int?, units: UnitsPreference = .metric) -> String? {
         guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
-        let isImperial = WorkoutAppGroup.useImperialUnits
-        let factor = isImperial ? 1609.34 : 1000.0
-        let paceSecPerUnit = Double(durationSeconds) / (distanceMeters / factor)
-        let m = Int(paceSecPerUnit) / 60
-        let s = Int(paceSecPerUnit.rounded()) % 60
-        return String(format: "%d:%02d /%@", m, s, isImperial ? "mi" : "km")
+        let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
+        let paceSec = UnitsFormatter.paceSeconds(perKmSeconds: paceSecPerKm, units: units)
+        let m = Int(paceSec) / 60
+        let s = Int(paceSec.rounded()) % 60
+        return String(format: "%d:%02d %@", m, s, UnitsFormatter.paceUnit(units))
     }
 }
 
@@ -602,6 +602,7 @@ enum ActivityMeta {
 
 struct ActivityWorkoutRow: View {
     let session: ActivitySession
+    var units: UnitsPreference = .metric
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -626,9 +627,8 @@ struct ActivityWorkoutRow: View {
                     HStack(spacing: 12) {
                         Text(durationLabel).font(.system(size: 12).monospacedDigit())
                         if let distance = session.distanceMeters {
-                            let isImperial = WorkoutAppGroup.useImperialUnits
-                            let divisor = isImperial ? 1609.34 : 1000.0
-                            Text(String(format: "%.2f %@", distance / divisor, isImperial ? "mi" : "km")).font(.system(size: 12).monospacedDigit())
+                            let d = UnitsFormatter.distance(meters: distance, units: units)
+                            Text("\(d.value) \(d.unit)").font(.system(size: 12).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
                             Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())

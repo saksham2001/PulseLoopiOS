@@ -12,6 +12,15 @@ enum TestSupport {
         return ModelContext(container)
     }
 
+    /// Coach settings with the master switch on, so `CoachFeatureFlags(... hasAPIKey: true)`
+    /// resolves to an enabled coach. The product default is opt-out (`coachMasterEnabled == false`),
+    /// which would otherwise route every turn to the scripted fallback.
+    static func enabledCoachSettings() -> CoachSettings {
+        var settings = CoachSettings.default
+        settings.coachMasterEnabled = true
+        return settings
+    }
+
     static func day(_ offset: Int, from base: Date = Date()) -> Date {
         Calendar.current.date(byAdding: .day, value: offset, to: Calendar.current.startOfDay(for: base)) ?? base
     }

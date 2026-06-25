@@ -33,6 +33,8 @@ final class CoachSummaryContentTests: XCTestCase {
 final class CoachSummaryServiceTests: XCTestCase {
     private func service(_ c: ModelContext, key: String? = "sk-test", json: String = summaryJSON()) -> CoachSummaryService {
         let store = CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        // The coach is opt-out by default; turn the master switch on so summaries actually generate.
+        store.settings.coachMasterEnabled = true
         return CoachSummaryService(
             modelContext: c,
             keyStore: SummaryStubKeyStore(key: key),
@@ -76,15 +78,18 @@ final class CoachSummaryServiceTests: XCTestCase {
         TestSupport.insertSleep(nightStart: Calendar.current.startOfDay(for: Date()),
                                 stages: Array(repeating: .light, count: 60) + Array(repeating: .deep, count: 30), into: c)
         let svc = service(c, json: summaryJSON(title: "Solid night", body: "1h30m tracked.", chips: ["Deep sleep?"]))
+        // Pin `now` past the 4 AM day-reference flip so today's night is in the Day window
+        // regardless of when the suite runs.
+        let now = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: TestSupport.day(0)) ?? Date()
 
-        await svc.refreshSleepDayIfNeeded()
+        await svc.refreshSleepDayIfNeeded(now: now)
         var sleeps = (try c.fetch(FetchDescriptor<CoachSummary>())).filter { $0.kind == "sleep_day" }
         XCTAssertEqual(sleeps.count, 1)
         XCTAssertEqual(sleeps.first?.title, "Solid night")
         let updated = sleeps.first!.updatedAt
 
         // Second call same night → no new summary, no update (once per night).
-        await svc.refreshSleepDayIfNeeded()
+        await svc.refreshSleepDayIfNeeded(now: now)
         sleeps = (try c.fetch(FetchDescriptor<CoachSummary>())).filter { $0.kind == "sleep_day" }
         XCTAssertEqual(sleeps.count, 1)
         XCTAssertEqual(sleeps.first!.updatedAt, updated)

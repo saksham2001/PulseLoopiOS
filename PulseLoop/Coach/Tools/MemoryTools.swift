@@ -29,6 +29,7 @@ enum MemoryTools {
         .make(
             name: "save_memory",
             label: "Saving this for future coaching",
+            // swiftlint:disable:next line_length
             description: "Save an important durable user-stated fact, preference, routine, injury, goal, or constraint for future coaching. Use null expires_in_days for stable facts, 7–60 for temporary conditions (soreness, illness).",
             parameters: JSONSchema.object([
                 "memory_type": JSONSchema.enumString(memoryTypes),

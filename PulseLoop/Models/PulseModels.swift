@@ -344,6 +344,15 @@ final class DerivedUpdateRow {
     }
 }
 
+/// Whether the user sees metric (cm/kg/°C/km) or imperial (in/lb/°F/mi) units. Persisted as a raw
+/// string on `UserProfile.unitsRaw`; also fed to the ring's user-preferences command.
+enum UnitsPreference: String, CaseIterable, Codable, Sendable {
+    case metric
+    case imperial
+
+    var label: String { self == .metric ? "Metric" : "Imperial" }
+}
+
 @Model
 final class UserProfile {
     @Attribute(.unique) var id: UUID
@@ -352,11 +361,18 @@ final class UserProfile {
     var sex: String?
     var heightCm: Double?
     var weightKg: Double?
+    /// Display/units preference. Defaulted so existing stored profiles migrate without a data change.
+    var unitsRaw: String = UnitsPreference.metric.rawValue
     var onboardingCompleted: Bool
     var baselineCompleted: Bool
     var createdAt: Date
     var updatedAt: Date
-    
+
+    var units: UnitsPreference {
+        get { UnitsPreference(rawValue: unitsRaw) ?? .metric }
+        set { unitsRaw = newValue.rawValue }
+    }
+
     init(
         id: UUID = UUID(),
         name: String? = nil,
@@ -364,6 +380,7 @@ final class UserProfile {
         sex: String? = nil,
         heightCm: Double? = nil,
         weightKg: Double? = nil,
+        units: UnitsPreference = .metric,
         onboardingCompleted: Bool = false,
         baselineCompleted: Bool = false
     ) {
@@ -373,6 +390,7 @@ final class UserProfile {
         self.sex = sex
         self.heightCm = heightCm
         self.weightKg = weightKg
+        self.unitsRaw = units.rawValue
         self.onboardingCompleted = onboardingCompleted
         self.baselineCompleted = baselineCompleted
         self.createdAt = Date()
@@ -388,7 +406,7 @@ final class UserGoal {
     var activeMinutes: Int
     var workoutsPerWeek: Int
     var updatedAt: Date
-    
+
     init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4) {
         self.id = id
         self.steps = steps
@@ -396,6 +414,39 @@ final class UserGoal {
         self.activeMinutes = activeMinutes
         self.workoutsPerWeek = workoutsPerWeek
         self.updatedAt = Date()
+    }
+}
+
+/// Per-device all-day measurement configuration: how often the ring measures HR and which background
+/// vitals it records. Keyed by `Device.id` so each paired wearable keeps its own config (future-proof
+/// for multiple devices). Only devices declaring `.measurementInterval` (Colmi) act on this; the
+/// generic jring never surfaces it. All fields are defaulted so this is a safe additive migration.
+@Model
+final class DeviceMeasurementConfig {
+    @Attribute(.unique) var deviceId: UUID
+    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps.
+    var hrIntervalMinutes: Int = 5
+    var hrEnabled: Bool = true
+    var spo2Enabled: Bool = true
+    var stressEnabled: Bool = true
+    var hrvEnabled: Bool = true
+    var temperatureEnabled: Bool = true
+    var updatedAt: Date = Date()
+
+    init(deviceId: UUID) {
+        self.deviceId = deviceId
+    }
+
+    /// Project to the device-agnostic value the sync engine consumes.
+    var asSettings: MeasurementSettings {
+        MeasurementSettings(
+            hrEnabled: hrEnabled,
+            hrIntervalMinutes: hrIntervalMinutes,
+            spo2Enabled: spo2Enabled,
+            stressEnabled: stressEnabled,
+            hrvEnabled: hrvEnabled,
+            temperatureEnabled: temperatureEnabled
+        )
     }
 }
 
@@ -502,6 +553,32 @@ final class ActivitySample {
         self.timestamp = timestamp
         self.source = source
         self.confidenceRaw = confidence.rawValue
+    }
+}
+
+/// One intraday activity bucket from a ring's history sync (e.g. a Colmi quarter-hour `0x43` sample).
+/// Keyed by `startEpoch` (the bucket's unix start time) so re-syncing the same bucket **replaces** it
+/// rather than accumulating — the daily total is then the sum of distinct buckets at read time. This
+/// is the GadgetBridge model and the fix for daily totals drifting upward across repeated syncs.
+@Model
+final class ActivityBucketSample {
+    /// Bucket start time in unix seconds — unique, so the same bucket upserts instead of duplicating.
+    @Attribute(.unique) var startEpoch: Int
+    var date: Date          // startOfDay for the bucket, for fast per-day queries
+    var timestamp: Date     // bucket start instant
+    var steps: Int
+    var distanceMeters: Double
+    var source: String
+    var updatedAt: Date
+
+    init(timestamp: Date, steps: Int, distanceMeters: Double, source: String = "ring_history") {
+        self.startEpoch = Int(timestamp.timeIntervalSince1970)
+        self.date = Calendar.current.startOfDay(for: timestamp)
+        self.timestamp = timestamp
+        self.steps = steps
+        self.distanceMeters = distanceMeters
+        self.source = source
+        self.updatedAt = Date()
     }
 }
 

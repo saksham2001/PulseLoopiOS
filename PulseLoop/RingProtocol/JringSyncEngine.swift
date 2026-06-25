@@ -7,6 +7,8 @@ import Foundation
 /// and the measurement helpers, via the existing `RingEncoder` — behavior is unchanged.
 @MainActor
 final class JringSyncEngine: RingSyncEngine {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private weak var writer: RingCommandWriter?
     private let encoder = RingEncoder()
 

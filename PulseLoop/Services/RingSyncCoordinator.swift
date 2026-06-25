@@ -71,10 +71,45 @@ final class RingSyncCoordinator {
     // MARK: - Actions
 
     /// Canonical startup sequence run on connect. Delegated to the active device's sync engine
-    /// (jring fires its commands up front; Colmi drives a response-driven history machine).
+    /// (jring fires its commands up front; Colmi drives a response-driven history machine). The user's
+    /// persisted measurement config is pushed into the engine first so the connect handshake reflects
+    /// it (the engine emits the commands itself, so we don't double-send here).
     func runStartupSequence() {
+        if let device = DeviceRepository.current(context: context) {
+            let config = MeasurementConfigRepository.configOrDefault(deviceId: device.id, context: context)
+            engine?.setMeasurementSettings(config.asSettings)
+        }
+        if let profile = ProfileRepository.profile(context: context) {
+            engine?.setUserProfile(profileValues(from: profile))
+        }
         engine?.runStartup()
         lastSyncAt = Date()
+    }
+
+    /// Live "Save" from the Measurement settings screen: persist nothing here (the view owns the model
+    /// write), just push the latest config to the connected ring so it takes effect immediately. When
+    /// disconnected this is a no-op — the config is applied on the next connect handshake.
+    func applyMeasurementSettings() {
+        guard client.state == .connected, let device = DeviceRepository.current(context: context) else { return }
+        let config = MeasurementConfigRepository.configOrDefault(deviceId: device.id, context: context)
+        engine?.applyMeasurementSettings(config.asSettings)
+    }
+
+    /// Live "Save" from the Profile screen: push the latest profile to the connected ring. No-op when
+    /// disconnected — the profile is applied on the next connect handshake.
+    func applyUserProfile() {
+        guard client.state == .connected, let profile = ProfileRepository.profile(context: context) else { return }
+        engine?.applyUserProfile(profileValues(from: profile))
+    }
+
+    private func profileValues(from profile: UserProfile) -> UserProfileValues {
+        UserProfileValues(
+            metric: profile.units == .metric,
+            sex: profile.sex,
+            age: profile.age,
+            heightCm: profile.heightCm,
+            weightKg: profile.weightKg
+        )
     }
 
     func syncNow() {

@@ -26,16 +26,38 @@ struct PulseLoopApp: App {
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
 
+    /// True when the app host is launched by the XCTest runner. Unit tests build their own
+    /// in-memory stores and never touch the live BLE/notification stack, so the app host must
+    /// not spin those up: on the headless CI simulator CoreBluetooth's XPC service and the
+    /// on-disk SwiftData store are unavailable, and starting them hangs/crashes the test host.
+    private static var isRunningUnitTests: Bool {
+        NSClassFromString("XCTestCase") != nil
+    }
+
     init() {
+        let runningTests = Self.isRunningUnitTests
+
         let container: ModelContainer
         do {
-            container = try ModelContainerFactory.make()
+            // Under tests, use an isolated in-memory store instead of the on-disk `default.store`
+            // (which fails to create in the sandboxed CI simulator).
+            container = try ModelContainerFactory.make(inMemory: runningTests)
         } catch {
             fatalError("Failed to create SwiftData container: \(error)")
         }
         self.container = container
 
-        let client = RingBLEClient()
+        // One-time cleanup of activity totals inflated by the old accumulator bug.
+        ActivityService.migrateInflatedActivityIfNeeded(context: container.mainContext)
+
+        // Seed the app-group units mirror from the stored profile so the Live Activity widget and
+        // model-layer helpers format correctly even before the profile editor is opened this launch.
+        if let profile = ProfileRepository.profile(context: container.mainContext) {
+            WorkoutAppGroup.useImperialUnits = (profile.units == .imperial)
+        }
+
+        // Don't bring up CoreBluetooth under tests (see `isRunningUnitTests`).
+        let client = RingBLEClient(startManager: !runningTests)
         let coordinator = RingSyncCoordinator(client: client, context: container.mainContext)
         client.onConnected = { [weak coordinator] in coordinator?.runStartupSequence() }
         let gps = GpsRouteRecorder()
@@ -49,6 +71,10 @@ struct PulseLoopApp: App {
         self.summaryCoordinator = CoachSummaryCoordinator(context: container.mainContext)
         let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
         self.diagnostics = diagnostics
+
+        // Skip the live subsystems entirely under XCTest — the test target exercises these
+        // components directly with their own fixtures; the app host just needs to launch cleanly.
+        guard !runningTests else { return }
 
         // Start persistence + coordinator draining the bus; auto-reconnect happens when
         // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).

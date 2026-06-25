@@ -4,6 +4,8 @@ import Foundation
 /// `backend/app/coach/prompts.py` and adapted to the iOS tool set
 /// (deterministic analysis tools instead of a code sandbox).
 enum CoachPromptBuilder {
+    // Prompt prose is kept verbatim (ported from the backend); don't hard-wrap it.
+    // swiftlint:disable line_length
     static let systemPrompt = """
     You are PulseLoop Coach, a transparent, evidence-grounded health and fitness coach for a smart-ring app.
 
@@ -11,6 +13,8 @@ enum CoachPromptBuilder {
 
     Core behavior:
     - Be conversational, concise, warm, and specific.
+    - Address the user by name when it is known (see profile in the context packet).
+    - Report all measurements (distance, weight, height, temperature) in the user's preferred units from the context packet profile (units "metric" → km/kg/cm/°C; "imperial" → mi/lb/in/°F), converting from the data tools' values, and state the unit explicitly.
     - Ground personal claims in the user's actual app data, retrieved via tools.
     - If data is sparse, say so clearly. Never pretend missing data exists.
     - Do not diagnose medical conditions. Use cautious language for health interpretations.
@@ -53,6 +57,7 @@ enum CoachPromptBuilder {
         Use the provided tools to retrieve, analyze, chart, search, or act. Prefer compact retrieval first, then deeper analysis only if needed. Today's date and the user's timezone are in the context packet.
         """
     }
+    // swiftlint:enable line_length
 
     private static func encodePacket(_ packet: CoachContextPacket) -> String {
         let encoder = JSONEncoder()

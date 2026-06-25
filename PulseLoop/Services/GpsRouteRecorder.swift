@@ -48,7 +48,7 @@ final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
         // route keeps recording when the screen locks / the app backgrounds.
         manager.requestWhenInUseAuthorization()
         manager.requestAlwaysAuthorization()
-        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.desiredAccuracy = WorkoutPrefsStore.shared.settings.gpsAccuracy.clValue
         manager.distanceFilter = isCycling ? 8 : 5
         manager.pausesLocationUpdatesAutomatically = false
         manager.activityType = .fitness

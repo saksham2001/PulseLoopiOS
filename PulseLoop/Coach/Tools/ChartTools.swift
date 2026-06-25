@@ -27,6 +27,7 @@ enum ChartTools {
         .make(
             name: "prepare_chart",
             label: "Preparing a chart",
+            // swiftlint:disable:next line_length
             description: "Build a ready-to-render chart (with embedded data) from ring data for a metric + date range. Returns a chart object to copy verbatim into the final response's `chart` field. granularity controls hr/spo2 resolution: use 'raw' for a within-a-single-day trend (individual readings), 'hour' for a busy day, 'day' for multi-day trends (daily averages). Activity/sleep metrics are always daily. For chart_type 'sleep_stage', uses the most recent sleep session in range.",
             parameters: JSONSchema.object([
                 "chart_type": JSONSchema.enumString(["line", "bar", "dot", "sleep_stage", "sparkline"]),

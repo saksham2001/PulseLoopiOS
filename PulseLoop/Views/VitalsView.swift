@@ -4,7 +4,10 @@ import SwiftData
 struct VitalsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
@@ -35,53 +38,58 @@ struct VitalsView: View {
                     }
                 }
 
-                DetailCard(title: "Heart rate", color: PulseColors.heartRate) {
-                    let label = TodayInsights.hrRangeLabel(hrSamples, summary.latestHeartRate?.value)
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
-                        if !hrSamples.isEmpty || summary.latestHeartRate != nil {
-                            Text("bpm range").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                if MetricsService.isVisible(.heartRate, context: modelContext) {
+                    DetailCard(title: "Heart rate", color: PulseColors.heartRate) {
+                        let label = TodayInsights.hrRangeLabel(hrSamples, summary.latestHeartRate?.value)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if !hrSamples.isEmpty || summary.latestHeartRate != nil {
+                                Text("bpm range").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            }
                         }
-                    }
-                    .padding(.top, 12)
+                        .padding(.top, 12)
 
-                    Text("Resting estimate: \(summary.restingHeartRateEstimate.map { "\(Int($0))" } ?? "Calibrating")  ·  Peak today: \(summary.peakHeartRateToday.map { "\(Int($0))" } ?? "Not enough data")")
-                        .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
-                        .padding(.top, 8)
-                    Text("\(statusLine(summary, .heartRate))")
-                        .font(.system(size: 10, weight: .medium)).tracking(1.0)
-                        .foregroundStyle(PulseColors.textMuted)
-                        .padding(.top, 4)
+                        // swiftlint:disable:next line_length
+                        Text("Resting estimate: \(summary.restingHeartRateEstimate.map { "\(Int($0))" } ?? "Calibrating")  ·  Peak today: \(summary.peakHeartRateToday.map { "\(Int($0))" } ?? "Not enough data")")
+                            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                            .padding(.top, 8)
+                        Text("\(statusLine(summary, .heartRate))")
+                            .font(.system(size: 10, weight: .medium)).tracking(1.0)
+                            .foregroundStyle(PulseColors.textMuted)
+                            .padding(.top, 4)
 
-                    if hrSamples.count > 1 {
-                        HRLineChart(samples: hrSamples).padding(.top, 12)
-                    } else {
-                        InlineEmptyState(title: "No HR samples yet", message: "Take a reading to start your trend.")
+                        if hrSamples.count > 1 {
+                            HRLineChart(samples: hrSamples).padding(.top, 12)
+                        } else {
+                            InlineEmptyState(title: "No HR samples yet", message: "Take a reading to start your trend.")
+                        }
                     }
                 }
 
-                DetailCard(title: "Blood oxygen", color: PulseColors.spo2) {
-                    let label = TodayInsights.averageLabel(spo2Samples, summary.latestSpO2?.value)
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
-                        if !spo2Samples.isEmpty || summary.latestSpO2 != nil {
-                            Text("% avg").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                if MetricsService.isVisible(.spo2, context: modelContext) {
+                    DetailCard(title: "Blood oxygen", color: PulseColors.spo2) {
+                        let label = TodayInsights.averageLabel(spo2Samples, summary.latestSpO2?.value)
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if !spo2Samples.isEmpty || summary.latestSpO2 != nil {
+                                Text("% avg").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            }
                         }
-                    }
-                    .padding(.top, 12)
-                    Text("\(statusLine(summary, .spo2))")
-                        .font(.system(size: 10, weight: .medium)).tracking(1.0)
-                        .foregroundStyle(PulseColors.textMuted)
-                        .padding(.top, 4)
+                        .padding(.top, 12)
+                        Text("\(statusLine(summary, .spo2))")
+                            .font(.system(size: 10, weight: .medium)).tracking(1.0)
+                            .foregroundStyle(PulseColors.textMuted)
+                            .padding(.top, 4)
 
-                    if spo2Samples.count > 1 {
-                        SpO2DotsChart(samples: spo2Samples).padding(.top, 12)
-                    } else {
-                        InlineEmptyState(title: "No SpO₂ samples yet", message: "Take a reading to start your trend.")
+                        if spo2Samples.count > 1 {
+                            SpO2DotsChart(samples: spo2Samples).padding(.top, 12)
+                        } else {
+                            InlineEmptyState(title: "No SpO₂ samples yet", message: "Take a reading to start your trend.")
+                        }
                     }
                 }
 
-                if MetricsService.supports(.stress, context: modelContext) {
+                if MetricsService.isVisible(.stress, context: modelContext) {
                     DetailCard(title: "Stress", color: PulseColors.stress) {
                         if let latest = stressSamples.last?.value {
                             StressGaugeChart(value: latest).padding(.top, 12)
@@ -91,7 +99,7 @@ struct VitalsView: View {
                     }
                 }
 
-                if MetricsService.supports(.hrv, context: modelContext) {
+                if MetricsService.isVisible(.hrv, context: modelContext) {
                     DetailCard(title: "HRV", color: PulseColors.hrv) {
                         let label = hrvSamples.last.map { "\(Int($0.value))" } ?? "--"
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -109,16 +117,13 @@ struct VitalsView: View {
                     }
                 }
 
-                if MetricsService.supports(.temperature, context: modelContext) {
+                if MetricsService.isVisible(.temperature, context: modelContext) {
                     DetailCard(title: "Skin temperature", color: PulseColors.temperature) {
-                        let isImperial = WorkoutAppGroup.useImperialUnits
-                        let tempFormatter: (Double) -> Double = { isImperial ? ($0 * 9/5 + 32) : $0 }
-                        let unitStr = isImperial ? "°F" : "°C"
-                        let label = tempSamples.last.map { String(format: "%.1f", tempFormatter($0.value)) } ?? "--"
+                        let formatted = tempSamples.last.map { UnitsFormatter.temperature(celsius: $0.value, units: units) }
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(label).font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
-                            if !tempSamples.isEmpty {
-                                Text(unitStr).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            Text(formatted?.value ?? "--").font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if let formatted {
+                                Text(formatted.unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
                             }
                         }
                         .padding(.top, 12)

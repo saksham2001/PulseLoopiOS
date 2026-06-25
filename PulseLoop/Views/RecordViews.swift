@@ -122,6 +122,8 @@ struct StaleSessionRecoveryCard: View {
 
 struct WorkoutRow: View {
     let session: ActivitySession
+    @Query private var profiles: [UserProfile]
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
     var body: some View {
         PulseCard {
             HStack {
@@ -141,9 +143,8 @@ struct WorkoutRow: View {
                         .font(.caption)
                         .foregroundStyle(PulseColors.textSecondary)
                     if let distance = session.distanceMeters {
-                        let isImperial = WorkoutAppGroup.useImperialUnits
-                        let divisor = isImperial ? 1609.34 : 1000.0
-                        Text(String(format: "%.2f %@", distance / divisor, isImperial ? "mi" : "km"))
+                        let d = UnitsFormatter.distance(meters: distance, units: units)
+                        Text("\(d.value) \(d.unit)")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(PulseColors.textMuted)
                     }
@@ -297,6 +298,8 @@ struct RecordSelectView: View {
         .background(PulseColors.background.ignoresSafeArea())
         .navigationTitle("Record")
         .navigationBarTitleDisplayMode(.inline)
+        // Seed the GPS toggle from the user's Activity-Tracking default (still per-workout overridable).
+        .onAppear { useGps = WorkoutPrefsStore.shared.settings.useGpsByDefault }
     }
 }
 
@@ -309,10 +312,13 @@ struct RecordLiveView: View {
     @Environment(GpsRouteRecorder.self) private var gps
     @Environment(LiveWorkoutManager.self) private var liveWorkout
     @Query private var sessions: [ActivitySession]
+    @Query private var profiles: [UserProfile]
     let sessionId: UUID
     @Binding var path: NavigationPath
     @State private var confirmFinish = false
     @State private var confirmDiscard = false
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         if let session = sessions.first(where: { $0.id == sessionId }) {
@@ -371,7 +377,7 @@ struct RecordLiveView: View {
                         }
 
                         if showSplits(session) {
-                            SplitStrip(points: points)
+                            SplitStrip(points: points, units: units)
                         }
 
                         if session.useGps {
@@ -495,14 +501,13 @@ struct RecordLiveView: View {
         guard session.useGps else { return "—" }
         let meters = routeDistance(points)
         guard meters > 0 else { return "—" }
-        let isImperial = WorkoutAppGroup.useImperialUnits
-        let divisor = isImperial ? 1609.34 : 1000.0
-        return String(format: "%.2f %@", meters / divisor, isImperial ? "mi" : "km")
+        let d = UnitsFormatter.distance(meters: meters, units: units)
+        return "\(d.value) \(d.unit)"
     }
 
     private func paceLabel(points: [ActivityGpsPoint], elapsedSec: Int, session: ActivitySession) -> String {
         guard session.useGps else { return "—" }
-        return ActivityMeta.pace(distanceMeters: routeDistance(points), durationSeconds: elapsedSec) ?? "—"
+        return ActivityMeta.pace(distanceMeters: routeDistance(points), durationSeconds: elapsedSec, units: units) ?? "—"
     }
 
     private func routeDistance(_ points: [ActivityGpsPoint]) -> Double {
@@ -530,10 +535,9 @@ func haversineMeters(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint) -> Double {
 /// Seconds elapsed for each *completed* kilometre of a route, in order. Walks the cumulative
 /// haversine distance and records the elapsed time every time distance crosses the next km mark.
 /// Shared by the live `SplitStrip` and the summary `SplitsTable`.
-func kmSplitSeconds(_ points: [ActivityGpsPoint]) -> [Double] {
+func kmSplitSeconds(_ points: [ActivityGpsPoint], units: UnitsPreference) -> [Double] {
     guard points.count >= 2, let first = points.first else { return [] }
-    let isImperial = WorkoutAppGroup.useImperialUnits
-    let divisor = isImperial ? 1609.34 : 1000.0
+    let divisor = units == .imperial ? 1609.344 : 1000.0
     var cumulative = 0.0
     var markTime = first.timestamp
     var nextMark = divisor
@@ -688,9 +692,12 @@ struct RecordSummaryView: View {
 /// effort/notes + Done, or read-only notes + Delete).
 struct WorkoutMetricsSections: View {
     @Environment(\.modelContext) private var modelContext
+    @Query private var profiles: [UserProfile]
     let session: ActivitySession
     /// Shows the "WORKOUT SAVED" badge in the header (only meaningful right after recording).
     var savedBadge: Bool = false
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
@@ -704,13 +711,13 @@ struct WorkoutMetricsSections: View {
         VStack(spacing: 16) {
             header
 
-            SummaryHeroBand(session: session, durationSeconds: duration)
+            SummaryHeroBand(session: session, durationSeconds: duration, units: units)
 
             statsGrid(elevationGain: elevation?.gain)
 
             if session.useGps {
                 WorkoutMapView(points: points)
-                SplitsTable(points: accepted)
+                SplitsTable(points: accepted, units: units)
             }
 
             if hr.count > 1 {
@@ -827,20 +834,20 @@ struct WorkoutMetricsSections: View {
 private struct SummaryHeroBand: View {
     let session: ActivitySession
     let durationSeconds: Int?
+    let units: UnitsPreference
 
     private struct Metric { let value: String; let label: String; let tint: Color }
 
     private var metrics: [Metric] {
         let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
         if session.useGps {
-            let isImperial = WorkoutAppGroup.useImperialUnits
-            let divisor = isImperial ? 1609.34 : 1000.0
-            let dist = session.distanceMeters.map { String(format: "%.2f", $0 / divisor) } ?? "—"
-            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds)
+            let d = session.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units) }
+            let paceUnit = UnitsFormatter.paceUnit(units)
+            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
             return [
-                Metric(value: dist, label: isImperial ? "MI" : "KM", tint: PulseColors.distance),
+                Metric(value: d?.value ?? "—", label: (d?.unit ?? "km").uppercased(), tint: PulseColors.distance),
                 Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
-                Metric(value: pace?.replacingOccurrences(of: " /km", with: "").replacingOccurrences(of: " /mi", with: "") ?? "—", label: isImperial ? "PACE /MI" : "PACE /KM", tint: PulseColors.accent)
+                Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
             ]
         } else {
             let cals = session.calories.map { "\(Int($0))" } ?? "—"
@@ -882,14 +889,14 @@ private struct SummaryHeroBand: View {
 /// there isn't at least one full completed kilometre.
 private struct SplitsTable: View {
     let points: [ActivityGpsPoint]
+    let units: UnitsPreference
 
     var body: some View {
-        let splits = kmSplitSeconds(points)
+        let splits = kmSplitSeconds(points, units: units)
         if splits.count >= 1 {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1
-            let isImperial = WorkoutAppGroup.useImperialUnits
-            let unitLabelCaps = isImperial ? "MI" : "KM"
+            let unitLabelCaps = units == .imperial ? "MI" : "KM"
             VStack(alignment: .leading, spacing: 10) {
                 Text("SPLITS").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(Array(splits.enumerated()), id: \.offset) { index, seconds in
@@ -924,8 +931,7 @@ private struct SplitsTable: View {
     }
 
     private func paceLabel(_ secPerUnit: Double) -> String {
-        let isImperial = WorkoutAppGroup.useImperialUnits
-        let label = isImperial ? "/mi" : "/km"
+        let label = units == .imperial ? "/mi" : "/km"
         return String(format: "%d:%02d %@", Int(secPerUnit) / 60, Int(secPerUnit.rounded()) % 60, label)
     }
 }
@@ -1073,10 +1079,10 @@ struct StatusPill: View {
 /// Per-kilometre/mile splits for distance activities (last / best / current pace).
 struct SplitStrip: View {
     let points: [ActivityGpsPoint]
+    let units: UnitsPreference
     var body: some View {
         let splits = kmSplits()
-        let isImperial = WorkoutAppGroup.useImperialUnits
-        let unitLabel = isImperial ? "mi" : "km"
+        let unitLabel = units == .imperial ? "mi" : "km"
         HStack(spacing: 12) {
             WorkoutStat(label: "Last \(unitLabel)", value: splits.last ?? "—")
             WorkoutStat(label: "Best \(unitLabel)", value: splits.best ?? "—")
@@ -1086,9 +1092,8 @@ struct SplitStrip: View {
 
     private func kmSplits() -> (last: String?, best: String?, current: String?) {
         guard points.count >= 2, let lastPoint = points.last else { return (nil, nil, nil) }
-        let isImperial = WorkoutAppGroup.useImperialUnits
-        let divisor = isImperial ? 1609.34 : 1000.0
-        let splitSeconds = kmSplitSeconds(points)
+        let divisor = units == .imperial ? 1609.344 : 1000.0
+        let splitSeconds = kmSplitSeconds(points, units: units)
         let cumulative = zip(points, points.dropFirst()).reduce(0) { $0 + haversineMeters($1.0, $1.1) }
         // Partial distance / time since the last whole-unit mark.
         let distSinceMark = cumulative.truncatingRemainder(dividingBy: divisor)

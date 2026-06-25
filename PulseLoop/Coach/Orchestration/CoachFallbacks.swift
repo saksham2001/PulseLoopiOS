@@ -24,6 +24,7 @@ enum CoachFallbacks {
             return CoachResponse(
                 responseType: .dataMissing,
                 title: "No activity synced yet",
+                // swiftlint:disable:next line_length
                 summary: "I don't have today's activity from the ring yet. Sync the ring or take a measurement and I'll summarize what comes in. (The AI coach is off — add an OpenAI key in Settings to enable full coaching.)",
                 dataQualityNote: packet.dataQualityWarnings.first,
                 followUpChips: ["Is my ring connected?", "What data is missing?"],

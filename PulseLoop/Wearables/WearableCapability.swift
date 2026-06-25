@@ -31,6 +31,11 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
     case findDevice
     case powerOff
     case factoryReset
+
+    // Configurable all-day measurement: the device exposes a settable HR sampling interval and
+    // per-vital monitoring toggles (Colmi `0x16` + prefs). The generic jring has no such control, so
+    // it never declares this and the Measurement settings screen stays hidden for it.
+    case measurementInterval
 }
 
 extension Set where Element == WearableCapability {

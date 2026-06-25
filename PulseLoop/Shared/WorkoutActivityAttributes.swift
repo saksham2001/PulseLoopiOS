@@ -55,8 +55,13 @@ nonisolated enum WorkoutAppGroup {
     static let commandSessionKey = "pendingWorkoutCommandSession"
     static let commandTimeKey = "pendingWorkoutCommandTime"  // Date for de-dupe
 
+    /// Mirror of the user's units preference (canonical source is `UserProfile.units`). Kept in the
+    /// app group so the Live Activity widget extension — which can't read SwiftData — can format
+    /// distance/pace, and so model-layer helpers have a cheap synchronous read. Written by the app
+    /// whenever the profile's units change (see `ProfileSettingsView.save`).
     static var useImperialUnits: Bool {
-        UserDefaults(suiteName: suite)?.bool(forKey: "useImperialUnits") ?? false
+        get { UserDefaults(suiteName: suite)?.bool(forKey: "useImperialUnits") ?? false }
+        set { UserDefaults(suiteName: suite)?.set(newValue, forKey: "useImperialUnits") }
     }
 
     static func post(_ command: String, sessionID: String) {

@@ -12,10 +12,21 @@ import Foundation
 /// and paged terminal conditions. These are the spots to re-check against a real ring.
 @MainActor
 final class ColmiSyncEngine: RingSyncEngine {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private weak var writer: RingCommandWriter?
     private let decoder: ColmiDecoder
     private let encoder = ColmiEncoder()
     private let calendar = Calendar.current
+
+    /// User-chosen all-day measurement config, applied in the connect handshake and updatable live.
+    /// Defaults to the previous hard-coded behaviour (all vitals on, HR every 5 min) until the
+    /// coordinator pushes the persisted config.
+    private var measurementSettings: MeasurementSettings = .allOnDefault
+
+    /// The user's profile for the ring's user-preferences command. `nil` ⇒ send the encoder's neutral
+    /// defaults (matches prior behaviour) until the coordinator pushes real values.
+    private var userProfile: UserProfileValues?
 
     init(writer: RingCommandWriter?, decoder: ColmiDecoder) {
         self.writer = writer
@@ -52,7 +63,7 @@ final class ColmiSyncEngine: RingSyncEngine {
         // Connect-time settings handshake (no history yet — history is on-demand via startHistorySync).
         writer?.enqueue(Data(encoder.phoneName()))
         writer?.enqueue(Data(encoder.setDateTime()))
-        writer?.enqueue(Data(encoder.userPreferences()))
+        writer?.enqueue(Data(userPreferencesCommand()))
         writer?.enqueue(Data(encoder.battery()))
         writer?.enqueue(Data(encoder.readPref(ColmiCommandID.autoHRPref)))
         writer?.enqueue(Data(encoder.readPref(ColmiCommandID.autoStressPref)))
@@ -60,13 +71,59 @@ final class ColmiSyncEngine: RingSyncEngine {
         writer?.enqueue(Data(encoder.readPref(ColmiCommandID.autoHRVPref)))
         writer?.enqueue(Data(encoder.readTempPref()))
         writer?.enqueue(Data(encoder.readGoals()))
-        // Enable all-day measurement so the ring actually accumulates data the big-data history can
-        // return (without these, SpO2/stress/HRV/temp history come back empty — e.g. spot SpO2 fails).
-        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoSpo2Pref, enabled: true)))
-        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoStressPref, enabled: true)))
-        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoHRVPref, enabled: true)))
+        // Enable all-day measurement so the ring actually accumulates data the history sync can
+        // return (without these, the metric history comes back empty). The exact intervals/toggles come
+        // from the user's persisted config (defaulting to all-on / 5-min HR until the coordinator pushes
+        // it via setMeasurementSettings before runStartup).
+        enqueueMeasurementCommands(measurementSettings)
         // Kick off a full history sync after the settings handshake.
         startHistorySync()
+    }
+
+    // MARK: - Measurement settings
+
+    /// Store the config without sending (the connect handshake's `enqueueMeasurementCommands` will send
+    /// it as part of `runStartup`).
+    func setMeasurementSettings(_ settings: MeasurementSettings) {
+        measurementSettings = settings
+    }
+
+    /// Store *and* immediately push the config — the live "Save" path while connected.
+    func applyMeasurementSettings(_ settings: MeasurementSettings) {
+        measurementSettings = settings
+        enqueueMeasurementCommands(settings)
+    }
+
+    /// Translate the device-agnostic settings into Colmi pref commands. HR uses the dedicated `0x16`
+    /// command (interval + on/off in one); SpO2/stress/HRV/temp are simple on/off prefs.
+    private func enqueueMeasurementCommands(_ s: MeasurementSettings) {
+        writer?.enqueue(Data(encoder.autoHeartRate(enabled: s.hrEnabled, intervalMinutes: s.hrIntervalMinutes)))
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoSpo2Pref, enabled: s.spo2Enabled)))
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoStressPref, enabled: s.stressEnabled)))
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoHRVPref, enabled: s.hrvEnabled)))
+        writer?.enqueue(Data(encoder.writeTempPref(enabled: s.temperatureEnabled)))
+    }
+
+    // MARK: - User profile
+
+    /// Store the profile without sending (the connect handshake sends it via `userPreferencesCommand`).
+    func setUserProfile(_ profile: UserProfileValues) {
+        userProfile = profile
+    }
+
+    /// Store *and* immediately push the profile — the live path when the profile screen saves.
+    func applyUserProfile(_ profile: UserProfileValues) {
+        userProfile = profile
+        writer?.enqueue(Data(userPreferencesCommand()))
+    }
+
+    /// Build the user-preferences command from the stored profile, falling back to the encoder's neutral
+    /// defaults when no profile has been pushed yet.
+    private func userPreferencesCommand() -> [UInt8] {
+        guard let p = userProfile else { return encoder.userPreferences() }
+        return encoder.userPreferences(
+            metric: p.metric, gender: p.gender, age: p.age, heightCm: p.heightCm, weightKg: p.weightKg
+        )
     }
 
     private func startHistorySync() {

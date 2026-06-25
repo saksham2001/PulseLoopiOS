@@ -28,6 +28,8 @@ struct CoachContextPacket: Encodable {
         var sex: String?
         var heightCm: Double?
         var weightKg: Double?
+        /// "metric" | "imperial" — the units the coach should answer in.
+        var units: String
         /// "empty" | "partial" | "complete"
         var completeness: String
     }

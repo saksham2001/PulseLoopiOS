@@ -26,8 +26,11 @@ final class WorkoutSensorPollingService: ObservableObject {
     /// Single in-flight guard: HR and SpO2 must never overlap (one ring, one read at a time).
     private var isPolling = false
 
-    private let hrInterval: TimeInterval = 60
-    private let spo2Interval: TimeInterval = 300
+    /// Poll cadence + capture toggles come from the user's workout preferences, read at use-time so
+    /// changes apply on the next poll.
+    private var prefs: WorkoutPrefs { WorkoutPrefsStore.shared.settings }
+    private var hrInterval: TimeInterval { TimeInterval(prefs.hrPollIntervalSeconds) }
+    private var spo2Interval: TimeInterval { TimeInterval(prefs.spo2PollIntervalSeconds) }
     /// While the ring is disconnected we don't burn the full interval — retry soon so a reconnect
     /// triggers a real read within ~10 s instead of up to a minute later.
     private let disconnectedRetry: TimeInterval = 10
@@ -106,19 +109,28 @@ final class WorkoutSensorPollingService: ObservableObject {
                 guard let self else { return }
                 let now = Date()
 
-                if !self.isPolling, now >= self.nextHRPoll {
-                    let didRead = await self.poll(kind: .heartRate)
-                    self.nextHRPoll = Date().addingTimeInterval(didRead ? self.hrInterval : self.disconnectedRetry)
-                } else if now >= self.nextHRPoll {
-                    self.record(kind: "hr", status: "skipped")
+                // HR capture is user-toggleable; when off, skip polling entirely (push the next slot out).
+                if self.prefs.captureHeartRate {
+                    if !self.isPolling, now >= self.nextHRPoll {
+                        let didRead = await self.poll(kind: .heartRate)
+                        self.nextHRPoll = Date().addingTimeInterval(didRead ? self.hrInterval : self.disconnectedRetry)
+                    } else if now >= self.nextHRPoll {
+                        self.record(kind: "hr", status: "skipped")
+                        self.nextHRPoll = Date().addingTimeInterval(self.hrInterval)
+                    }
+                } else {
                     self.nextHRPoll = Date().addingTimeInterval(self.hrInterval)
                 }
 
-                if !self.isPolling, now >= self.nextSpO2Poll {
-                    let didRead = await self.poll(kind: .spo2)
-                    self.nextSpO2Poll = Date().addingTimeInterval(didRead ? self.spo2Interval : self.disconnectedRetry)
-                } else if now >= self.nextSpO2Poll {
-                    self.record(kind: "spo2", status: "skipped")
+                if self.prefs.captureSpO2 {
+                    if !self.isPolling, now >= self.nextSpO2Poll {
+                        let didRead = await self.poll(kind: .spo2)
+                        self.nextSpO2Poll = Date().addingTimeInterval(didRead ? self.spo2Interval : self.disconnectedRetry)
+                    } else if now >= self.nextSpO2Poll {
+                        self.record(kind: "spo2", status: "skipped")
+                        self.nextSpO2Poll = Date().addingTimeInterval(self.spo2Interval)
+                    }
+                } else {
                     self.nextSpO2Poll = Date().addingTimeInterval(self.spo2Interval)
                 }
 

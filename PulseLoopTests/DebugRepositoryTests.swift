@@ -5,9 +5,18 @@ import SwiftData
 @MainActor
 final class DebugRepositoryTests: XCTestCase {
     private func seed(_ context: ModelContext) {
-        DebugRepository.insertRawPacket(timestamp: Date().addingTimeInterval(-3), direction: .outgoing, commandId: 0x0c, hexPayload: "0c00", decodedKind: "status", confidence: .known, context: context)
-        DebugRepository.insertRawPacket(timestamp: Date().addingTimeInterval(-2), direction: .incoming, commandId: 0x03, hexPayload: "03aa", decodedKind: "activity", confidence: .known, context: context)
-        DebugRepository.insertRawPacket(timestamp: Date().addingTimeInterval(-1), direction: .incoming, commandId: 0x52, hexPayload: "5200", decodedKind: "unknown", confidence: .unknown, context: context)
+        DebugRepository.insertRawPacket(
+            timestamp: Date().addingTimeInterval(-3), direction: .outgoing, commandId: 0x0c,
+            hexPayload: "0c00", decodedKind: "status", confidence: .known, context: context
+        )
+        DebugRepository.insertRawPacket(
+            timestamp: Date().addingTimeInterval(-2), direction: .incoming, commandId: 0x03,
+            hexPayload: "03aa", decodedKind: "activity", confidence: .known, context: context
+        )
+        DebugRepository.insertRawPacket(
+            timestamp: Date().addingTimeInterval(-1), direction: .incoming, commandId: 0x52,
+            hexPayload: "5200", decodedKind: "unknown", confidence: .unknown, context: context
+        )
         try? context.save()
     }
 

@@ -273,6 +273,7 @@ enum SleepInsights {
         default:
             return SleepCoach(
                 headline: "Your long-term sleep trend",
+                // swiftlint:disable:next line_length
                 body: "Across the year your tracked average is \(avgText) over \(valid.count) nights. The long-term trend is still forming — as more months fill in, I'll be able to compare seasonal changes and consistency.",
                 chips: chips
             )

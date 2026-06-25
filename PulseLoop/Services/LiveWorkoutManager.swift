@@ -111,16 +111,19 @@ final class LiveWorkoutManager {
         let pace = paceSecondsPerKm(distanceMeters: distance, durationSeconds: elapsed)
         liveActivity.update(
             sessionID: session.id.uuidString,
-            status: status,
-            elapsedSeconds: elapsed,
-            startDate: timerStart(session),
-            pausedAt: status == "paused" ? now : nil,
-            usesGps: session.useGps,
-            distanceMeters: session.useGps ? distance : 0,
-            paceSecondsPerKm: session.useGps ? pace : nil,
-            lastHeartRate: coordinator.latestHRValue,
-            lastSpO2: coordinator.latestSpO2Value,
-            activityType: session.type
+            state: WorkoutActivityAttributes.ContentState(
+                status: status,
+                elapsedSeconds: elapsed,
+                startDate: timerStart(session),
+                pausedAt: status == "paused" ? now : nil,
+                usesGps: session.useGps,
+                distanceMeters: session.useGps ? distance : 0,
+                paceSecondsPerKm: session.useGps ? pace : nil,
+                lastHeartRate: coordinator.latestHRValue,
+                lastSpO2: coordinator.latestSpO2Value,
+                activityType: session.type,
+                lastUpdated: Date()
+            )
         )
     }
 

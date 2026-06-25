@@ -7,7 +7,10 @@ struct ActivityView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \ActivitySession.startedAt, order: .reverse) private var sessions: [ActivitySession]
+    @Query private var profiles: [UserProfile]
     @Binding var path: NavigationPath
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     @State private var stepsRange: MetricRange = .sevenDays
     @State private var distanceRange: MetricRange = .sevenDays
@@ -15,9 +18,9 @@ struct ActivityView: View {
     @State private var goalsOpen = false
     @State private var historyOpen = false
 
-    private var isImperial: Bool { WorkoutAppGroup.useImperialUnits }
-    private var distanceDivisor: Double { isImperial ? 1609.34 : 1000.0 }
-    private var distanceUnit: String { isImperial ? "mi" : "km" }
+    // Numeric divisor for the distance trend graph, driven by the profile's units preference
+    // (the cards/labels go through UnitsFormatter; the graph needs a raw metres→display number).
+    private var distanceDivisor: Double { units == .imperial ? 1609.344 : 1000 }
 
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
@@ -78,7 +81,7 @@ struct ActivityView: View {
                         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
                     } else {
                         ForEach(todayWorkouts) { session in
-                            ActivityWorkoutRow(session: session) { path.append(AppRoute.activityDetail(session.id)) }
+                            ActivityWorkoutRow(session: session, units: units) { path.append(AppRoute.activityDetail(session.id)) }
                         }
                     }
                 }
@@ -113,10 +116,33 @@ struct ActivityView: View {
                 .buttonStyle(.plain)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    MetricCardButton(metric: "steps", label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", color: PulseColors.steps)
-                    MetricCardButton(metric: "calories", label: "Calories", value: summary.calories.map { Int($0).formatted() } ?? "—", unit: summary.calories == nil ? nil : "kcal", color: PulseColors.calories)
-                    MetricCardButton(metric: "distance", label: "Distance", value: summary.distanceMeters.map { String(format: "%.2f", $0 / distanceDivisor) } ?? "—", unit: summary.distanceMeters == nil ? nil : distanceUnit, color: PulseColors.distance)
-                    MetricCardButton(metric: "readiness", label: "Active min", value: summary.activeMinutes.map { "\($0)" } ?? "—", unit: summary.activeMinutes == nil ? nil : "min", color: PulseColors.readiness)
+                    MetricCardButton(
+                        metric: "steps",
+                        label: "Steps",
+                        value: summary.steps.map { $0.formatted() } ?? "—",
+                        color: PulseColors.steps
+                    )
+                    MetricCardButton(
+                        metric: "calories",
+                        label: "Calories",
+                        value: summary.calories.map { Int($0).formatted() } ?? "—",
+                        unit: summary.calories == nil ? nil : "kcal",
+                        color: PulseColors.calories
+                    )
+                    MetricCardButton(
+                        metric: "distance",
+                        label: "Distance",
+                        value: summary.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value } ?? "—",
+                        unit: summary.distanceMeters.map { _ in UnitsFormatter.distance(meters: 0, units: units).unit },
+                        color: PulseColors.distance
+                    )
+                    MetricCardButton(
+                        metric: "readiness",
+                        label: "Active min",
+                        value: summary.activeMinutes.map { "\($0)" } ?? "—",
+                        unit: summary.activeMinutes == nil ? nil : "min",
+                        color: PulseColors.readiness
+                    )
                 }
 
                 // Trend graphs with range toggles
@@ -280,7 +306,10 @@ struct GoalEditorSheet: View {
 struct WorkoutHistorySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \ActivitySession.startedAt, order: .reverse) private var sessions: [ActivitySession]
+    @Query private var profiles: [UserProfile]
     let onSelect: (UUID) -> Void
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         NavigationStack {
@@ -291,7 +320,7 @@ struct WorkoutHistorySheet: View {
                         EmptyStateView(title: "No workouts yet", body: "Recorded workouts will appear here.")
                     } else {
                         ForEach(finished) { session in
-                            ActivityWorkoutRow(session: session) { onSelect(session.id) }
+                            ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
                         }
                     }
                 }

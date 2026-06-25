@@ -1,0 +1,109 @@
+name: "📟 New wearable support"
+description: Request or report support for a new ring / wearable.
+title: "[Wearable]: "
+labels: ["wearable", "enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PulseLoop is built around a **device-agnostic driver layer** (`RingProtocol/`), so adding a
+        wearable means writing a driver that declares its capabilities and decodes its packets.
+        The more protocol detail you can give here, the more likely this gets implemented — and the
+        easier it is to do it without owning the hardware. See [CONTRIBUTING.md](../CONTRIBUTING.md)
+        for how the driver layer works.
+
+  - type: input
+    id: model
+    attributes:
+      label: Ring / wearable model
+      placeholder: "e.g. Colmi R08, Oura-clone XYZ, …"
+    validations:
+      required: true
+
+  - type: input
+    id: advertised-name
+    attributes:
+      label: Advertised BLE name
+      description: The name it broadcasts (visible in a BLE scanner app like LightBlue / nRF Connect).
+      placeholder: "e.g. R08_A1B2, SMART_RING, COLMI R1x…"
+    validations:
+      required: false
+
+  - type: input
+    id: ble-service
+    attributes:
+      label: Primary BLE service UUID(s)
+      description: The custom service the ring exposes (from a BLE scanner).
+      placeholder: "e.g. 6e40fff0-…, 56ff, de5bf728-…"
+    validations:
+      required: false
+
+  - type: textarea
+    id: characteristics
+    attributes:
+      label: Characteristics (write / notify UUIDs)
+      description: Which characteristic do commands go to, and which one sends notifications back?
+      placeholder: |
+        Write:  6e40fff6-…
+        Notify: 6e40fff7-…
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: Which capabilities does this device have? (best guess is fine)
+      options:
+        - label: Heart rate (spot)
+        - label: Heart rate (history)
+        - label: Heart rate (live / workout)
+        - label: SpO₂
+        - label: Steps / distance / calories
+        - label: Sleep stages
+        - label: REM sleep
+        - label: HRV
+        - label: Stress
+        - label: Body temperature
+        - label: Battery level
+        - label: Find device
+
+  - type: textarea
+    id: packets
+    attributes:
+      label: Known packet formats / captures
+      description: >
+        If you've sniffed any packets (e.g. via the vendor app + a BLE logger), paste the raw
+        20-byte command/notification bytes here. This is the single most useful thing for adding a driver.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: vendor-app
+    attributes:
+      label: Vendor app it ships with
+      placeholder: "e.g. QRing, Colmi, GloryFit, Da Fit"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: have-hardware
+    attributes:
+      label: Do you have this device and can you test a driver?
+      options:
+        - "Yes — I own it and can test builds"
+        - "Yes — and I can capture packets"
+        - "No — just requesting support"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to write the driver yourself?
+      options:
+        - "Yes, I'd like to implement it"
+        - "Maybe, with guidance"
+        - "No, just requesting"
+    validations:
+      required: false

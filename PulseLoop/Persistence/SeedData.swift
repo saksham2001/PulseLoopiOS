@@ -2,6 +2,17 @@ import Foundation
 import SwiftData
 
 enum SeedData {
+    /// One synthetic finished workout for the demo seed. `origin` seeds a GPS loop
+    /// so the route map renders in the Simulator (which has no real GPS).
+    private struct SeedWorkout {
+        let offset: Int
+        let type: String
+        let minutes: Int
+        let distance: Double
+        let calories: Double
+        let origin: (Double, Double)?
+    }
+
     @MainActor
     static func seedIfNeeded(_ context: ModelContext) {
         let descriptor = FetchDescriptor<Device>()
@@ -81,21 +92,29 @@ enum SeedData {
             }
         }
 
-        // Several finished workouts across recent days (one today). `origin` seeds a synthetic
-        // GPS loop so the route map renders in the Simulator (which has no real GPS).
-        let workouts: [(offset: Int, type: String, minutes: Int, distance: Double, calories: Double, origin: (Double, Double)?)] = [
-            (0,  "run",  38, 6100,  330, (40.4443, -79.9436)),   // CMU / Pittsburgh
-            (-1, "walk", 52, 4200,  210, (40.4406, -79.9959)),
-            (-3, "cycle", 64, 18400, 460, (40.4612, -79.9249)),
-            (-6, "gym",  45, 0,     280, nil),
-            (-10, "run", 41, 7300,  372, (40.4280, -79.9420))
+        // Several finished workouts across recent days (one today).
+        let workouts: [SeedWorkout] = [
+            SeedWorkout(offset: 0,   type: "run",   minutes: 38, distance: 6100,  calories: 330, origin: (40.4443, -79.9436)),  // CMU / Pittsburgh
+            SeedWorkout(offset: -1,  type: "walk",  minutes: 52, distance: 4200,  calories: 210, origin: (40.4406, -79.9959)),
+            SeedWorkout(offset: -3,  type: "cycle", minutes: 64, distance: 18400, calories: 460, origin: (40.4612, -79.9249)),
+            SeedWorkout(offset: -6,  type: "gym",   minutes: 45, distance: 0,     calories: 280, origin: nil),
+            SeedWorkout(offset: -10, type: "run",   minutes: 41, distance: 7300,  calories: 372, origin: (40.4280, -79.9420))
         ]
         for workout in workouts {
             let dayStart = calendar.date(byAdding: .day, value: workout.offset, to: now) ?? now
             let start = calendar.date(bySettingHour: 18, minute: 5, second: 0, of: dayStart) ?? dayStart
             let end = calendar.date(byAdding: .minute, value: workout.minutes, to: start)
             let useGps = workout.origin != nil
-            let session = ActivitySession(type: workout.type, status: .finished, startedAt: start, endedAt: end, calories: workout.calories, distanceMeters: workout.distance > 0 ? workout.distance : nil, notes: nil, useGps: useGps)
+            let session = ActivitySession(
+                type: workout.type,
+                status: .finished,
+                startedAt: start,
+                endedAt: end,
+                calories: workout.calories,
+                distanceMeters: workout.distance > 0 ? workout.distance : nil,
+                notes: nil,
+                useGps: useGps
+            )
             session.avgHeartRate = 132 + Double(abs(workout.offset) % 12)
             session.minHeartRate = 108
             session.maxHeartRate = 158 + Double(abs(workout.offset) % 8)
@@ -111,9 +130,20 @@ enum SeedData {
         
         let conversation = CoachConversation(title: "Recovery check")
         context.insert(conversation)
-        context.insert(CoachMessage(conversationId: conversation.id, role: "assistant", body: "Your sleep is synced and activity is trending above baseline. Keep today's effort steady unless your HR stays elevated."))
+        context.insert(CoachMessage(
+            conversationId: conversation.id,
+            role: "assistant",
+            body: "Your sleep is synced and activity is trending above baseline. Keep today's effort steady unless your HR stays elevated."
+        ))
         
-        context.insert(RawPacketRow(direction: .incoming, commandId: 0x03, hexPayload: "03112233447e240000a51a000064010000000000", decodedKind: "activity", decodedJSON: #"{"steps":9342}"#, confidence: .known))
+        context.insert(RawPacketRow(
+            direction: .incoming,
+            commandId: 0x03,
+            hexPayload: "03112233447e240000a51a000064010000000000",
+            decodedKind: "activity",
+            decodedJSON: #"{"steps":9342}"#,
+            confidence: .known
+        ))
         context.insert(RawPacketRow(direction: .outgoing, commandId: 0x0c, hexPayload: "0c00000000000000000000000000000000000000", decodedKind: "status_command", confidence: .known))
         context.insert(DerivedUpdateRow(kind: "seed", entityType: "database", entityId: "demo", payloadJSON: #"{"source":"SeedData"}"#))
         
@@ -133,6 +163,7 @@ enum SeedData {
         deleteAll(UserGoal.self, context)
         deleteAll(ActivitySession.self, context)
         deleteAll(ActivitySample.self, context)
+        deleteAll(ActivityBucketSample.self, context)
         deleteAll(ActivityGpsPoint.self, context)
         deleteAll(ActivityEvent.self, context)
         deleteAll(CoachConversation.self, context)

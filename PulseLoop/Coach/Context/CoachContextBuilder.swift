@@ -24,6 +24,7 @@ enum CoachContextBuilder {
         let profileContext = CoachContextPacket.ProfileContext(
             name: profile?.name, age: profile?.age, sex: profile?.sex,
             heightCm: profile?.heightCm, weightKg: profile?.weightKg,
+            units: (profile?.units ?? .metric).rawValue,
             completeness: completeness
         )
 

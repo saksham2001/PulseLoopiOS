@@ -9,6 +9,12 @@ final class SleepServiceTests: XCTestCase {
         return Calendar.current.date(bySettingHour: 23, minute: 0, second: 0, of: base) ?? base
     }
 
+    /// A fixed "now" at noon today — past the 4 AM day-reference flip — so `.day`-range
+    /// assertions don't depend on the wall-clock time the suite happens to run at.
+    private func noonToday() -> Date {
+        Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: TestSupport.day(0)) ?? Date()
+    }
+
     func testStaleSleepHiddenFromLatest() throws {
         let context = try TestSupport.makeContext()
         TestSupport.insertSleep(nightStart: night(-3), stages: Array(repeating: .light, count: 60), into: context)
@@ -60,7 +66,9 @@ final class SleepServiceTests: XCTestCase {
     func testBlocksOnlyForDayRange() throws {
         let context = try TestSupport.makeContext()
         TestSupport.insertSleep(nightStart: night(0), stages: Array(repeating: .light, count: 60), into: context)
-        XCTAssertFalse(SleepService.sleepRange(.day, context: context).sessions.first?.blocks.isEmpty ?? true)
+        // Pin `now` to noon today so the Day window resolves to today regardless of when the suite runs
+        // (before 4 AM the reference night is yesterday, which would exclude tonight's session).
+        XCTAssertFalse(SleepService.sleepRange(.day, context: context, now: noonToday()).sessions.first?.blocks.isEmpty ?? true)
         XCTAssertTrue(SleepService.sleepRange(.week, context: context).sessions.first?.blocks.isEmpty ?? false)
     }
 

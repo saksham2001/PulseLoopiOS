@@ -167,10 +167,36 @@ enum ProfileRepository {
     static func profile(context: ModelContext) -> UserProfile? {
         (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
     }
-    
+
     @MainActor
     static func goal(context: ModelContext) -> UserGoal? {
         MetricsRepository.goals(context: context)
+    }
+}
+
+/// Per-device measurement configuration (HR interval + all-day vital toggles), keyed by `Device.id`.
+enum MeasurementConfigRepository {
+    @MainActor
+    static func config(deviceId: UUID, context: ModelContext) -> DeviceMeasurementConfig? {
+        (try? context.fetch(FetchDescriptor<DeviceMeasurementConfig>(
+            predicate: #Predicate { $0.deviceId == deviceId }
+        )))?.first
+    }
+
+    /// Fetch the device's config, inserting (and persisting) a default one if none exists yet.
+    @MainActor
+    static func configOrDefault(deviceId: UUID, context: ModelContext) -> DeviceMeasurementConfig {
+        if let existing = config(deviceId: deviceId, context: context) { return existing }
+        let fresh = DeviceMeasurementConfig(deviceId: deviceId)
+        context.insert(fresh)
+        try? context.save()
+        return fresh
+    }
+
+    @MainActor
+    static func save(_ config: DeviceMeasurementConfig, context: ModelContext) {
+        config.updatedAt = Date()
+        try? context.save()
     }
 }
 

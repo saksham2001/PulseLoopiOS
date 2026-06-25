@@ -147,6 +147,7 @@ enum RetrievalTools {
         .make(
             name: "get_metric_series",
             label: "Pulling the numbers",
+            // swiftlint:disable:next line_length
             description: "Fetch a time-series for one metric over a date range. For hr/spo2 use granularity 'raw' for a within-a-single-day trend (individual readings), 'hour' to bucket by hour, or 'day' for daily averages across multiple days. Activity/sleep are always daily.",
             parameters: JSONSchema.object([
                 "metric": JSONSchema.enumString(metricEnum),
