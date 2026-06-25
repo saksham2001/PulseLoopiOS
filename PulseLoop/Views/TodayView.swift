@@ -14,24 +14,30 @@ struct TodayView: View {
     @State private var measuring: MeasurementSheet.Kind?
     @State private var coachStore = CoachSettingsStore.shared
     @State private var dataChange = PulseDataChange.shared
-    /// Owns the prepared dashboard state so `body` stays a cheap projection (no per-render DB work).
-    /// Created on first appear from the environment's model context.
+    /// Owns the prepared dashboard state. Created lazily in `.task` (never in `body`) so a `body`
+    /// re-render never triggers DB work — it just reads the already-prepared store.
     @State private var store: TodayStore?
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
     private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
+    /// Build the store exactly once, off the `body` path.
+    private func ensureStore() {
+        if store == nil { store = TodayStore(modelContext: modelContext) }
+    }
+
     var body: some View {
         let _ = PerfTrace.renderTick("TodayView", Self.self)
-        // Resolve the store; on the very first frame (before `.task` runs) build one inline so the
-        // dashboard renders immediately. Subsequent renders reuse the cached summary — no rebuild.
-        let activeStore = store ?? TodayStore(modelContext: modelContext)
+        guard let activeStore = store else {
+            // One pre-`.task` frame before the store is built: themed background, zero DB work.
+            return AnyView(PulseColors.background.ignoresSafeArea().task { ensureStore() })
+        }
         let summary = activeStore.summary
         let hero = activeStore.hero
         let caps = activeStore.capabilities
         let coachSummary = todaySummaries.first { $0.scopeKey == CoachDataAccess.localDateString(Date()) }
-        return ScrollView {
+        return AnyView(ScrollView {
             VStack(spacing: 16) {
                 HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
 
@@ -124,9 +130,8 @@ struct TodayView: View {
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .task {
-            // Create the store once from the environment context, then keep it fresh on appear.
-            if store == nil { store = TodayStore(modelContext: modelContext) }
-            store?.refreshIfNeeded()
+            ensureStore()
+            if isActive { store?.refreshIfNeeded() }
             if coachEnabled { await summaryService.refreshTodayIfNeeded() }
         }
         // Keep the dashboard live while on-screen: the persistence layer bumps one coalesced token
@@ -137,7 +142,7 @@ struct TodayView: View {
         .onChange(of: isActive) { _, active in if active { store?.refreshIfNeeded() } }
         .sheet(item: Binding(get: { measuring.map(MeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
             MeasurementSheet(kind: item.kind)
-        }
+        })
     }
 
     private func hasHR(_ summary: TodaySummary) -> Bool {

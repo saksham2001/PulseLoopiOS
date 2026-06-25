@@ -10,15 +10,18 @@ struct VitalsView: View {
     @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
     @State private var dataChange = PulseDataChange.shared
-    /// Owns the prepared vitals state so `body` does no per-render DB work. Created on first appear.
+    /// Owns the prepared vitals state. Created lazily in `.task` (never in `body`) so a `body`
+    /// re-render never triggers DB work — it just reads the already-prepared store.
     @State private var store: VitalsStore?
 
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         let _ = PerfTrace.renderTick("VitalsView", Self.self)
-        // First frame builds inline; subsequent frames reuse the cached store.
-        let activeStore = store ?? VitalsStore(modelContext: modelContext)
+        guard let activeStore = store else {
+            // One pre-`.task` frame before the store is built: themed background, zero DB work.
+            return AnyView(PulseColors.background.ignoresSafeArea().task { ensureStore() })
+        }
         let summary = activeStore.summary
         let hrSamples = activeStore.hrSamples
         let spo2Samples = activeStore.spo2Samples
@@ -26,7 +29,7 @@ struct VitalsView: View {
         let hrvSamples = activeStore.hrvSamples
         let tempSamples = activeStore.tempSamples
 
-        return ScrollView {
+        return AnyView(ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Vitals").font(.system(size: 26, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
@@ -149,10 +152,7 @@ struct VitalsView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
-        .task {
-            if store == nil { store = VitalsStore(modelContext: modelContext) }
-            store?.refreshIfNeeded()
-        }
+        .task { ensureStore(); if isActive { store?.refreshIfNeeded() } }
         // Rebuild once per coalesced persistence flush — but only while this tab is on screen, and
         // the store's signature check still makes it a no-op when nothing changed.
         .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
@@ -160,7 +160,12 @@ struct VitalsView: View {
         .onChange(of: isActive) { _, active in if active { store?.refreshIfNeeded() } }
         .sheet(item: Binding(get: { measuring.map(VitalsMeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
             MeasurementSheet(kind: item.kind)
-        }
+        })
+    }
+
+    /// Build the store exactly once, off the `body` path.
+    private func ensureStore() {
+        if store == nil { store = VitalsStore(modelContext: modelContext) }
     }
 
     private func statusLine(_ summary: TodaySummary, _ key: MetricKey) -> String {

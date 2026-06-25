@@ -32,10 +32,11 @@ enum NotificationContextBuilder {
         let packet = CoachContextBuilder.build(context: context, now: now)
         let cutoff = now.addingTimeInterval(-12 * 3600)
 
-        let hr = MetricsRepository.measurements(kind: .heartRate, context: context)
-            .filter { $0.timestamp >= cutoff }.map(\.value)
-        let spo2 = MetricsRepository.measurements(kind: .spo2, context: context)
-            .filter { $0.timestamp >= cutoff }.map(\.value)
+        // Windowed DB queries for the last 12h instead of fetching the whole table and filtering.
+        let hr = MetricsRepository.measurements(kind: .heartRate, start: cutoff, end: now, context: context)
+            .map(\.value)
+        let spo2 = MetricsRepository.measurements(kind: .spo2, start: cutoff, end: now, context: context)
+            .map(\.value)
 
         return NotificationContextPacket(
             slot: slot.rawValue,

@@ -108,6 +108,7 @@ struct RootAppView: View {
 struct MainTabView: View {
     @Binding var path: NavigationPath
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.modelContext) private var modelContext
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared

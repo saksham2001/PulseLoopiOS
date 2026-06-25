@@ -792,12 +792,10 @@ enum ActivityService {
     
     private static func backfillSamples(for session: ActivitySession, endedAt: Date, context: ModelContext) {
         let linked = Set(ActivityRepository.samples(sessionId: session.id, context: context).compactMap(\.measurementId))
-        let rows = MetricsRepository.measurements(context: context).filter { row in
-            (row.kind == .heartRate || row.kind == .spo2)
-            && row.timestamp >= session.startedAt
-            && row.timestamp <= endedAt
-            && !linked.contains(row.id)
-        }
+        // Windowed per-kind queries over the session's time span instead of scanning the whole table.
+        let hr = MetricsRepository.measurements(kind: .heartRate, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let spo2 = MetricsRepository.measurements(kind: .spo2, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let rows = (hr + spo2).filter { !linked.contains($0.id) }
         for row in rows {
             context.insert(ActivitySample(
                 sessionId: session.id,

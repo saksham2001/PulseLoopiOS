@@ -45,8 +45,8 @@ enum CoachDataAccess {
         kind: MeasurementKind, start: String, end: String, context: ModelContext
     ) -> [Measurement] {
         guard let bounds = dayBounds(start, end) else { return [] }
-        return MetricsRepository.measurements(kind: kind, context: context)
-            .filter { $0.timestamp >= bounds.start && $0.timestamp < bounds.end }
+        // Windowed DB query (predicate + limit) instead of fetching the whole table and filtering.
+        return MetricsRepository.measurements(kind: kind, start: bounds.start, end: bounds.end, limit: 5000, context: context)
             .sorted { $0.timestamp < $1.timestamp }
     }
 
