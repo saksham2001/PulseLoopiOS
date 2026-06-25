@@ -89,6 +89,13 @@ struct SettingsView: View {
                 }
 
                 SettingsCategoryRow(
+                    icon: "heart.fill",
+                    tint: PulseColors.heartRate,
+                    title: "Apple Health",
+                    subtitle: "Connect and sync your ring data to Health"
+                ) { path.append(AppRoute.settingsHealth) }
+
+                SettingsCategoryRow(
                     icon: "lock.shield",
                     tint: PulseColors.success,
                     title: "Privacy & Data",

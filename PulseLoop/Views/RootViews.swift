@@ -81,6 +81,8 @@ struct RootAppView: View {
                     VitalsSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
+                case .settingsHealth:
+                    HealthSettingsDetailView()
                 case .settingsAbout:
                     AboutSettingsView()
                 case .pairing:
