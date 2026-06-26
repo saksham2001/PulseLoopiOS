@@ -25,6 +25,15 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
     private var storedModelParts: [String: [[String: Any]]] = [:]
     // Maps generated call IDs → function names (Gemini uses name, not call_id).
     private var callIdToName: [String: String] = [:]
+    // Web search: the orchestrator requests it via the OpenAI hosted-tool spec.
+    // Gemini 2.5 can't combine google_search with functionDeclarations or a JSON
+    // responseSchema in one request, so we ground only on a tool-less turn and
+    // fire it at most once per agent turn (later repair turns enforce the schema).
+    private var webSearchRequested = false
+    private var webSearchGrounded = false
+    // Sources cited by a google_search turn, queued to prepend to the next user
+    // message so the schema turn can fill the response `sources` array.
+    private var pendingSourcesNote: String?
 
     init(apiKey: String, model: String = "gemini-2.5-flash", session: URLSession = .shared) {
         self.apiKey = apiKey
@@ -127,6 +136,11 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
 
         // Input items may be tool results (function_call_output) or plain messages.
         var userParts: [[String: Any]] = []
+        // Prepend any queued grounding-sources note so it rides with this user turn.
+        if let note = pendingSourcesNote {
+            userParts.append(["text": note])
+            pendingSourcesNote = nil
+        }
         for item in input {
             if let toolPart = convertToolResult(item) {
                 userParts.append(toolPart)
@@ -149,12 +163,18 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
 
     // MARK: - Tool conversion (OpenAI → Gemini)
 
-    /// Converts OpenAI function-tool specs to Gemini `functionDeclarations`.
-    /// `web_search_preview` (OpenAI-hosted) is silently dropped.
+    /// Converts OpenAI function-tool specs to Gemini `functionDeclarations`. The
+    /// OpenAI hosted `web_search` spec has no Gemini function equivalent; instead
+    /// it records that grounding is wanted (see `webSearchRequested`) so we can
+    /// attach `google_search` on the tool-less final turn.
     private func convertTools(_ tools: [[String: Any]]) -> [[String: Any]] {
         let decls = tools.compactMap { tool -> [String: Any]? in
-            guard (tool["type"] as? String) == "function",
-                  let name = tool["name"] as? String else { return nil }
+            let type = tool["type"] as? String
+            if type == "web_search" || type == "web_search_preview" {
+                webSearchRequested = true
+                return nil
+            }
+            guard type == "function", let name = tool["name"] as? String else { return nil }
             var decl: [String: Any] = ["name": name]
             if let desc = tool["description"] as? String { decl["description"] = desc }
             if let params = tool["parameters"] as? [String: Any] {
@@ -220,12 +240,24 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
             body["toolConfig"] = ["functionCallingConfig": ["mode": "VALIDATED"]]
         }
 
+        // Web search (Google Search grounding). On Gemini 2.5 google_search can't
+        // share a request with functionDeclarations or a JSON responseSchema, so
+        // we ground exactly once, on the first tool-less turn: attach google_search
+        // and skip the schema. The grounded prose + cited sources land in history;
+        // the orchestrator's subsequent tool-less repair turn then enforces the
+        // coach_response schema (and can fill the `sources` array from them).
+        let groundingTurn = tools.isEmpty && webSearchRequested && !webSearchGrounded
+        if groundingTurn {
+            body["tools"] = [["google_search": [:]]]
+            webSearchGrounded = true
+        }
+
         // Gemini rejects function declarations combined with a JSON response
         // schema, so only constrain output to structured JSON on tool-less turns.
-        // When tools are present the model either calls a function or replies in
-        // prose; the orchestrator's tool-less repair turn then enforces the schema.
+        // The grounding turn also omits the schema (google_search + responseSchema
+        // is rejected); the repair turn that follows applies it.
         var genConfig: [String: Any] = [:]
-        if tools.isEmpty, let fmt = textFormat {
+        if tools.isEmpty, !groundingTurn, let fmt = textFormat {
             let fmtType = fmt["type"] as? String ?? ""
             if fmtType == "json_schema" || fmtType == "json_object" {
                 genConfig["responseMimeType"] = "application/json"
@@ -274,9 +306,39 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
             }
         }
 
+        // Grounding sources: when google_search ran, Gemini returns the cited
+        // pages in groundingMetadata. Queue them so the next (schema) turn can
+        // populate the response `sources` array. Queuing (rather than appending to
+        // `contents` here) keeps the user/model turn order valid — the note rides
+        // with the next user message in appendContinuation.
+        let sources = groundingSources(from: first)
+        if !sources.isEmpty {
+            let json = (try? JSONSerialization.data(withJSONObject: sources))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            pendingSourcesNote = "Web search sources (use these verbatim to fill the "
+                + "response `sources` array as title/url/publisher): \(json)"
+        }
+
         if outputItems.isEmpty { throw ResponsesError.emptyOutput }
 
         storedModelParts[responseId] = modelParts
         return OpenAIResponse(id: responseId, outputItems: outputItems)
+    }
+
+    /// Extracts cited pages from a candidate's `groundingMetadata` as
+    /// `{title, url, publisher}` dicts matching the coach_response sources schema.
+    private func groundingSources(from candidate: [String: Any]) -> [[String: String]] {
+        guard let meta = candidate["groundingMetadata"] as? [String: Any],
+              let chunks = meta["groundingChunks"] as? [[String: Any]] else { return [] }
+        var seen = Set<String>()
+        var sources: [[String: String]] = []
+        for chunk in chunks {
+            guard let web = chunk["web"] as? [String: Any],
+                  let uri = web["uri"] as? String, !uri.isEmpty,
+                  seen.insert(uri).inserted else { continue }
+            let title = (web["title"] as? String) ?? uri
+            sources.append(["title": title, "url": uri, "publisher": title])
+        }
+        return sources
     }
 }

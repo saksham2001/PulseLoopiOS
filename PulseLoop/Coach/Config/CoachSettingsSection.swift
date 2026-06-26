@@ -85,14 +85,7 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            if store.settings.providerMode == .userGeminiKey {
-                // Web search is an OpenAI server-side tool with no Gemini equivalent
-                // wired up yet, so it's disabled (not silently no-op) in Gemini mode.
-                toggleRow("Web search", isOn: webSearchBinding, disabled: true,
-                          caption: "Web search is available with OpenAI only.")
-            } else {
-                toggleRow("Web search", isOn: webSearchBinding)
-            }
+            toggleRow("Web search", isOn: webSearchBinding)
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
 
@@ -207,19 +200,11 @@ struct CoachSettingsSection: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
-    private func toggleRow(_ title: String, isOn: Binding<Bool>, disabled: Bool = false,
-                           caption: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(isOn: isOn) {
-                Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            }
-            .tint(PulseColors.accent)
-            .disabled(disabled)
-            if let caption {
-                Text(caption).font(.caption).foregroundStyle(PulseColors.textMuted)
-            }
+    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
         }
-        .opacity(disabled ? 0.6 : 1)
+        .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 6)
         .background(PulseColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

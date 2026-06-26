@@ -450,4 +450,68 @@ final class GeminiClientTests: XCTestCase {
             // expected
         }
     }
+
+    /// When the OpenAI web_search spec is present, the tool-less turn must attach
+    /// google_search (and drop the JSON responseSchema, which Gemini rejects
+    /// alongside it). The function-tool turn must NOT carry google_search.
+    func testWebSearchAttachesGoogleSearchOnToollessTurn() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        // Turn 1: function tools + web_search spec present → no google_search yet.
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let fnTool: [String: Any] = ["type": "function", "name": "get_daily_summary",
+                                     "parameters": ["type": "object", "properties": [:]]]
+        let withTools = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [fnTool, WebSearchTool.spec],
+            textFormat: CoachResponseSchema.textFormat, previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: withTools)
+        var json = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(StubURLProtocol.lastRequestBody)) as? [String: Any])
+        let toolsTurn = try XCTUnwrap(json["tools"] as? [[String: Any]])
+        XCTAssertNil(toolsTurn.first { $0["google_search"] != nil }, "no google_search while function tools present")
+
+        // Turn 2: tool-less repair turn → google_search attached, schema dropped.
+        let repair = OpenAIRequestBuilder.message(role: "user", content: "fix it")
+        let toolless = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [repair], tools: [],
+            textFormat: CoachResponseSchema.textFormat, previousResponseId: "r1", reasoningEffort: nil)
+        _ = try await client.send(requestBody: toolless)
+        json = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(StubURLProtocol.lastRequestBody)) as? [String: Any])
+        let groundTools = try XCTUnwrap(json["tools"] as? [[String: Any]])
+        XCTAssertNotNil(groundTools.first { $0["google_search"] != nil }, "google_search must be attached on the tool-less grounding turn")
+        XCTAssertNil((json["generationConfig"] as? [String: Any])?["responseSchema"], "responseSchema must be dropped on the grounding turn")
+    }
+
+    /// Sources cited via groundingMetadata are extracted into the next turn so the
+    /// schema turn can fill the response `sources` array.
+    func testGroundingSourcesAreCarriedForward() async throws {
+        // First (grounding) response carries groundingMetadata.
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"candidates":[{"content":{"parts":[{"text":"grounded answer"}]},
+          "groundingMetadata":{"groundingChunks":[
+            {"web":{"uri":"https://example.com/a","title":"Source A"}},
+            {"web":{"uri":"https://example.com/b","title":"Source B"}}
+          ]}}]}
+        """.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let withSearch = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [WebSearchTool.spec],
+            textFormat: nil, previousResponseId: nil, reasoningEffort: nil)
+        let resp = try await client.send(requestBody: withSearch)
+        let respId = resp.id
+
+        // Next continuation must include a user note listing the cited sources.
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+        let next = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [OpenAIRequestBuilder.message(role: "user", content: "now JSON")],
+            tools: [], textFormat: nil, previousResponseId: respId, reasoningEffort: nil)
+        _ = try await client.send(requestBody: next)
+
+        let sent = String(data: try XCTUnwrap(StubURLProtocol.lastRequestBody), encoding: .utf8) ?? ""
+        // (URLs are JSON-escaped in the body, so match host + title, not the raw slash.)
+        XCTAssertTrue(sent.contains("example.com") && sent.contains("Source A") && sent.contains("Source B"),
+                      "grounding sources must be carried into the follow-up turn")
+    }
 }
