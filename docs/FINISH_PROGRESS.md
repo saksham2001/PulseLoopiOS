@@ -56,8 +56,14 @@ Removed every pictographic emoji from rendered UI (design-system rule #1) and fi
 ### B1-bonus — `.gitignore` latent bug — FIXED
 - `Models/` and `Frameworks/` patterns were **un-anchored**, so they silently git-ignored the app's own `PulseLoop/Models/*.swift` source (8 files incl. `LifeOSModels`, `JournalCatalog`, `FitnessModels`). Anchored to `/Models/` and `/Frameworks/` (repo-root only). App model sources are tracked again; root espeak `Models/` data stays ignored.
 
+### B2 — `.font(.system(...))` → `PulseFont` (shared Components) — DONE
+- Converted every **text** `.system` font in `DesignSystem/Components.swift` to `PulseFont` (Newsreader for display numbers/titles, Hanken for body/labels); left `.system` only on `Image` (SF Symbol sizing, the correct convention). Highest leverage since all screens compose from this file.
+- Flattened `HeroInsightCardView` from a colored `LinearGradient` to a flat white `PulseColors.card` surface with `EyebrowLabel` + Newsreader title, per the locked recipe.
+- Replaced the week-strip "✓"/"•" glyphs with an SF Symbol checkmark + a filled today-dot.
+- `QuickActionButton` accent foreground `.white` → `PulseColors.background` (flips correctly in dark).
+
 ## NEXT ITEM
-B2 — `.font(.system(...))` → `PulseFont` sweep and flatten `HeroInsightCardView` gradient to monochrome per spec.
+B3 — extend the `.font(.system(...))` → `PulseFont` text sweep into the high-traffic screens (NoteEditorView, FriendsView, TrackerView, HomeView), one file per iteration with a build gate.
 
 ## Follow-ups / notes
 - Many screens still use `.font(.system(...))` and hardcoded radii (incl. parts of Home + Components.swift). Tracked for Phase B/C consistency sweep.

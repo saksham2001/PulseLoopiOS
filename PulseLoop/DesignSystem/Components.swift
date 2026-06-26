@@ -94,7 +94,7 @@ private struct FlowChips: View {
                             .font(.system(size: 9, weight: .bold))
                     }
                     Text(chip.label)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(PulseFont.bodyMedium(12))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -127,16 +127,16 @@ struct CoachMessageCard: View {
                     .shadow(color: PulseColors.accent.opacity(0.8), radius: 5)
                     .accessibilityHidden(true)
                 Text("COACH")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(PulseFont.bodyMedium(10))
                     .tracking(1.8)
                     .foregroundStyle(PulseColors.textMuted)
             }
             Text(headline)
-                .font(.system(size: 14, weight: .semibold))
+                .font(PulseFont.bodySemibold(14))
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 6)
             Text(bodyText)
-                .font(.system(size: 14))
+                .font(PulseFont.body(14))
                 .lineSpacing(5)
                 .foregroundStyle(PulseColors.textSecondary)
                 .padding(.top, 6)
@@ -144,7 +144,7 @@ struct CoachMessageCard: View {
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { chip in
                         Text(chip)
-                            .font(.system(size: 11))
+                            .font(PulseFont.body(11))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .foregroundStyle(PulseColors.textSecondary)
@@ -207,20 +207,20 @@ struct MetricCardButton: View {
                         .shadow(color: color.opacity(0.7), radius: 5)
                         .accessibilityHidden(true)
                     Text(label.uppercased())
-                        .font(.system(size: 11, weight: .medium))
+                        .font(PulseFont.bodyMedium(11))
                         .tracking(0.6)
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(value)
-                        .font(.system(size: 30, weight: .semibold))
+                        .font(PulseFont.titleSemibold(30))
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
                     if let unit {
-                        Text(unit).font(.system(size: 12, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                        Text(unit).font(PulseFont.bodyMedium(12)).foregroundStyle(PulseColors.textMuted)
                     }
                 }
                 if let delta {
@@ -230,7 +230,7 @@ struct MetricCardButton: View {
                         Text("\(isUp ? "+" : "")\(delta.value)").monospacedDigit()
                         Text(delta.label).foregroundStyle(PulseColors.textMuted)
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.bodyMedium(11))
                     .foregroundStyle(isUp ? PulseColors.success : PulseColors.danger)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -276,7 +276,7 @@ struct RangeToggleView: View {
                     selection = option.0
                 } label: {
                     Text(option.1)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(PulseFont.bodySemibold(10))
                         .tracking(0.8)
                         .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textMuted)
                         .frame(minWidth: 28)
@@ -307,7 +307,7 @@ struct SleepRangeSelectorView: View {
                     selection = option.0
                 } label: {
                     Text(option.1)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(PulseFont.bodySemibold(12))
                         .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textMuted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
@@ -368,13 +368,18 @@ struct WeeklyPillCalendarView: View {
                 VStack(spacing: 6) {
                     ZStack {
                         Capsule().fill(fill(day)).overlay(Capsule().stroke(border(day), lineWidth: 1))
-                        Text(day.completed ? "✓" : day.isToday ? "•" : "")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(textColor(day))
+                        Group {
+                            if day.completed {
+                                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+                            } else if day.isToday {
+                                Circle().fill(textColor(day)).frame(width: 4, height: 4)
+                            }
+                        }
+                        .foregroundStyle(textColor(day))
                     }
                     .frame(width: 24, height: 40)
                     Text(day.label)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(PulseFont.bodyMedium(10))
                         .tracking(0.5)
                         .foregroundStyle(day.isToday ? PulseColors.textPrimary : PulseColors.textMuted)
                 }
@@ -414,17 +419,17 @@ struct SleepHeroCardView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(label.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.bodyMedium(11))
                     .tracking(1.8)
                     .foregroundStyle(PulseColors.textMuted)
                 Text(value)
-                    .font(.system(size: noData ? 24 : 40, weight: .semibold))
+                    .font(PulseFont.titleSemibold(noData ? 24 : 40))
                     .monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                     .padding(.top, 4)
                 if let support {
                     Text(support)
-                        .font(.system(size: 14).monospacedDigit())
+                        .font(PulseFont.body(14).monospacedDigit())
                         .foregroundStyle(PulseColors.textSecondary)
                         .padding(.top, 8)
                 }
@@ -432,12 +437,12 @@ struct SleepHeroCardView: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(score.map { "\($0)" } ?? " - ")
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(PulseFont.titleSemibold(40))
                     .monospacedDigit()
                     .foregroundStyle(PulseColors.sleepScore)
                 if let scoreLabel, score != nil {
                     Text(scoreLabel)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(PulseFont.bodyMedium(14))
                         .foregroundStyle(PulseColors.textPrimary)
                 }
             }
@@ -474,13 +479,13 @@ struct SleepStageSummaryCardsView: View {
                 Circle().fill(color).frame(width: 8, height: 8).shadow(color: color.opacity(0.7), radius: 5)
                     .accessibilityHidden(true)
                 Text(label.uppercased())
-                    .font(.system(size: 10, weight: .medium))
+                    .font(PulseFont.bodyMedium(10))
                     .tracking(0.6)
                     .foregroundStyle(PulseColors.textMuted)
                     .lineLimit(1)
             }
             Text(value)
-                .font(.system(size: 22, weight: .semibold))
+                .font(PulseFont.titleSemibold(22))
                 .monospacedDigit()
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 12)
@@ -506,7 +511,7 @@ struct DetailCard<Content: View>: View {
                 Circle().fill(color).frame(width: 8, height: 8).shadow(color: color.opacity(0.7), radius: 5)
                     .accessibilityHidden(true)
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.bodyMedium(11))
                     .tracking(1.0)
                     .foregroundStyle(PulseColors.textMuted)
             }
@@ -532,10 +537,10 @@ struct QuickActionButton: View {
             action()
         } label: {
             Text(label)
-                .font(.system(size: 14, weight: .semibold))
+                .font(PulseFont.bodySemibold(14))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .foregroundStyle(accent ? .white : PulseColors.textPrimary)
+                .foregroundStyle(accent ? PulseColors.background : PulseColors.textPrimary)
                 .background(accent ? PulseColors.accent : PulseColors.card)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(accent ? Color.clear : PulseColors.borderSubtle, lineWidth: 1))
@@ -555,7 +560,7 @@ struct ActivitySectionCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.bodyMedium(11))
                     .tracking(1.0)
                     .foregroundStyle(PulseColors.textMuted)
                 Spacer()
@@ -971,20 +976,20 @@ struct ActivityWorkoutRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(ActivityMeta.label(session.type))
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(PulseFont.bodySemibold(14))
                             .foregroundStyle(PulseColors.textPrimary)
                         Spacer()
                         Text(SleepFormat.clockTime(session.startedAt))
-                            .font(.system(size: 11).monospacedDigit())
+                            .font(PulseFont.body(11).monospacedDigit())
                             .foregroundStyle(PulseColors.textMuted)
                     }
                     HStack(spacing: 12) {
-                        Text(durationLabel).font(.system(size: 12).monospacedDigit())
+                        Text(durationLabel).font(PulseFont.body(12).monospacedDigit())
                         if let distance = session.distanceMeters {
-                            Text(String(format: "%.2f km", distance / 1000)).font(.system(size: 12).monospacedDigit())
+                            Text(String(format: "%.2f km", distance / 1000)).font(PulseFont.body(12).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
-                            Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())
+                            Text("\(Int(hr)) bpm avg").font(PulseFont.body(12).monospacedDigit())
                         }
                     }
                     .foregroundStyle(PulseColors.textMuted)
