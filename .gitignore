@@ -44,6 +44,10 @@ fastlane/test_output
 # Local scratch / planning notes
 tasks/
 
+# Docs site (MkDocs Material) — local build output + virtualenv
+site/
+.venv-docs/
+
 # Misc
 *.log
 *~

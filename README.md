@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/thumbnail.png">
-    <img src="https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/thumbnail.png" alt="PulseLoop">
+  <a href="https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/thumbnail.png">
+    <img src="https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/thumbnail.png" alt="PulseLoop">
   </a>
 </p>
 
@@ -203,15 +203,15 @@ raw value; steps and distance are shown.
 
 **System architecture:** four layers on the phone. Data flows up from the ring into local storage; the coach reads sideways through tools, and the only thing that leaves the device is a coach question you choose to ask.
 
-[![System architecture](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/system-architecture.png)](/docs/system-architecture.png)
+[![System architecture](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/system-architecture.png)](/docs/images/system-architecture.png)
 
 **The ring link:** one custom BLE service, fixed 20-byte cleartext packets, commands out and notifications back.
 
-[![Ring interaction](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/ble-interaction.png)](/docs/ble-interaction.png)
+[![Ring interaction](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/ble-interaction.png)](/docs/images/ble-interaction.png)
 
 **The AI coach:** an agentic loop that calls tools to read your local data, then answers in a structured format.
 
-[![AI coach](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/AI-coach-design.png)](/docs/AI-coach-design.png)
+[![AI coach](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/AI-coach-design.png)](/docs/images/AI-coach-design.png)
 
 ---
 

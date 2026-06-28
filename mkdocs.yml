@@ -1,0 +1,120 @@
+site_name: PulseLoop
+site_description: >-
+  An LLM-native, local-first health app that turns a cheap Bluetooth smart ring
+  into a real, conversational health tracker — on iOS and Android.
+site_author: Saksham Bhutani
+# TODO: set this to your real GitHub Pages URL once Pages is enabled.
+# For a project site this is https://<user>.github.io/<repo>/
+site_url: https://saksham2001.github.io/PulseLoopiOS/
+
+repo_name: saksham2001/PulseLoopiOS
+repo_url: https://github.com/saksham2001/PulseLoopiOS
+edit_uri: edit/main/docs/
+
+copyright: >-
+  Copyright &copy; 2026 Saksham Bhutani — PulseLoop is licensed under CC BY 4.0.
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    # Dark is the brand default (glow on slate).
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.footer
+    - navigation.indexes
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - search.share
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/saksham2001/PulseLoopiOS
+      name: PulseLoop on iOS (GitHub)
+    - icon: fontawesome/brands/android
+      link: https://github.com/foureight84/PulseLoopAndroid
+      name: PulseLoop on Android (GitHub)
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/t9y85ebaKD
+      name: Join the PulseLoop Discord
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - iOS: getting-started/ios.md
+      - Android: getting-started/android.md
+  - Hardware:
+      - Overview: hardware/index.md
+      - Jring / 56ff: hardware/jring.md
+      - Colmi / Yawell: hardware/colmi.md
+      - SIMSONLAB: hardware/simsonlab.md
+      - Premium Rings: hardware/premium.md
+  - Platforms:
+      - iOS vs Android: platforms/ios-vs-android.md
+  - Project:
+      - Roadmap: project/roadmap.md
+      - Architecture: project/architecture.md
+      - Contributing: project/contributing.md
+      - Privacy: project/privacy.md
