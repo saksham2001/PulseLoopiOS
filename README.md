@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/platform-iOS%2018%2B-lightgrey?logo=apple" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-orange?logo=swift&logoColor=white" alt="Swift">
   <a href="https://github.com/saksham2001/PulseLoopiOS/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-CC--BY--4.0-blue" alt="License"></a>
+  <a href="https://saksham2001.github.io/PulseLoopiOS/"><img src="https://img.shields.io/badge/docs-online-7C5CFF?logo=materialformkdocs&logoColor=white" alt="Docs"></a>
   <a href="https://discord.gg/t9y85ebaKD"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
@@ -22,6 +23,7 @@
 
 <!-- ===================== TOP CALLOUTS ===================== -->
 <p align="center">
+  <a href="https://saksham2001.github.io/PulseLoopiOS/"><b>📚 Documentation</b></a> ·
   <a href="https://github.com/foureight84/PulseLoopAndroid"><b>📱 Now on Android</b></a> ·
   <a href="https://discord.gg/t9y85ebaKD"><b>💬 Join the Discord</b></a> ·
   <a href="https://sakshambhutani.xyz/projects/20_project/"><b>📖 Read the writeup</b></a>
@@ -58,6 +60,7 @@ your sleep, heart rate, activity, and recovery.
 
 ## Contents
 
+- [Documentation](#documentation)
 - [What it does](#what-it-does)
 - [Also on Android](#also-on-android)
 - [Community](#community)
@@ -66,10 +69,20 @@ your sleep, heart rate, activity, and recovery.
 - [Install & try it](#install--try-it)
 - [Privacy](#privacy)
 - [Contributing](#contributing)
-- [Goals / Roadmap](#goals--roadmap)
-- [Project layout](#project-layout)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
+
+---
+
+## Documentation
+
+📚 **Full docs: [saksham2001.github.io/PulseLoopiOS](https://saksham2001.github.io/PulseLoopiOS/)**
+
+- [Getting started — iOS](https://saksham2001.github.io/PulseLoopiOS/getting-started/ios/)
+- [Getting started — Android](https://saksham2001.github.io/PulseLoopiOS/getting-started/android/)
+- [Supported hardware](https://saksham2001.github.io/PulseLoopiOS/hardware/)
+- [iOS vs Android](https://saksham2001.github.io/PulseLoopiOS/platforms/ios-vs-android/)
+- [Architecture](https://saksham2001.github.io/PulseLoopiOS/project/architecture/) · [Roadmap](https://saksham2001.github.io/PulseLoopiOS/project/roadmap/) · [Contributing](https://saksham2001.github.io/PulseLoopiOS/project/contributing/)
 
 ---
 
@@ -144,74 +157,26 @@ New here? Good places to start:
 > your own risk and treat any data the ring produces as approximate.
 
 PulseLoop is built around a device-agnostic driver layer, so each supported ring
-declares exactly what it can do and the app shows only those features. The
-tables below break support down by capability.
+declares exactly what it can do and the app shows only those features.
 
-**Support status legend**
-
-| Status | Meaning |
-| --- | --- |
-| ✅ | **Supported & tested**: Fully verified working on real hardware |
-| 🧪 | **Implemented, needs testing**: code is in place (decoded from the protocol) but not yet tested with that specific model |
-| 🚧 | **Planned / not yet implemented** |
-| — | **Not applicable**: the hardware doesn't expose this capability |
-
-### Ring families
-
-| Ring | BLE Family | Advertised name | Price | Listing |
-| --- | --- | --- | --- | --- |
-| jring (generic smart ring) | `56ff` | `SMART_RING` | $7–12 | [AliExpress](https://www.aliexpress.us/item/3256810466598469.html) |
-| Colmi / Yawell ring family | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 | [Colmi store](https://www.colmi.com/) |
-
-### Capability matrix
-
-Major functional areas, by device:
-
-| Capability | jring | Colmi R11 | Other Colmi/Yawell¹ |
+| Ring | BLE Family | Advertised name | Price |
 | --- | --- | --- | --- |
-| **Connection & pairing** (scan, connect, reconnect, forget) | ✅ | ✅ | 🧪 |
-| **History sync** (pull stored data on connect) | ✅ | ✅ | 🧪 |
-| **Heart rate — spot measurement** | ✅ | ✅ | 🧪 |
-| **Heart rate — history** | ✅ | ✅ | 🧪 |
-| **Heart rate — live (workout)** | ✅ | ✅ | 🧪 |
-| **SpO₂ — spot measurement** | ✅ | — ² | — ² |
-| **SpO₂ — history** | ✅ | ✅ | 🧪 |
-| **Steps / distance / calories** | ✅ | ✅ ³ | 🧪 |
-| **Activity / workout recording** (live HR, zones, GPS route) | ✅ | ✅ | 🧪 |
-| **Sleep stages** (light / deep / awake) | ✅ | ✅ | 🧪 |
-| **REM sleep** | — | ✅ | 🧪 |
-| **HRV** | — | ✅ | 🧪 |
-| **Stress** | — | ✅ | 🧪 |
-| **Body temperature** | — | ✅ | 🧪 |
-| **Battery level** | ✅ | ✅ | 🧪 |
-| **Find device** | ✅ | ✅ | 🧪 |
+| jring (generic smart ring) | `56ff` | `SMART_RING` | $7–12 |
+| Colmi / Yawell ring family | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
 
-¹ Other Colmi/Yawell models recognized by the same driver: **Colmi R02, R03,
-R06, R07, R09, R10, R12** and **Yawell R05, R10, R11, H59**. Same protocol as
-the R11, so all capabilities are implemented, but not yet hardware-verified
-per model.
-
-² The Colmi family has no on-demand SpO₂ reading; SpO₂ is an all-day background
-metric, so only the synced **history/graph** is available (no spot button).
-
-³ Calories from Colmi history are currently hidden pending verification of the
-raw value; steps and distance are shown.
+> 📚 **Full hardware specs, per-model capability matrix, and buying guidance:
+> [Supported hardware docs](https://saksham2001.github.io/PulseLoopiOS/hardware/).**
 
 ---
 
 ## How it works
 
-**System architecture:** four layers on the phone. Data flows up from the ring into local storage; the coach reads sideways through tools, and the only thing that leaves the device is a coach question you choose to ask.
+- **System architecture:** four layers on the phone. Data flows up from the ring into local storage; the coach reads sideways through tools, and the only thing that leaves the device is a coach question you choose to ask.
+- **The ring link:** one custom BLE service, fixed 20-byte cleartext packets, commands out and notifications back.
+- **The AI coach:** an agentic loop that calls tools to read your local data, then answers in a structured format.
 
-[![System architecture](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/system-architecture.png)](/docs/images/system-architecture.png)
-
-**The ring link:** one custom BLE service, fixed 20-byte cleartext packets, commands out and notifications back.
-
-[![Ring interaction](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/ble-interaction.png)](/docs/images/ble-interaction.png)
-
-**The AI coach:** an agentic loop that calls tools to read your local data, then answers in a structured format.
-
-[![AI coach](https://github.com/saksham2001/PulseLoopiOS/raw/main/docs/images/AI-coach-design.png)](/docs/images/AI-coach-design.png)
+> 📚 **Diagrams and a full walkthrough:
+> [Architecture docs](https://saksham2001.github.io/PulseLoopiOS/project/architecture/).**
 
 ---
 
@@ -224,30 +189,15 @@ A public TestFlight beta is coming soon. Sign up on the
 
 ### 🛠️ Build from source (Xcode)
 
-**Requirements**
+You'll need Xcode 16+, an iOS 18+ device, a compatible `56ff` or Colmi/Yawell
+ring, and (optionally) an OpenAI or Gemini API key for the Coach. Open
+`PulseLoop.xcodeproj`, set your **Team** + a unique **Bundle Identifier**, then
+build & run on your device.
 
-- Xcode 16+ and an iOS 18+ device (Bluetooth and Live Activities need a real
-device — the simulator can't reach the ring).
-- A compatible `56ff` or Colmi/Yawell BLE ring.
-- An OpenAI or Gemini API key (for the Coach features).
-
-**Run it**
-
-1. Open `PulseLoop.xcodeproj` in Xcode.
-2. Select the `PulseLoop` scheme and your physical device as the run target.
-3. Set your own **Team** and a unique **Bundle Identifier** under
-*Signing & Capabilities* (the Live Activity extension target needs this too).
-4. Build & run (`⌘R`).
-5. On first launch, complete onboarding, then keep the ring nearby — the app
-auto-scans and connects when Bluetooth powers on.
-6. To enable the Coach, open **Settings → Coach** and paste your API key. It's
-stored in the iOS Keychain and never leaves the device except to call the model.
-Pick a provider and model.
-
-**Demo data (no ring required)**
-
-You can explore the UI without hardware: **Settings → "Reseed demo data"**, or
-launch with the `-seedDemo YES` argument.
+> 📚 **Full step-by-step build, signing, and demo-data instructions:
+> [Getting started — iOS](https://saksham2001.github.io/PulseLoopiOS/getting-started/ios/).**
+> Building on Android? See the
+> [Android guide](https://saksham2001.github.io/PulseLoopiOS/getting-started/android/).
 
 ---
 
@@ -285,50 +235,9 @@ that should land on Android too.
 Adding a new ring? The device-agnostic driver layer in `RingProtocol/` is the
 place to start — ping us in Discord and we'll point you at the right files.
 
----
-
-## Goals / Roadmap
-
-> Up-to-date plans and what's shipping next now live in the
-> [Releases](https://github.com/saksham2001/PulseLoopiOS/releases) and the
-> [Discord](#community). High-level direction:
-
-- [ ] **On-device LLM integration** — run the coach against a local model
-(Apple Foundation Models / a quantized on-device LLM) so the app works with
-no API key, no network, and full privacy.
-- [ ] **Support more cheap rings and other wearables** — generalize the BLE protocol layer to
-handle other low-cost ring families beyond the `56ff` devices.
-- [ ] **Custom ring firmware** — open firmware to unlock features the stock
-ring won't do, e.g. automatic activity/workout detection, higher-rate
-sampling, and richer sensor access.
-- [ ] **Better onboarding** — smoother first-run pairing, permission, and
-setup journey.
-- [ ] **LLM tool-call transparency** — surface exactly which tools the coach
-called and what data it read, so every answer is auditable.
-- [ ] **Multimodal coach input** — let the coach accept image and voice input (e.g. snap a meal, speak a question).
-- [ ] **Apple Health integration** — sync data with Apple Health.
-
----
-
-## Project layout
-
-```
-PulseLoop/
-├─ RingProtocol/      BLE client + packet decoding for the ring
-├─ Models/            SwiftData models (vitals, sleep, activity, coach)
-├─ Services/          Sync, workouts, GPS, derived summaries
-├─ Coach/             The LLM coach: orchestration, tools, prompts, notifications
-│  ├─ Orchestration/  Agentic turn loop, tool execution, fallbacks
-│  ├─ Tools/          Retrieval, analysis, charts, memory, web search, actions
-│  ├─ OpenAI/         Responses API client
-│  ├─ Gemini/         Google Gemini client
-│  └─ Notifications/  Daily AI check-ins
-├─ Views/             SwiftUI screens (Today, Vitals, Sleep, Activity, Coach)
-└─ DesignSystem/      Charts, components, theming
-
-PulseLoopLiveActivity/  Live Activity + Dynamic Island widget
-PulseLoopTests/         Unit tests
-```
+> 📚 The [roadmap](https://saksham2001.github.io/PulseLoopiOS/project/roadmap/) and
+> [architecture / project layout](https://saksham2001.github.io/PulseLoopiOS/project/architecture/)
+> now live in the docs.
 
 ---
 
