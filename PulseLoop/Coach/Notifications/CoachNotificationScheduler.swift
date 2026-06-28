@@ -15,8 +15,9 @@ final class CoachNotificationScheduler {
     func register(serviceProvider: @escaping () -> CoachNotificationService) {
         self.serviceProvider = serviceProvider
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.taskIdentifier, using: nil) { task in
-            // `using: nil` dispatches the launch handler on the main queue.
-            MainActor.assumeIsolated { Self.shared.handle(task) }
+            // `using: nil` runs the launch handler on a private background queue,
+            // so hop to the main actor rather than asserting we're already on it.
+            Task { @MainActor in Self.shared.handle(task) }
         }
     }
 
