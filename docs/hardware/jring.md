@@ -14,6 +14,13 @@ keeprapid OEM and white-labeled under many brands. It speaks a custom `56ff` BLE
 protocol and is the **only** PulseLoop-supported ring that reports blood pressure
 and (profile-derived) blood sugar.
 
+!!! warning "Set the ring up in the official Jring app first"
+    Pair and initialize the ring once with the original **Jring / KeepFit** app
+    before connecting it to PulseLoop. First-time setup sends some device
+    initialization commands that we haven't fully reverse-engineered yet; without
+    that one-time setup a fresh ring may not stream all data correctly to
+    PulseLoop. After it's been set up once, PulseLoop can connect to it directly.
+
 ## At a glance
 
 | | Detail |
