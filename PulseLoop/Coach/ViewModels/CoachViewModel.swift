@@ -36,17 +36,21 @@ final class CoachViewModel {
         _ text: String,
         conversationId: UUID,
         context: ModelContext,
+        attachments: [CoachAttachmentRef] = [],
         coordinator: RingSyncCoordinator? = nil
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending else { return }
+        // Allow image-only sends: require either text or an attachment.
+        guard !(trimmed.isEmpty && attachments.isEmpty), !isSending else { return }
         isSending = true
         traceEvents = []
         errorBanner = nil
         defer { isSending = false }
 
         // Optimistically persist the user message so the UI shows it immediately.
-        let userMessage = CoachMessage(conversationId: conversationId, role: "user", body: trimmed)
+        let userMessage = CoachMessage(
+            conversationId: conversationId, role: "user", body: trimmed,
+            attachmentsJSON: CoachAttachmentRef.encode(attachments))
         context.insert(userMessage)
         try? context.save()
 
@@ -54,6 +58,7 @@ final class CoachViewModel {
         let flags = CoachFeatureFlags(settings: settingsStore.settings, hasAPIKey: apiKey != nil)
         let packet = CoachContextBuilder.build(context: context)
         let recent = recentMessages(conversationId: conversationId, excluding: userMessage.id, context: context)
+        let userImages = CoachAttachmentStore.payloads(for: attachments)
 
         let orchestrator = CoachOrchestrator(
             client: activeClient,
@@ -65,7 +70,8 @@ final class CoachViewModel {
         let result = await orchestrator.runTurn(
             userText: trimmed,
             packet: packet,
-            recentMessages: recent
+            recentMessages: recent,
+            userImages: userImages
         ) { [weak self] event in
             self?.traceEvents.append(event)
         }
@@ -173,10 +179,18 @@ final class CoachViewModel {
         )
         descriptor.fetchLimit = 40
         let rows = (try? context.fetch(descriptor)) ?? []
-        return rows
+        let recent = rows
             .filter { $0.id != excludedId && $0.role != "error" }  // never replay error bubbles to the model
             .suffix(limit)
-            .map { CoachOrchestrator.PriorMessage(role: $0.role, text: $0.body) }
+        // Replay images only on the most recent prior user turn that has them, to
+        // keep context coherent without ballooning the payload with old base64.
+        let lastImageRowId = recent.last { CoachAttachmentRef.decode(fromJSON: $0.attachmentsJSON).isEmpty == false }?.id
+        return recent.map { row in
+            let images = row.id == lastImageRowId
+                ? CoachAttachmentStore.payloads(for: CoachAttachmentRef.decode(fromJSON: row.attachmentsJSON))
+                : []
+            return CoachOrchestrator.PriorMessage(role: row.role, text: row.body, images: images)
+        }
     }
 
     private func fetchConversation(_ id: UUID, context: ModelContext) -> CoachConversation? {

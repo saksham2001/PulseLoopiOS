@@ -126,6 +126,9 @@ struct CoachSettings: Codable, Equatable {
     /// until Milestone B wires confirmation gates.
     var enableWriteTools: Bool = false
     var enableLiveMeasurements: Bool = false
+    /// When true, the coach composer shows a camera/photo button so the user can
+    /// attach an image to a message (multimodal input). Off by default.
+    var enableImageInput: Bool = false
     var maxToolCalls: Int = 8
     var maxRounds: Int = 4
     // Milestone D — automated daily check-in notifications.
@@ -158,6 +161,7 @@ struct CoachSettings: Codable, Equatable {
         orProviderSort = try c.decodeIfPresent(String.self, forKey: .orProviderSort)
         enableWriteTools = try c.decodeIfPresent(Bool.self, forKey: .enableWriteTools) ?? d.enableWriteTools
         enableLiveMeasurements = try c.decodeIfPresent(Bool.self, forKey: .enableLiveMeasurements) ?? d.enableLiveMeasurements
+        enableImageInput = try c.decodeIfPresent(Bool.self, forKey: .enableImageInput) ?? d.enableImageInput
         maxToolCalls = try c.decodeIfPresent(Int.self, forKey: .maxToolCalls) ?? d.maxToolCalls
         maxRounds = try c.decodeIfPresent(Int.self, forKey: .maxRounds) ?? d.maxRounds
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled

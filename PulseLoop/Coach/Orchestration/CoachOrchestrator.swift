@@ -23,19 +23,24 @@ struct CoachOrchestrator {
         var error: CoachTurnError? = nil
     }
 
-    struct PriorMessage { let role: String; let text: String }
+    struct PriorMessage { let role: String; let text: String; var images: [CoachImagePayload] = [] }
+
+    /// Substituted as the user prompt when an image is sent with no text, so the
+    /// schema/tool loop still has a non-empty user turn to anchor on.
+    private static let imageOnlyPrompt = "Please look at the attached image."
 
     func runTurn(
         userText: String,
         packet: CoachContextPacket,
         recentMessages: [PriorMessage],
+        userImages: [CoachImagePayload] = [],
         onTrace: @escaping (CoachTraceEvent) -> Void = { _ in }
     ) async -> TurnResult {
         guard flags.coachEnabled else {
             return TurnResult(assistant: CoachFallbacks.scripted(packet: packet), trace: [])
         }
         do {
-            return try await runOpenAI(userText: userText, packet: packet, recentMessages: recentMessages, onTrace: onTrace)
+            return try await runOpenAI(userText: userText, packet: packet, recentMessages: recentMessages, userImages: userImages, onTrace: onTrace)
         } catch {
             onTrace(CoachTraceEvent(label: "Something went wrong", status: .failedTool))
             return TurnResult(assistant: CoachFallbacks.fallback(), trace: [], error: CoachTurnError(error))
@@ -46,20 +51,27 @@ struct CoachOrchestrator {
         userText: String,
         packet: CoachContextPacket,
         recentMessages: [PriorMessage],
+        userImages: [CoachImagePayload],
         onTrace: @escaping (CoachTraceEvent) -> Void
     ) async throws -> TurnResult {
         let toolSpecs = registry.toolSpecs
         let textFormat = CoachResponseSchema.textFormat
 
         // Initial input: system + developer + recent turns + the new user message.
+        // Images only ever ride on user turns (system/developer/assistant stay text).
         var input: [[String: Any]] = [
             OpenAIRequestBuilder.message(role: "system", content: CoachPromptBuilder.systemPrompt),
             OpenAIRequestBuilder.message(role: "developer", content: CoachPromptBuilder.developerMessage(packet: packet)),
         ]
         for m in recentMessages {
-            input.append(OpenAIRequestBuilder.message(role: m.role == "user" ? "user" : "assistant", content: m.text))
+            let isUser = m.role == "user"
+            input.append(OpenAIRequestBuilder.message(
+                role: isUser ? "user" : "assistant",
+                content: m.text,
+                images: isUser ? m.images : []))
         }
-        input.append(OpenAIRequestBuilder.message(role: "user", content: userText))
+        let userContent = userText.isEmpty && !userImages.isEmpty ? Self.imageOnlyPrompt : userText
+        input.append(OpenAIRequestBuilder.message(role: "user", content: userContent, images: userImages))
 
         onTrace(CoachTraceEvent(label: "Thinking about your question…", status: .thinking))
 

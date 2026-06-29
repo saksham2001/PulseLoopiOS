@@ -108,9 +108,8 @@ final class OpenRouterClient: ResponsesClient, @unchecked Sendable {
         messages = []
         storedAssistantMessage = [:]
         for item in input {
-            guard let role = item["role"] as? String,
-                  let content = item["content"] as? String else { continue }
-            messages.append(["role": chatRole(role), "content": content])
+            guard let role = item["role"] as? String, item["content"] != nil else { continue }
+            messages.append(["role": chatRole(role), "content": chatContent(from: item)])
         }
         // Unlike the native OpenAI/Gemini clients, OpenRouter sends no enforced
         // `response_format` (several catalog models reject this app's schema), so
@@ -132,15 +131,38 @@ final class OpenRouterClient: ResponsesClient, @unchecked Sendable {
                let callId = item["call_id"] as? String,
                let output = item["output"] as? String {
                 messages.append(["role": "tool", "tool_call_id": callId, "content": output])
-            } else if let role = item["role"] as? String,
-                      let content = item["content"] as? String {
-                messages.append(["role": chatRole(role), "content": content])
+            } else if let role = item["role"] as? String, item["content"] != nil {
+                messages.append(["role": chatRole(role), "content": chatContent(from: item)])
             }
         }
     }
 
     private func chatRole(_ responsesRole: String) -> String {
         responsesRole == "developer" ? "system" : responsesRole
+    }
+
+    /// Converts a Responses-API message item's `content` into Chat Completions
+    /// `content`. Text items keep `content` a plain String (unchanged path, so the
+    /// cache-control rewrite still applies). Image items carry the OpenAI
+    /// content-part array (`input_text` + `input_image`), which we map to Chat
+    /// Completions parts (`{type:text}` + `{type:image_url, image_url:{url}}`).
+    private func chatContent(from item: [String: Any]) -> Any {
+        if let text = item["content"] as? String { return text }
+        guard let parts = item["content"] as? [[String: Any]] else { return "" }
+        var out: [[String: Any]] = []
+        for part in parts {
+            switch part["type"] as? String {
+            case "input_text", "text":
+                if let text = part["text"] as? String { out.append(["type": "text", "text": text]) }
+            case "input_image":
+                if let url = part["image_url"] as? String {
+                    out.append(["type": "image_url", "image_url": ["url": url]])
+                }
+            default:
+                break
+            }
+        }
+        return out
     }
 
     // MARK: - Tool conversion (Responses flat → Chat Completions nested)

@@ -120,11 +120,50 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         systemText = systemParts.joined(separator: "\n\n")
 
         for item in conversationItems {
-            guard let role = item["role"] as? String,
-                  let content = item["content"] as? String else { continue }
+            guard let role = item["role"] as? String else { continue }
+            let parts = geminiParts(from: item)
+            guard !parts.isEmpty else { continue }
             let geminiRole = role == "assistant" ? "model" : "user"
-            contents.append(["role": geminiRole, "parts": [["text": content]]])
+            contents.append(["role": geminiRole, "parts": parts])
         }
+    }
+
+    /// Converts a Responses-API message item's `content` into Gemini `parts`. Text
+    /// items keep `content` as a String → `[{"text": …}]` (unchanged path). Image
+    /// items carry `content` as the OpenAI content-part array (`input_text` +
+    /// `input_image`), which we map to `{"text": …}` + `{"inlineData": {mimeType, data}}`.
+    private func geminiParts(from item: [String: Any]) -> [[String: Any]] {
+        if let text = item["content"] as? String {
+            return [["text": text]]
+        }
+        guard let parts = item["content"] as? [[String: Any]] else { return [] }
+        var out: [[String: Any]] = []
+        for part in parts {
+            switch part["type"] as? String {
+            case "input_text", "text":
+                if let text = part["text"] as? String { out.append(["text": text]) }
+            case "input_image":
+                if let inline = inlineData(fromImageURL: part["image_url"] as? String) {
+                    out.append(["inlineData": inline])
+                }
+            default:
+                break
+            }
+        }
+        return out
+    }
+
+    /// Splits an `input_image` `data:<mime>;base64,<data>` URL into Gemini's
+    /// `inlineData` object (`mimeType` + bare base64 `data`).
+    private func inlineData(fromImageURL url: String?) -> [String: String]? {
+        guard let url, url.hasPrefix("data:"),
+              let comma = url.firstIndex(of: ","),
+              let semicolon = url.firstIndex(of: ";"),
+              url.distance(from: url.startIndex, to: semicolon) < url.distance(from: url.startIndex, to: comma)
+        else { return nil }
+        let mime = String(url[url.index(url.startIndex, offsetBy: 5)..<semicolon])
+        let data = String(url[url.index(after: comma)...])
+        return ["mimeType": mime, "data": data]
     }
 
     /// Subsequent turns (tool results or repair messages): append the stored
@@ -144,15 +183,17 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         for item in input {
             if let toolPart = convertToolResult(item) {
                 userParts.append(toolPart)
-            } else if let role = item["role"] as? String, let content = item["content"] as? String {
+            } else if let role = item["role"] as? String, item["content"] != nil {
                 if role == "assistant" {
                     if !userParts.isEmpty {
                         contents.append(["role": "user", "parts": userParts])
                         userParts = []
                     }
-                    contents.append(["role": "model", "parts": [["text": content]]])
+                    // Assistant replays are always text, but route through the same
+                    // converter so a String content still yields `[{"text": …}]`.
+                    contents.append(["role": "model", "parts": geminiParts(from: item)])
                 } else {
-                    userParts.append(["text": content])
+                    userParts.append(contentsOf: geminiParts(from: item))
                 }
             }
         }

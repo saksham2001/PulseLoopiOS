@@ -161,6 +161,7 @@ struct CoachSettingsSection: View {
 
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
+            toggleRow("Image input (attach photos)", isOn: imageInputBinding)
 
             if !memories.isEmpty {
                 SectionHeader(title: "Coach memory", action: nil)
@@ -397,6 +398,9 @@ struct CoachSettingsSection: View {
     }
     private var liveMeasurementsBinding: Binding<Bool> {
         Binding(get: { store.settings.enableLiveMeasurements }, set: { store.settings.enableLiveMeasurements = $0 })
+    }
+    private var imageInputBinding: Binding<Bool> {
+        Binding(get: { store.settings.enableImageInput }, set: { store.settings.enableImageInput = $0 })
     }
 
     // MARK: - Key actions
