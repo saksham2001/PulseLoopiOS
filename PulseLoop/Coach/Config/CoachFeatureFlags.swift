@@ -33,6 +33,7 @@ struct CoachFeatureFlags {
     var webSearchEnabled: Bool { settings.enableWebSearch }
     var writeToolsEnabled: Bool { settings.enableWriteTools }
     var liveMeasurementsEnabled: Bool { settings.enableLiveMeasurements }
+    var imageInputEnabled: Bool { settings.enableImageInput }
 
     var maxToolCalls: Int { max(1, settings.maxToolCalls) }
     var maxRounds: Int { max(1, settings.maxRounds) }

@@ -694,15 +694,20 @@ final class CoachMessage {
     var cardsJSON: String?
     /// Encoded `PendingAction` awaiting a Confirm/Cancel tap (Milestone B).
     var pendingActionJSON: String? = nil
+    /// Encoded `[CoachAttachmentRef]` for images attached to this message. The
+    /// bytes live in `Documents/coach_attachments/`; this holds only the refs.
+    /// Optional with a default keeps the SwiftData migration lightweight.
+    var attachmentsJSON: String? = nil
     var createdAt: Date
 
-    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, attachmentsJSON: String? = nil, createdAt: Date = Date()) {
         self.id = id
         self.conversationId = conversationId
         self.role = role
         self.body = body
         self.cardsJSON = cardsJSON
         self.pendingActionJSON = pendingActionJSON
+        self.attachmentsJSON = attachmentsJSON
         self.createdAt = createdAt
     }
 }
