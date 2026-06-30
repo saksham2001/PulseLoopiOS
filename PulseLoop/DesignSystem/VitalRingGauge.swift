@@ -43,6 +43,22 @@ struct RingSegment: Shape {
     }
 }
 
+/// The top half of a disc (a semicircle filling the upper half of its bounding box, flat edge along
+/// the horizontal center line). Rotate to orient; used as a rounded arc tip that only bulges one way.
+struct HalfDisc: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        // Semicircle across the top: from the right of the diameter, sweeping up to the left.
+        path.move(to: CGPoint(x: center.x + radius, y: center.y))
+        path.addArc(center: center, radius: radius,
+                    startAngle: .degrees(0), endAngle: .degrees(180), clockwise: true)
+        path.closeSubpath()
+        return path
+    }
+}
+
 // MARK: - Single-value gauge
 
 /// A 270° gauge: muted zone arcs in the track, a bright value arc, a marker dot centered on the
@@ -121,17 +137,20 @@ struct VitalRingGauge: View {
         .frame(width: size, height: size)
     }
 
-    /// A rounded tip at a sweep end (fraction 0 or 1): a `lineWidth`-diameter dot centered on the
-    /// stroke. Its inner half sits under the butt-capped end zone, so only the outer half shows — a
-    /// clean rounded end that doesn't round any interior boundary.
+    /// A rounded tip at a sweep end (fraction 0 or 1): a semicircle whose flat edge sits exactly on
+    /// the zone's butt end and bulges only *outward* (tangentially past the end), so it rounds the end
+    /// without overlapping back into the zone. `outward` flips the bulge direction for the start tip.
     @ViewBuilder
     private func roundTip(at fraction: Double, color: Color?) -> some View {
         if let color {
             let angle = GaugeGeometry.angle(for: fraction)
             let r = size / 2 - strokeInset
-            Circle()
+            // Bulge along the tangent: +90° past the end (fraction 1), −90° before the start (0).
+            let bulge = fraction >= 0.5 ? angle.degrees + 90 : angle.degrees - 90
+            HalfDisc()
                 .fill(color.opacity(0.32))
                 .frame(width: lineWidth, height: lineWidth)
+                .rotationEffect(.degrees(bulge - 90))   // HalfDisc bulges "up" by default
                 .offset(x: r * cos(angle.radians), y: r * sin(angle.radians))
         }
     }
@@ -226,14 +245,17 @@ struct DualVitalRingGauge: View {
             .stroke(valueColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
     }
 
-    /// A rounded tip dot at a sweep end; inner half is covered by the butt-capped end zone.
+    /// A rounded semicircular tip at a sweep end, bulging only outward (tangentially) so it doesn't
+    /// overlap back into the butt-capped end zone.
     @ViewBuilder
     private func tip(at fraction: Double, radius: CGFloat, color: Color?) -> some View {
         if let color {
             let angle = GaugeGeometry.angle(for: fraction)
-            Circle()
+            let bulge = fraction >= 0.5 ? angle.degrees + 90 : angle.degrees - 90
+            HalfDisc()
                 .fill(color.opacity(0.30))
                 .frame(width: lineWidth, height: lineWidth)
+                .rotationEffect(.degrees(bulge - 90))
                 .offset(x: radius * cos(angle.radians), y: radius * sin(angle.radians))
         }
     }
