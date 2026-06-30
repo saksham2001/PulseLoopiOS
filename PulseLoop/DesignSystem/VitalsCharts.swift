@@ -27,9 +27,10 @@ private extension View {
     func vitalsAxes(showAxes: Bool, range: MetricRange) -> some View {
         chartXAxis {
             if showAxes {
-                if range == .sevenDays {
-                    // One tick per day so the whole week (all 7 days) is labelled, not ~4.
-                    AxisMarks(values: .stride(by: .day, count: 1)) { _ in
+                if let stride = VitalsAxisFormat.stride(for: range) {
+                    // Fixed stride anchored to clean boundaries: 24h → every 6h (12a/6a/12p/6p),
+                    // 7d → every day (all 7 weekdays). Avoids the automatic picker's odd offsets.
+                    AxisMarks(values: .stride(by: stride.unit, count: stride.count)) { _ in
                         AxisGridLine().foregroundStyle(.clear)
                         AxisTick().foregroundStyle(.clear)
                         AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
@@ -69,6 +70,16 @@ enum VitalsAxisFormat {
         case .sevenDays: return .dateTime.weekday(.narrow)
         case .thirtyDays: return .dateTime.day().month(.abbreviated)
         case .twelveMonths: return .dateTime.month(.abbreviated)
+        }
+    }
+
+    /// A fixed calendar stride for the x-axis (anchored to clean boundaries), or nil to let Charts
+    /// pick automatically. 24h → every 6 hours; 7d → every day; longer ranges stay automatic.
+    static func stride(for range: MetricRange) -> (unit: Calendar.Component, count: Int)? {
+        switch range {
+        case .twentyFourHours: return (.hour, 6)
+        case .sevenDays: return (.day, 1)
+        case .thirtyDays, .twelveMonths: return nil
         }
     }
 }
