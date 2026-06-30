@@ -1143,9 +1143,8 @@ struct RecordingQualityCard: View {
 
         var rows: [(String, String, Color)] = []
         if session.useGps {
-            let accepted = session.gpsPointCount
-            let total = accepted + session.rejectedGpsPointCount
-            let coverage = total > 0 ? Int(Double(accepted) / Double(total) * 100) : 0
+            let total = session.gpsPointCount + session.rejectedGpsPointCount
+            let coverage = total > 0 ? Int(Double(session.gpsPointCount) / Double(total) * 100) : 0
             rows.append(("GPS coverage", total > 0 ? "\(coverage)%" : "—", coverage >= 80 ? PulseColors.success : PulseColors.warning))
             rows.append(("Dropped GPS points", "\(session.rejectedGpsPointCount)", session.rejectedGpsPointCount == 0 ? PulseColors.textPrimary : PulseColors.warning))
             rows.append(("Distance source", session.distanceMeters != nil ? "GPS route" : "—", PulseColors.textPrimary))

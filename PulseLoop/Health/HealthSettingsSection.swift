@@ -74,9 +74,12 @@ struct HealthSettingsSection: View {
                         alert = HealthAlert(title: "Apple Health Connected",
                                             message: "PulseLoop can now sync your ring data to Apple Health. Tap “Sync workouts history” to export everything captured.")
                     default:
-                        alert = HealthAlert(title: "Apple Health",
-                                            message: "You can change PulseLoop's access anytime in the Health app (under Sharing → Apps & Services) or in system Settings → Health → Data Access & Devices.",
-                                            showSettings: true)
+                        alert = HealthAlert(
+                            title: "Apple Health",
+                            message: "You can change PulseLoop's access anytime in the Health app "
+                                + "(under Sharing → Apps & Services) or in system Settings → "
+                                + "Health → Data Access & Devices.",
+                            showSettings: true)
                     }
                 } catch {
                     alert = HealthAlert(title: "Apple Health", message: error.localizedDescription)
@@ -90,9 +93,12 @@ struct HealthSettingsSection: View {
             await service.syncAll(context: modelContext, forceAll: true)
             refreshStatus()
             if service.authState == .denied {
-                alert = HealthAlert(title: "Apple Health Access Off",
-                                    message: "Allow PulseLoop to read and write health data in the Health app (under Sharing → Apps & Services) or in system Settings → Health → Data Access & Devices.",
-                                    showSettings: true)
+                alert = HealthAlert(
+                    title: "Apple Health Access Off",
+                    message: "Allow PulseLoop to read and write health data in the Health app "
+                        + "(under Sharing → Apps & Services) or in system Settings → "
+                        + "Health → Data Access & Devices.",
+                    showSettings: true)
             }
         }
     }
