@@ -164,7 +164,7 @@ struct DailyActivitySummaryCard: View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 18) {
                         HStack(alignment: .top, spacing: 0) {
                             metric(label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
                             metric(label: "Distance", value: distanceValue ?? "—", unit: distanceValue == nil ? nil : distanceUnit, color: PulseColors.distance)
@@ -177,8 +177,8 @@ struct DailyActivitySummaryCard: View {
                         ActivityRing(value: summary.steps.map(Double.init), goal: Double(summary.goals.stepsDaily), color: PulseColors.steps),
                         ActivityRing(value: distanceDisplay, goal: distanceGoalDisplay, color: PulseColors.distance),
                         ActivityRing(value: summary.calories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
-                    ], size: 92, stroke: 9, spacing: 4)
-                    .frame(width: 92, height: 92)
+                    ], size: 112, stroke: 11, spacing: 5)
+                    .frame(width: 112, height: 112)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -191,20 +191,20 @@ struct DailyActivitySummaryCard: View {
     }
 
     private func metric(label: String, value: String, unit: String?, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
-                .font(.system(size: 13, weight: .bold)).tracking(0.6)
+                .font(.system(size: 15, weight: .bold)).tracking(0.6)
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(.system(size: 26, weight: .semibold)).monospacedDigit()
+                    .font(.system(size: 32, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 if let unit {
-                    Text(unit).font(.system(size: 12, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                    Text(unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
                 }
             }
         }
