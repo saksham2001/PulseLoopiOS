@@ -160,12 +160,13 @@ private struct VisualizationCard<Content: View>: View {
                 }
                 Spacer()
                 if legend {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         legendItem("Deep", SleepStageColors.deep)
                         legendItem("Light", SleepStageColors.light)
                         legendItem("REM", SleepStageColors.rem)
                         legendItem("Awake", SleepStageColors.awake)
                     }
+                    .fixedSize()
                 }
             }
             content
@@ -180,7 +181,7 @@ private struct VisualizationCard<Content: View>: View {
     private func legendItem(_ label: String, _ color: Color) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).font(.system(size: 10)).foregroundStyle(PulseColors.textSecondary)
+            Text(label).font(.system(size: 9)).foregroundStyle(PulseColors.textSecondary)
         }
     }
 }
