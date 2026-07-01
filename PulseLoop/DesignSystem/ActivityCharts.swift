@@ -30,10 +30,6 @@ struct ActivityZoneLineChart: View {
     /// Maps a value to its zone color (injected once from the threshold engine).
     let colorForValue: (Double) -> Color
 
-    /// Break the line if two adjacent samples are more than this far apart (a dropout), so we don't
-    /// draw a false bridge across a gap in the workout.
-    private let maxGapMinutes: Double = 2
-
     private var minuteSamples: [MinuteSample] {
         samples
             .sorted { $0.timestamp < $1.timestamp }
@@ -42,6 +38,21 @@ struct ActivityZoneLineChart: View {
 
     private var maxMinute: Double {
         max(minuteSamples.last?.minute ?? 1, 1)
+    }
+
+    /// The gap (in minutes) above which we break the line, adapted to THIS session's own sampling
+    /// cadence. A retroactively-backfilled session may only have an HR reading every few minutes; a
+    /// live-recorded one has them every few seconds. A fixed threshold would leave the sparse one as
+    /// disconnected dots. So we break only when a gap is much larger than the median spacing —
+    /// connecting normally-spaced data of any cadence while still splitting on real dropouts.
+    private func breakGapMinutes(_ points: [MinuteSample]) -> Double {
+        guard points.count > 2 else { return .greatestFiniteMagnitude }   // too few to break
+        let gaps = zip(points, points.dropFirst()).map { $1.minute - $0.minute }.filter { $0 > 0 }.sorted()
+        guard !gaps.isEmpty else { return .greatestFiniteMagnitude }
+        let median = gaps[gaps.count / 2]
+        // Break at >4× the typical spacing, but never below 3 min (so tiny jitter never breaks) nor
+        // above 15 min (so a genuine long dropout always breaks).
+        return min(15, max(3, median * 4))
     }
 
     var body: some View {
@@ -108,8 +119,9 @@ struct ActivityZoneLineChart: View {
             }
             return
         }
+        let breakGap = breakGapMinutes(points)
         for (a, b) in zip(points, points.dropFirst()) {
-            guard b.minute - a.minute <= maxGapMinutes else { continue }   // dropout → break the line
+            guard b.minute - a.minute <= breakGap else { continue }   // real dropout → break the line
             let pieces = ZoneLineSplitter.split(x0: a.minute, v0: a.value, x1: b.minute, v1: b.value, thresholds: thresholds)
             for (start, end) in pieces {
                 guard let x1 = proxy.position(forX: start.x), let y1 = proxy.position(forY: start.value),

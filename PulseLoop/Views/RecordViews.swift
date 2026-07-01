@@ -575,7 +575,9 @@ struct HRZone: Identifiable {
 
 /// Time spent in each of the 5 HR zones, derived from sorted HR samples. Zone boundaries are
 /// 50/60/70/80/90/100 % of an estimated HRmax (`220 − age`, fallback 190). Each inter-sample
-/// interval (capped at 30 s to ignore gaps) is credited to the earlier sample's zone.
+/// interval is credited to the earlier sample's zone, capped to ignore genuine dropouts — but the
+/// cap ADAPTS to the session's own cadence so a sparsely-sampled (e.g. retroactively-backfilled)
+/// session still accounts for its full duration instead of only ~30 s per gap.
 func hrZoneDurations(samples: [MetricSample], age: Int?) -> [HRZone] {
     let hrMax = Double(age.map { 220 - $0 } ?? 190)
     let palette: [(String, Color)] = [
@@ -587,8 +589,13 @@ func hrZoneDurations(samples: [MetricSample], age: Int?) -> [HRZone] {
     ]
     var seconds = [Double](repeating: 0, count: 5)
     let sorted = samples.sorted { $0.timestamp < $1.timestamp }
+    // Adaptive per-interval cap: credit each gap fully up to ~2× the median spacing (so normally-spaced
+    // samples count their whole interval), but never more than 5 min (a real dropout stays uncredited).
+    let gaps = zip(sorted, sorted.dropFirst()).map { $1.timestamp.timeIntervalSince($0.timestamp) }.filter { $0 > 0 }.sorted()
+    let median = gaps.isEmpty ? 30 : gaps[gaps.count / 2]
+    let cap = min(300, max(30, median * 2))
     for (a, b) in zip(sorted, sorted.dropFirst()) {
-        let dt = min(30, b.timestamp.timeIntervalSince(a.timestamp))
+        let dt = min(cap, b.timestamp.timeIntervalSince(a.timestamp))
         guard dt > 0 else { continue }
         let pct = a.value / hrMax
         let zone: Int
@@ -977,10 +984,11 @@ private struct HRZonesCard: View {
                 Text("HEART RATE ZONES").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(zones.reversed()) { zone in
                     let frac = zone.seconds / total
+                    let pctText = "\(Int((frac * 100).rounded()))%"
                     HStack(spacing: 10) {
                         Text(zone.name)
                             .font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
-                            .frame(width: 132, alignment: .leading).lineLimit(1)
+                            .frame(width: 120, alignment: .leading).lineLimit(1)
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Capsule().fill(PulseColors.cardSoft)
@@ -989,10 +997,11 @@ private struct HRZonesCard: View {
                             }
                         }
                         .frame(height: 8)
-                        Text(zone.seconds >= 1 ? ActivityMeta.duration(Int(zone.seconds)) : "—")
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        // Percentage of the workout spent in this zone.
+                        Text(zone.seconds >= 1 ? pctText : "—")
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
                             .foregroundStyle(zone.seconds >= 1 ? PulseColors.textPrimary : PulseColors.textMuted)
-                            .frame(width: 56, alignment: .trailing)
+                            .frame(width: 48, alignment: .trailing)
                     }
                 }
             }
