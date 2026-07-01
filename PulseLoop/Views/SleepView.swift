@@ -30,10 +30,6 @@ struct SleepView: View {
 
         ScrollView {
             VStack(spacing: 16) {
-                HStack {
-                    Text("Sleep").font(.system(size: 26, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-                    Spacer()
-                }
                 SleepRangeSelectorView(selection: $range)
 
                 if range == .day {
