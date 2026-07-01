@@ -23,6 +23,12 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
     case hrv
     case temperature
 
+    // jring/56ff (today): metrics from the 0x24 combined-sensor packet that Colmi lacks. Colmi must
+    // NOT declare these — it has no BP/blood-sugar sensor.
+    case bloodPressure
+    case bloodSugar
+    case fatigue
+
     // Interaction capabilities
     case manualHeartRate      // single-shot on-demand HR
     case manualSpo2           // single-shot on-demand SpO2 (jring; Colmi has no instant SpO2)

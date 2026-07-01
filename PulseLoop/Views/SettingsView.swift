@@ -88,6 +88,17 @@ struct SettingsView: View {
                     ) { path.append(AppRoute.settingsMeasurement) }
                 }
 
+                // Device-specific: only the 56ff jring measures BP / blood sugar (Colmi has neither
+                // sensor and never declares these), so the calibration screen is jring-only.
+                if capabilities.contains(.bloodPressure) || capabilities.contains(.bloodSugar) {
+                    SettingsCategoryRow(
+                        icon: "slider.horizontal.3",
+                        tint: PulseColors.bloodPressure,
+                        title: "Calibration",
+                        subtitle: "Tune blood pressure and blood sugar accuracy"
+                    ) { path.append(AppRoute.settingsCalibration) }
+                }
+
                 SettingsCategoryRow(
                     icon: "lock.shield",
                     tint: PulseColors.success,

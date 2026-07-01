@@ -92,6 +92,10 @@ final class RingSyncCoordinator {
         if let profile = ProfileRepository.profile(context: context) {
             engine?.setUserProfile(profileValues(from: profile))
         }
+        let cal = CalibrationStore.shared.settings
+        if cal.hasBPReference {
+            engine?.setBloodPressureCalibration(systolic: cal.bpReferenceSystolic, diastolic: cal.bpReferenceDiastolic)
+        }
         engine?.runStartup()
         lastSyncAt = Date()
         // Show the progress bar immediately; the engine's own `.syncProgress` stages refine the
@@ -113,6 +117,15 @@ final class RingSyncCoordinator {
     func applyUserProfile() {
         guard client.state == .connected, let profile = ProfileRepository.profile(context: context) else { return }
         engine?.applyUserProfile(profileValues(from: profile))
+    }
+
+    /// Live "Save" from the BP calibration screen: push the reference cuff values to the connected
+    /// ring (0x33). No-op when disconnected — applied on the next connect handshake.
+    func applyBloodPressureCalibration() {
+        guard client.state == .connected else { return }
+        let cal = CalibrationStore.shared.settings
+        guard cal.hasBPReference else { return }
+        engine?.applyBloodPressureCalibration(systolic: cal.bpReferenceSystolic, diastolic: cal.bpReferenceDiastolic)
     }
 
     private func profileValues(from profile: UserProfile) -> UserProfileValues {

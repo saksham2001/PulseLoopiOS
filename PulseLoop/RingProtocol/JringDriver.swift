@@ -29,7 +29,7 @@ final class JringDriver: WearableDriver {
     func frame(_ command: Data) -> Data { command }   // already 20 bytes, no checksum
 
     func ingest(_ data: Data, from characteristic: CBUUID) -> [RingDecodedEvent] {
-        [decoder.decode(data)]
+        decoder.decodeAll(data)
     }
 
     func makeSyncEngine() -> RingSyncEngine {

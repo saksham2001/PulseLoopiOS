@@ -101,6 +101,14 @@ enum MetricsService {
             raw = rangeSamples(kind: .hrv, range: range, context: context)
         case .temperature:
             raw = rangeSamples(kind: .temperature, range: range, context: context)
+        case .bloodPressureSystolic:
+            raw = calibrated(rangeSamples(kind: .bloodPressureSystolic, range: range, context: context), kind: .bloodPressureSystolic)
+        case .bloodPressureDiastolic:
+            raw = calibrated(rangeSamples(kind: .bloodPressureDiastolic, range: range, context: context), kind: .bloodPressureDiastolic)
+        case .fatigue:
+            raw = rangeSamples(kind: .fatigue, range: range, context: context)
+        case .bloodSugar:
+            raw = calibrated(rangeSamples(kind: .bloodSugar, range: range, context: context), kind: .bloodSugar)
         case .steps, .calories, .distance, .activeMinutes:
             raw = activitySamples(metric: metric, range: range, context: context)
         default:
@@ -112,6 +120,26 @@ enum MetricsService {
         return MetricDownsampler.bucketAverage(raw, targetBuckets: targetBuckets)
     }
     
+    /// Apply the user's calibration display offset to a series before it reaches the UI. Raw stored
+    /// rows are never modified — the offset lives only on the display read path (mirrors the Android
+    /// "offsets applied in ViewModels before UI" pipeline).
+    private static func calibrated(_ samples: [MetricSample], kind: MeasurementKind) -> [MetricSample] {
+        let cal = CalibrationStore.shared.settings
+        guard cal.adjusted(0, kind: kind) != 0 else { return samples }   // no offset ⇒ identity
+        return samples.map { MetricSample(timestamp: $0.timestamp, value: cal.adjusted($0.value, kind: kind)) }
+    }
+
+    /// The latest reading for a kind, with calibration offset applied (for "latest value" display).
+    static func calibratedLatest(kind: MeasurementKind, context: ModelContext) -> Double? {
+        guard let raw = MetricsRepository.latestMeasurement(kind: kind, context: context)?.value else { return nil }
+        return CalibrationStore.shared.settings.adjusted(raw, kind: kind)
+    }
+
+    /// The latest *raw* (uncalibrated) reading for a kind — used to derive a calibration offset.
+    static func latestRaw(kind: MeasurementKind, context: ModelContext) -> Double? {
+        MetricsRepository.latestMeasurement(kind: kind, context: context)?.value
+    }
+
     static func fetchMeasurements(_ context: ModelContext) -> [Measurement] {
         MetricsRepository.measurements(context: context).sorted { $0.timestamp > $1.timestamp }
     }
@@ -172,6 +200,14 @@ enum MetricsService {
             value = Double(Int.random(in: 30...90))
         case .temperature:
             value = Double.random(in: 33...36)
+        case .bloodPressureSystolic:
+            value = Double(Int.random(in: 110...130))
+        case .bloodPressureDiastolic:
+            value = Double(Int.random(in: 70...85))
+        case .fatigue:
+            value = Double(Int.random(in: 20...70))
+        case .bloodSugar:
+            value = Double(Int.random(in: 85...110))
         }
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,

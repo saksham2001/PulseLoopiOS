@@ -27,6 +27,8 @@ final class JringCoordinator: WearableCoordinator {
         .heartRate, .spo2, .steps, .sleep, .battery,
         .manualHeartRate, .manualSpo2,   // jring supports on-demand HR + SpO2 spot readings
         .realtimeHeartRate, .findDevice,
+        // 56ff combined-sensor metrics decoded from the 0x24 packet.
+        .bloodPressure, .bloodSugar, .fatigue, .stress, .hrv,
     ]
 
     let iconSystemName = "circle.hexagongrid.circle.fill"

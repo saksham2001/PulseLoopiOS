@@ -18,6 +18,11 @@ enum MeasurementKind: String, Codable, CaseIterable {
     case stress
     case hrv
     case temperature = "temp"
+    // jring/56ff metrics from the 0x24 combined-sensor packet. Append only — raw values persisted.
+    case bloodPressureSystolic = "bp_sys"
+    case bloodPressureDiastolic = "bp_dia"
+    case fatigue
+    case bloodSugar = "glucose"
 
     /// Display unit for a measurement of this kind.
     var unit: String {
@@ -27,6 +32,9 @@ enum MeasurementKind: String, Codable, CaseIterable {
         case .stress: return ""
         case .hrv: return "ms"
         case .temperature: return "°C"
+        case .bloodPressureSystolic, .bloodPressureDiastolic: return "mmHg"
+        case .fatigue: return ""
+        case .bloodSugar: return "mg/dL"
         }
     }
 }

@@ -13,6 +13,11 @@ enum MetricKey: String, CaseIterable {
     case stress
     case hrv
     case temperature = "temp"
+    // jring/56ff metrics (capability-gated in the UI).
+    case bloodPressureSystolic = "bp_sys"
+    case bloodPressureDiastolic = "bp_dia"
+    case fatigue
+    case bloodSugar = "glucose"
 
     /// The wearable capability that must be present for this metric to be shown.
     var requiredCapability: WearableCapability? {
@@ -22,6 +27,9 @@ enum MetricKey: String, CaseIterable {
         case .stress: return .stress
         case .hrv: return .hrv
         case .temperature: return .temperature
+        case .bloodPressureSystolic, .bloodPressureDiastolic: return .bloodPressure
+        case .fatigue: return .fatigue
+        case .bloodSugar: return .bloodSugar
         case .steps, .calories, .distance, .activeMinutes: return .steps
         case .sleep: return .sleep
         case .battery: return .battery

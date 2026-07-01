@@ -15,6 +15,11 @@ final class VitalsStore {
     private(set) var stressSamples: [MetricSample]
     private(set) var hrvSamples: [MetricSample]
     private(set) var tempSamples: [MetricSample]
+    // jring/56ff metrics (calibration offsets already applied by `metricRange`).
+    private(set) var systolicSamples: [MetricSample]
+    private(set) var diastolicSamples: [MetricSample]
+    private(set) var bloodSugarSamples: [MetricSample]
+    private(set) var fatigueSamples: [MetricSample]
     private(set) var capabilities: Set<WearableCapability>
     /// Which metric cards are visible (capability + user-hidden), computed once per rebuild so the
     /// view doesn't call `isVisible` (a device fetch each) five times per render.
@@ -31,6 +36,10 @@ final class VitalsStore {
         self.stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
         self.hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         self.tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
+        self.systolicSamples = MetricsService.metricRange(metric: .bloodPressureSystolic, range: .twentyFourHours, context: modelContext)
+        self.diastolicSamples = MetricsService.metricRange(metric: .bloodPressureDiastolic, range: .twentyFourHours, context: modelContext)
+        self.bloodSugarSamples = MetricsService.metricRange(metric: .bloodSugar, range: .twentyFourHours, context: modelContext)
+        self.fatigueSamples = MetricsService.metricRange(metric: .fatigue, range: .twentyFourHours, context: modelContext)
         self.capabilities = MetricsService.deviceCapabilities(modelContext)
         self.visibleMetrics = Self.computeVisible(context: modelContext)
         self.signature = Self.currentSignature(context: modelContext)
@@ -53,6 +62,10 @@ final class VitalsStore {
         stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
         hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
+        systolicSamples = MetricsService.metricRange(metric: .bloodPressureSystolic, range: .twentyFourHours, context: modelContext)
+        diastolicSamples = MetricsService.metricRange(metric: .bloodPressureDiastolic, range: .twentyFourHours, context: modelContext)
+        bloodSugarSamples = MetricsService.metricRange(metric: .bloodSugar, range: .twentyFourHours, context: modelContext)
+        fatigueSamples = MetricsService.metricRange(metric: .fatigue, range: .twentyFourHours, context: modelContext)
         capabilities = MetricsService.deviceCapabilities(modelContext)
         visibleMetrics = Self.computeVisible(context: modelContext)
         signature = sig
@@ -60,7 +73,9 @@ final class VitalsStore {
 
     private static func computeVisible(context: ModelContext) -> Set<MetricKey> {
         var set: Set<MetricKey> = []
-        for metric in [MetricKey.heartRate, .spo2, .stress, .hrv, .temperature] where MetricsService.isVisible(metric, context: context) {
+        let candidates: [MetricKey] = [.heartRate, .spo2, .stress, .hrv, .temperature,
+                                       .bloodPressureSystolic, .bloodSugar, .fatigue]
+        for metric in candidates where MetricsService.isVisible(metric, context: context) {
             set.insert(metric)
         }
         return set
@@ -76,6 +91,7 @@ final class VitalsStore {
         let device = DeviceRepository.current(context: context)
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
+            latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)" } ?? "·",
         ].joined(separator: "|")
     }

@@ -141,6 +141,17 @@ protocol RingSyncEngine: AnyObject {
 
     /// Apply the user's profile *now* (store + send) — the live path when the profile screen saves.
     func applyUserProfile(_ profile: UserProfileValues)
+
+    /// Store reference blood-pressure calibration (mmHg) *without* sending — `runStartup` pushes it as
+    /// part of the connect handshake. Devices without on-device BP calibration ignore it.
+    func setBloodPressureCalibration(systolic: Int, diastolic: Int)
+
+    /// Push BP calibration *now* (store + send) — the live path when the calibration screen saves.
+    func applyBloodPressureCalibration(systolic: Int, diastolic: Int)
+
+    /// Release the ring on Forget: send the unbind command (jring 0x4B UNBOND) so the ring stops
+    /// streaming to us and re-advertises for other apps. Devices without a bind protocol ignore it.
+    func unbind()
 }
 
 extension RingSyncEngine {
@@ -155,4 +166,11 @@ extension RingSyncEngine {
     /// Default: devices that don't accept a user profile ignore it.
     func setUserProfile(_ profile: UserProfileValues) {}
     func applyUserProfile(_ profile: UserProfileValues) {}
+
+    /// Default: devices without on-device BP calibration (e.g. Colmi) ignore it.
+    func setBloodPressureCalibration(systolic: Int, diastolic: Int) {}
+    func applyBloodPressureCalibration(systolic: Int, diastolic: Int) {}
+
+    /// Default: devices without a bind protocol (e.g. Colmi) have nothing to release.
+    func unbind() {}
 }

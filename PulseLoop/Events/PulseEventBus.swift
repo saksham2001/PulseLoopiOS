@@ -25,6 +25,12 @@ enum PulseEvent: Sendable {
     case stressSample(value: Int, timestamp: Date)
     case hrvSample(value: Int, timestamp: Date)
     case temperatureSample(celsius: Double, timestamp: Date)
+    // Extra metrics from the jring/56ff 0x24 combined-sensor packet.
+    case bloodPressureSample(systolic: Int, diastolic: Int, timestamp: Date)
+    case fatigueSample(value: Int, timestamp: Date)
+    case bloodSugarSample(mgdl: Double, timestamp: Date)
+    /// Firmware version string parsed from the ring's status/firmware payload; persisted on the Device.
+    case firmwareVersion(String)
     /// Friendly history-sync progress for the product UI (e.g. "Syncing sleep…"). Never protocol terms.
     case syncProgress(stage: String)
     case workoutStarted(UUID)
@@ -241,6 +247,16 @@ final class EventPersistenceSubscriber {
             persistMeasurement(kind: .hrv, value: Double(value), timestamp: timestamp, source: .colmi, kindLabel: "hrv_sample")
         case let .temperatureSample(celsius, timestamp):
             persistMeasurement(kind: .temperature, value: celsius, timestamp: timestamp, source: .colmi, kindLabel: "temperature_sample")
+        case let .bloodPressureSample(systolic, diastolic, timestamp):
+            // BP is two metrics in one packet — store as two rows so each trends independently.
+            persistMeasurement(kind: .bloodPressureSystolic, value: Double(systolic), timestamp: timestamp, source: .live, kindLabel: "bp_systolic_sample")
+            persistMeasurement(kind: .bloodPressureDiastolic, value: Double(diastolic), timestamp: timestamp, source: .live, kindLabel: "bp_diastolic_sample")
+        case let .fatigueSample(value, timestamp):
+            persistMeasurement(kind: .fatigue, value: Double(value), timestamp: timestamp, source: .live, kindLabel: "fatigue_sample")
+        case let .bloodSugarSample(mgdl, timestamp):
+            persistMeasurement(kind: .bloodSugar, value: mgdl, timestamp: timestamp, source: .live, kindLabel: "blood_sugar_sample")
+        case let .firmwareVersion(version):
+            persistFirmwareVersion(version)
         case let .sleepTimeline(timestamp, stages):
             persistSleepTimeline(start: timestamp, stages: stages)
         case let .gpsPoint(sessionId, latitude, longitude, altitude, horizontalAccuracy, speed, course, accepted, rejectionReason, timestamp):
@@ -285,6 +301,12 @@ final class EventPersistenceSubscriber {
             confidence: .known,
             context: context
         )
+    }
+
+    /// Record the ring's firmware version on the current Device row (idempotent — no-op if unchanged).
+    private func persistFirmwareVersion(_ version: String) {
+        guard let device = DeviceRepository.current(context: context), device.firmwareVersion != version else { return }
+        device.firmwareVersion = version
     }
 
     /// Upsert a sleep session by night, appending this packet's per-minute stage blocks and

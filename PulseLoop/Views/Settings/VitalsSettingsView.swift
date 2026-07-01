@@ -17,6 +17,10 @@ struct VitalsSettingsView: View {
         (.stress, "Stress", PulseColors.stress),
         (.hrv, "HRV", PulseColors.hrv),
         (.temperature, "Skin temperature", PulseColors.temperature),
+        // jring/56ff metrics — appear only when the connected ring declares the capability.
+        (.bloodPressureSystolic, "Blood pressure", PulseColors.bloodPressure),
+        (.bloodSugar, "Blood sugar", PulseColors.bloodSugar),
+        (.fatigue, "Fatigue", PulseColors.fatigue),
     ]
 
     private var supported: [(metric: MetricKey, label: String, color: Color)] {

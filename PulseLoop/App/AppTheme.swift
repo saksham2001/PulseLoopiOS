@@ -15,6 +15,7 @@ enum AppRoute: Hashable {
     case settingsActivityTracking
     case settingsGoals
     case settingsVitals
+    case settingsCalibration
     case settingsPrivacyData
     case settingsAbout
     case pairing
@@ -69,6 +70,10 @@ enum PulseColors {
     static let stress = Color(hex: "#FF8A4C")
     static let hrv = Color(hex: "#9D7CFF")
     static let temperature = Color(hex: "#2DD4D8")
+    // jring/56ff metrics
+    static let bloodPressure = Color(hex: "#FF6B9D")
+    static let bloodSugar = Color(hex: "#FFB84D")
+    static let fatigue = Color(hex: "#C77DFF")
     static let borderSubtle = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
 }

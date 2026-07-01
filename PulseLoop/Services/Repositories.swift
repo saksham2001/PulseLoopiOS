@@ -11,6 +11,17 @@ enum DeviceRepository {
     static func current(context: ModelContext) -> Device? {
         devices(context: context).first
     }
+
+    /// Stale-state guard: a persisted "connected"/"connecting" must not survive a process restart —
+    /// the live BLE link is gone, so the UI would otherwise show a false "Connected" until a real
+    /// connection re-confirms it. Reset such rows on launch. (Android stale-state-guard parity.)
+    @MainActor
+    static func resetStaleConnectionState(context: ModelContext) {
+        for device in devices(context: context) where device.state == .connected || device.state == .connecting {
+            device.state = .disconnected
+        }
+        try? context.save()
+    }
 }
 
 enum MetricsRepository {

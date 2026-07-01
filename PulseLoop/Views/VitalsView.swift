@@ -27,6 +27,10 @@ struct VitalsView: View {
         let stressSamples = activeStore.stressSamples
         let hrvSamples = activeStore.hrvSamples
         let tempSamples = activeStore.tempSamples
+        let systolicSamples = activeStore.systolicSamples
+        let diastolicSamples = activeStore.diastolicSamples
+        let bloodSugarSamples = activeStore.bloodSugarSamples
+        let fatigueSamples = activeStore.fatigueSamples
 
         return AnyView(ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -142,6 +146,61 @@ struct VitalsView: View {
                             TemperatureRangeChart(samples: tempSamples).padding(.top, 12)
                         } else {
                             InlineEmptyState(title: "No temperature data yet", message: "Temperature trends appear after overnight wear.")
+                        }
+                    }
+                }
+
+                if activeStore.visibleMetrics.contains(.bloodPressureSystolic) {
+                    DetailCard(title: "Blood pressure", color: PulseColors.bloodPressure) {
+                        let sys = systolicSamples.last.map { Int($0.value) }
+                        let dia = diastolicSamples.last.map { Int($0.value) }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(sys.map(String.init) ?? "--")
+                                .font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            Text("/").font(.system(size: 28, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            Text(dia.map(String.init) ?? "--")
+                                .font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if sys != nil, dia != nil {
+                                Text("mmHg").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            }
+                        }
+                        .padding(.top, 12)
+                        if sys == nil || dia == nil {
+                            InlineEmptyState(title: "No blood pressure yet", message: "Take a combined measurement and sync.")
+                        }
+                    }
+                }
+
+                if activeStore.visibleMetrics.contains(.bloodSugar) {
+                    DetailCard(title: "Blood sugar", color: PulseColors.bloodSugar) {
+                        let latest = bloodSugarSamples.last.map { Int($0.value.rounded()) }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(latest.map(String.init) ?? "--")
+                                .font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if latest != nil {
+                                Text("mg/dL").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            }
+                        }
+                        .padding(.top, 12)
+                        if latest == nil {
+                            InlineEmptyState(title: "No blood sugar yet", message: "Estimated from your profile — set it in Settings → Profile.")
+                        }
+                    }
+                }
+
+                if activeStore.visibleMetrics.contains(.fatigue) {
+                    DetailCard(title: "Fatigue", color: PulseColors.fatigue) {
+                        let latest = fatigueSamples.last.map { Int($0.value) }
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(latest.map(String.init) ?? "--")
+                                .font(.system(size: 40, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                            if latest != nil {
+                                Text("/ 100").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                            }
+                        }
+                        .padding(.top, 12)
+                        if latest == nil {
+                            InlineEmptyState(title: "No fatigue data yet", message: "Wear the ring through the day and sync.")
                         }
                     }
                 }
