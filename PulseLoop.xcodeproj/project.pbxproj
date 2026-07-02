@@ -10,6 +10,9 @@
 		41298ABF2FCE7CD300778428 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41298ABE2FCE7CD300778428 /* WidgetKit.framework */; };
 		41298AC12FCE7CD300778428 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41298AC02FCE7CD300778428 /* SwiftUI.framework */; };
 		41298AD02FCE7CD400778428 /* PulseLoopLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 41298ABC2FCE7CD300778428 /* PulseLoopLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AB0000000000000000000001 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41298ABE2FCE7CD300778428 /* WidgetKit.framework */; };
+		AB0000000000000000000002 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41298AC02FCE7CD300778428 /* SwiftUI.framework */; };
+		AB0000000000000000000003 /* PulseLoopWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* PulseLoopWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,6 +30,13 @@
 			remoteGlobalIDString = 414761552FCC0F81009EB0EF;
 			remoteInfo = PulseLoop;
 		};
+		AB0000000000000000000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4147614E2FCC0F81009EB0EF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AB000000000000000000000C;
+			remoteInfo = PulseLoopWidgetsExtension;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -37,6 +47,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				41298AD02FCE7CD400778428 /* PulseLoopLiveActivityExtension.appex in Embed Foundation Extensions */,
+				AB0000000000000000000003 /* PulseLoopWidgetsExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -50,6 +61,8 @@
 		41298AD62FCE7D7800778428 /* PulseLoopLiveActivityExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseLoopLiveActivityExtension.entitlements; sourceTree = "<group>"; };
 		414761562FCC0F81009EB0EF /* PulseLoop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PulseLoop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000002 /* PulseLoopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PulseLoopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000000000000000000004 /* PulseLoopWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PulseLoopWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000000000000000000005 /* PulseLoopWidgetsExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PulseLoopWidgetsExtension.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -74,6 +87,27 @@
 			);
 			target = 41298ABB2FCE7CD300778428 /* PulseLoopLiveActivityExtension */;
 		};
+		AB0000000000000000000008 /* Exceptions for "PulseLoopWidgets" folder in "PulseLoopWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AB000000000000000000000C /* PulseLoopWidgetsExtension */;
+		};
+		AB0000000000000000000009 /* Exceptions for "PulseLoop" folder in "PulseLoopWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/AppTheme.swift,
+				DesignSystem/ActivityRings.swift,
+				DesignSystem/SleepStageBar.swift,
+				DesignSystem/VitalRingGauge.swift,
+				DesignSystem/VitalsCharts.swift,
+				Services/ChartSample.swift,
+				Services/VitalsZoneModel.swift,
+				Shared/WidgetSnapshot.swift,
+			);
+			target = AB000000000000000000000C /* PulseLoopWidgetsExtension */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -90,6 +124,7 @@
 			exceptions = (
 				41298AB72FCE7BE300778428 /* Exceptions for "PulseLoop" folder in "PulseLoop" target */,
 				41298AE12FCE81DA00778428 /* Exceptions for "PulseLoop" folder in "PulseLoopLiveActivityExtension" target */,
+				AB0000000000000000000009 /* Exceptions for "PulseLoop" folder in "PulseLoopWidgetsExtension" target */,
 			);
 			path = PulseLoop;
 			sourceTree = "<group>";
@@ -97,6 +132,14 @@
 		AA0000000000000000000003 /* PulseLoopTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PulseLoopTests;
+			sourceTree = "<group>";
+		};
+		AB000000000000000000000A /* PulseLoopWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AB0000000000000000000008 /* Exceptions for "PulseLoopWidgets" folder in "PulseLoopWidgetsExtension" target */,
+			);
+			path = PulseLoopWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -125,6 +168,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB000000000000000000000E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB0000000000000000000002 /* SwiftUI.framework in Frameworks */,
+				AB0000000000000000000001 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -141,8 +193,10 @@
 			isa = PBXGroup;
 			children = (
 				41298AD62FCE7D7800778428 /* PulseLoopLiveActivityExtension.entitlements */,
+				AB0000000000000000000005 /* PulseLoopWidgetsExtension.entitlements */,
 				414761582FCC0F81009EB0EF /* PulseLoop */,
 				41298AC22FCE7CD300778428 /* PulseLoopLiveActivity */,
+				AB000000000000000000000A /* PulseLoopWidgets */,
 				41298ABD2FCE7CD300778428 /* Frameworks */,
 				414761572FCC0F81009EB0EF /* Products */,
 				414763642FCCCC58009EB0EF /* Recovered References */,
@@ -155,6 +209,7 @@
 				414761562FCC0F81009EB0EF /* PulseLoop.app */,
 				AA0000000000000000000002 /* PulseLoopTests.xctest */,
 				41298ABC2FCE7CD300778428 /* PulseLoopLiveActivityExtension.appex */,
+				AB0000000000000000000004 /* PulseLoopWidgetsExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -205,6 +260,7 @@
 			);
 			dependencies = (
 				41298ACF2FCE7CD400778428 /* PBXTargetDependency */,
+				AB0000000000000000000007 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				414761582FCC0F81009EB0EF /* PulseLoop */,
@@ -239,6 +295,28 @@
 			productReference = AA0000000000000000000002 /* PulseLoopTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		AB000000000000000000000C /* PulseLoopWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB0000000000000000000012 /* Build configuration list for PBXNativeTarget "PulseLoopWidgetsExtension" */;
+			buildPhases = (
+				AB000000000000000000000D /* Sources */,
+				AB000000000000000000000E /* Frameworks */,
+				AB000000000000000000000F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AB000000000000000000000A /* PulseLoopWidgets */,
+			);
+			name = PulseLoopWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = PulseLoopWidgetsExtension;
+			productReference = AB0000000000000000000004 /* PulseLoopWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -258,6 +336,9 @@
 					AA0000000000000000000001 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = 414761552FCC0F81009EB0EF;
+					};
+					AB000000000000000000000C = {
+						CreatedOnToolsVersion = 26.5;
 					};
 				};
 			};
@@ -281,6 +362,7 @@
 				414761552FCC0F81009EB0EF /* PulseLoop */,
 				AA0000000000000000000001 /* PulseLoopTests */,
 				41298ABB2FCE7CD300778428 /* PulseLoopLiveActivityExtension */,
+				AB000000000000000000000C /* PulseLoopWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -301,6 +383,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AA0000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB000000000000000000000F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -331,6 +420,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB000000000000000000000D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -343,6 +439,11 @@
 			isa = PBXTargetDependency;
 			target = 414761552FCC0F81009EB0EF /* PulseLoop */;
 			targetProxy = AA0000000000000000000008 /* PBXContainerItemProxy */;
+		};
+		AB0000000000000000000007 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AB000000000000000000000C /* PulseLoopWidgetsExtension */;
+			targetProxy = AB0000000000000000000006 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -654,6 +755,66 @@
 			};
 			name = Release;
 		};
+		AB0000000000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PulseLoopWidgetsExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CQUQ9RZMDK;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PulseLoopWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PulseLoop;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.sakshambhutani.pulseloop2.PulseLoopWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AB0000000000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = PulseLoopWidgetsExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = CQUQ9RZMDK;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PulseLoopWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PulseLoop;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.sakshambhutani.pulseloop2.PulseLoopWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -689,6 +850,15 @@
 			buildConfigurations = (
 				AA0000000000000000000009 /* Debug */,
 				AA000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AB0000000000000000000012 /* Build configuration list for PBXNativeTarget "PulseLoopWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0000000000000000000010 /* Debug */,
+				AB0000000000000000000011 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
