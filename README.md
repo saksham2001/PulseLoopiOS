@@ -149,8 +149,8 @@ declares exactly what it can do and the app shows only those features.
 
 ### 📲 TestFlight beta
 
-A public TestFlight beta is coming soon. Sign up on the
-[Discord](#community) to get the invite link. We also have plans to to IPA release soon!
+The public TestFlight beta is live. **[Sign up here](https://docs.google.com/forms/d/e/1FAIpQLSfvrwie82qep-kJs8rmA0qhWBlWN4mjiwwG-86BlTR2974SsQ/viewform?usp=sharing&ouid=106402737727550537169)**
+to request an invite, or ask on the [Discord](#community). We also have plans for an IPA release soon!
 
 ### 🛠️ Build from source (Xcode)
 
