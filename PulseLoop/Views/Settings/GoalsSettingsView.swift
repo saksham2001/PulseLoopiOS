@@ -10,12 +10,21 @@ struct GoalsSettingsView: View {
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Environment(\.dismiss) private var dismiss
     @Query private var goals: [UserGoal]
+    @Query private var profiles: [UserProfile]
 
     @State private var steps: Double = 8000
     @State private var activeMinutes: Double = 60
     @State private var sleepHours: Double = 8
     @State private var workouts: Double = 4
+    /// Distance goal edited in the user's display unit (km or mi); persisted as metres.
+    @State private var distance: Double = 5
+    @State private var calories: Double = 500
     @State private var loaded = false
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
+    private var distanceUnit: String { UnitsFormatter.distance(meters: 0, units: units).unit }
+    private var metersPerUnit: Double { units == .metric ? 1000 : 1609.344 }
+    private var distanceRange: ClosedRange<Double> { units == .metric ? 1...30 : 1...20 }
 
     /// Static config for one goal slider; the dynamic value/label come from bindings.
     private struct GoalSpec {
@@ -35,7 +44,15 @@ struct GoalsSettingsView: View {
                     value: $steps, valueLabel: "\(Int(steps).formatted())"
                 )
                 sliderCard(
-                    GoalSpec(title: "Active minutes", icon: "flame.fill", tint: PulseColors.calories, range: 10...180, step: 5),
+                    GoalSpec(title: "Distance", icon: "location.fill", tint: PulseColors.distance, range: distanceRange, step: 0.5),
+                    value: $distance, valueLabel: String(format: "%.1f \(distanceUnit)", distance)
+                )
+                sliderCard(
+                    GoalSpec(title: "Calories", icon: "flame.fill", tint: PulseColors.calories, range: 100...2000, step: 50),
+                    value: $calories, valueLabel: "\(Int(calories)) cal"
+                )
+                sliderCard(
+                    GoalSpec(title: "Active minutes", icon: "figure.walk", tint: PulseColors.readiness, range: 10...180, step: 5),
                     value: $activeMinutes, valueLabel: "\(Int(activeMinutes)) min"
                 )
                 sliderCard(
@@ -89,6 +106,8 @@ struct GoalsSettingsView: View {
             activeMinutes = Double(goal.activeMinutes)
             sleepHours = Double(goal.sleepMinutes) / 60
             workouts = Double(goal.workoutsPerWeek)
+            distance = (goal.distanceMeters / metersPerUnit * 10).rounded() / 10
+            calories = Double(goal.calories)
         }
     }
 
@@ -101,6 +120,8 @@ struct GoalsSettingsView: View {
         goal.activeMinutes = Int(activeMinutes)
         goal.sleepMinutes = Int(sleepHours * 60)
         goal.workoutsPerWeek = Int(workouts)
+        goal.distanceMeters = distance * metersPerUnit
+        goal.calories = Int(calories)
         goal.updatedAt = Date()
         try? modelContext.save()
         // Steps go through the coordinator so the goal also reaches the ring (and persists). It writes

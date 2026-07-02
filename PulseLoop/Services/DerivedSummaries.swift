@@ -105,6 +105,8 @@ struct GoalsSummary {
     let activeMinutesDaily: Int
     let sleepHours: Double
     let exerciseDaysWeekly: Int
+    let distanceMetersDaily: Double
+    let caloriesDaily: Int
 }
 
 struct TrendsSummary {

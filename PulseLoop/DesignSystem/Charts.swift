@@ -34,9 +34,9 @@ struct HRLineChart: View {
         let lo = (values.min() ?? 0) - 5
         let hi = (values.max() ?? 100) + 5
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+            ForEach(samples) { sample in
                 LineMark(
-                    x: .value("i", index),
+                    x: .value("Time", sample.timestamp),
                     y: .value("bpm", sample.value)
                 )
                 .interpolationMethod(.monotone)
@@ -113,21 +113,23 @@ struct HRVTrendBandChart: View {
         let bandHalf = max(6, mean * 0.12)   // ±12% baseline band
 
         Chart {
-            // Baseline band
-            RectangleMark(
-                xStart: .value("x0", 0),
-                xEnd: .value("x1", max(1, samples.count - 1)),
-                yStart: .value("lo", mean - bandHalf),
-                yEnd: .value("hi", mean + bandHalf)
-            )
-            .foregroundStyle(PulseColors.hrv.opacity(0.12))
+            // Baseline band spans the full time domain of the series.
+            if let start = samples.first?.timestamp, let end = samples.last?.timestamp {
+                RectangleMark(
+                    xStart: .value("Start", start),
+                    xEnd: .value("End", end),
+                    yStart: .value("lo", mean - bandHalf),
+                    yEnd: .value("hi", mean + bandHalf)
+                )
+                .foregroundStyle(PulseColors.hrv.opacity(0.12))
+            }
 
             RuleMark(y: .value("mean", mean))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 .foregroundStyle(PulseColors.hrv.opacity(0.4))
 
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
-                LineMark(x: .value("i", index), y: .value("ms", sample.value))
+            ForEach(samples) { sample in
+                LineMark(x: .value("Time", sample.timestamp), y: .value("ms", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .foregroundStyle(PulseColors.hrv)
@@ -153,9 +155,9 @@ struct TemperatureRangeChart: View {
         let hi = (values.max() ?? 38) + 0.5
 
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+            ForEach(samples) { sample in
                 AreaMark(
-                    x: .value("i", index),
+                    x: .value("Time", sample.timestamp),
                     yStart: .value("lo", lo),
                     yEnd: .value("temp", sample.value)
                 )
@@ -166,7 +168,7 @@ struct TemperatureRangeChart: View {
                         startPoint: .top, endPoint: .bottom
                     )
                 )
-                LineMark(x: .value("i", index), y: .value("temp", sample.value))
+                LineMark(x: .value("Time", sample.timestamp), y: .value("temp", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .foregroundStyle(PulseColors.temperature)
@@ -187,12 +189,12 @@ struct SpO2DotsChart: View {
 
     var body: some View {
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
-                LineMark(x: .value("i", index), y: .value("spo2", sample.value))
+            ForEach(samples) { sample in
+                LineMark(x: .value("Time", sample.timestamp), y: .value("spo2", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .foregroundStyle(PulseColors.spo2.opacity(0.25))
-                PointMark(x: .value("i", index), y: .value("spo2", sample.value))
+                PointMark(x: .value("Time", sample.timestamp), y: .value("spo2", sample.value))
                     .symbolSize(34)
                     .foregroundStyle(PulseColors.spo2)
             }
@@ -344,6 +346,8 @@ struct SleepDurationHistogramChart: View {
     let bars: [SleepBar]
     var goalMin: Int?
     var slim: Bool = false
+    var barWidth: CGFloat? = nil
+    var weekBars: Bool = false
     var height: CGFloat = 210
 
     private var yMax: Double {
@@ -353,16 +357,23 @@ struct SleepDurationHistogramChart: View {
     }
 
     var body: some View {
+        // Use a unique key per bar so Swift Charts treats each as its own category,
+        // centering the bar and its label automatically (same pattern as StepBarsChart).
+        let indexed: [(Int, SleepBar)] = Array(bars.enumerated())
         let interval = bars.count > 14 ? max(1, bars.count / 6) : 1
+        let showKeys: [String] = stride(from: 0, to: bars.count, by: interval).map { "\($0):\(bars[$0].label)" }
+        let w: MarkDimension = weekBars ? .ratio(0.7) : (barWidth.map { .fixed($0) } ?? (slim ? .fixed(7) : .automatic))
+        let r: CGFloat = (slim || weekBars) ? 3 : 6
         Chart {
-            ForEach(Array(bars.enumerated()), id: \.offset) { index, bar in
+            ForEach(indexed, id: \.0) { index, bar in
+                let key = "\(index):\(bar.label)"
                 if bar.present, let duration = bar.durationMin {
                     BarMark(
-                        x: .value("label", index),
+                        x: .value("day", key),
                         y: .value("min", duration),
-                        width: slim ? 7 : .automatic
+                        width: w
                     )
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: slim ? 3 : 6, topTrailingRadius: slim ? 3 : 6))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: r, topTrailingRadius: r))
                     .foregroundStyle(
                         LinearGradient(
                             colors: [Color(hex: "#8B7CFF"), Color(hex: "#3F2DD8")],
@@ -372,11 +383,11 @@ struct SleepDurationHistogramChart: View {
                 } else {
                     // Faint full-height placeholder so gaps read as "untracked".
                     BarMark(
-                        x: .value("label", index),
+                        x: .value("day", key),
                         y: .value("min", yMax),
-                        width: slim ? 7 : .automatic
+                        width: w
                     )
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: slim ? 3 : 6, topTrailingRadius: slim ? 3 : 6))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: r, topTrailingRadius: r))
                     .foregroundStyle(PulseColors.accent.opacity(0.05))
                 }
             }
@@ -389,13 +400,17 @@ struct SleepDurationHistogramChart: View {
         .chartYScale(domain: 0...yMax)
         .chartYAxis(.hidden)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: max(2, bars.count / interval))) { value in
-                if let index = value.as(Int.self), bars.indices.contains(index) {
+            AxisMarks(values: showKeys) { value in
+                if let key = value.as(String.self),
+                   let label = key.split(separator: ":").last.map(String.init) {
                     AxisValueLabel {
-                        Text(bars[index].label).foregroundStyle(PulseColors.textMuted)
+                        Text(label).foregroundStyle(PulseColors.textMuted)
                     }
                 }
             }
+        }
+        .chartPlotStyle { plot in
+            plot.padding(.horizontal, weekBars ? 0 : 4)
         }
         .frame(height: height)
         .padding(8)

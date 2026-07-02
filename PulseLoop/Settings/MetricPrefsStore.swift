@@ -50,13 +50,28 @@ enum GraphResolution: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Which screen a visibility/chart-detail preference applies to. The Today and Vitals pages keep
+/// fully independent preference scopes so hiding a tile (or coarsening a chart) on one page never
+/// affects the other.
+enum MetricScope: String, Codable, Sendable {
+    case today
+    case vitals
+}
+
 /// User-tunable metric/display preferences, persisted as JSON in `UserDefaults`. Mirrors the
 /// `CoachSettingsStore` pattern.
+///
+/// The original single-scope fields (`hiddenMetrics`/`resolution`) are retained as the **Vitals**
+/// scope so existing users' saved preferences migrate for free; the `today*` fields default to
+/// visible/full for anyone upgrading.
 struct MetricPrefs: Codable, Equatable {
-    /// Metrics the user has explicitly hidden (by `MetricKey.rawValue`). Stored as an opt-out set so a
-    /// newly supported metric defaults to *visible* without any migration.
+    /// Vitals-scope hidden metrics (by `MetricKey.rawValue`). Opt-out set so a newly supported metric
+    /// defaults to *visible* without any migration.
     var hiddenMetrics: Set<String> = []
     var resolution: GraphResolution = .full
+    /// Today-scope hidden metrics, independent of the Vitals scope.
+    var todayHiddenMetrics: Set<String> = []
+    var todayResolution: GraphResolution = .full
 
     static let `default` = MetricPrefs()
 
@@ -68,6 +83,8 @@ struct MetricPrefs: Codable, Equatable {
         let d = MetricPrefs.default
         hiddenMetrics = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenMetrics) ?? d.hiddenMetrics
         resolution = try c.decodeIfPresent(GraphResolution.self, forKey: .resolution) ?? d.resolution
+        todayHiddenMetrics = try c.decodeIfPresent(Set<String>.self, forKey: .todayHiddenMetrics) ?? d.todayHiddenMetrics
+        todayResolution = try c.decodeIfPresent(GraphResolution.self, forKey: .todayResolution) ?? d.todayResolution
     }
 }
 
@@ -97,17 +114,36 @@ final class MetricPrefsStore {
         }
     }
 
-    /// Whether the user has hidden a metric (visibility is layered on top of device capability
-    /// elsewhere — see `MetricsService.isVisible`).
-    func isHidden(_ metric: MetricKey) -> Bool {
-        settings.hiddenMetrics.contains(metric.rawValue)
+    /// Whether the user has hidden a metric in a given scope (visibility is layered on top of device
+    /// capability elsewhere — see `MetricsService.isVisible`). Non-scoped callers default to `.vitals`.
+    func isHidden(_ metric: MetricKey, scope: MetricScope = .vitals) -> Bool {
+        switch scope {
+        case .vitals: return settings.hiddenMetrics.contains(metric.rawValue)
+        case .today: return settings.todayHiddenMetrics.contains(metric.rawValue)
+        }
     }
 
-    func setHidden(_ metric: MetricKey, _ hidden: Bool) {
-        if hidden {
-            settings.hiddenMetrics.insert(metric.rawValue)
-        } else {
-            settings.hiddenMetrics.remove(metric.rawValue)
+    func setHidden(_ metric: MetricKey, _ hidden: Bool, scope: MetricScope = .vitals) {
+        switch scope {
+        case .vitals:
+            if hidden { settings.hiddenMetrics.insert(metric.rawValue) } else { settings.hiddenMetrics.remove(metric.rawValue) }
+        case .today:
+            if hidden { settings.todayHiddenMetrics.insert(metric.rawValue) } else { settings.todayHiddenMetrics.remove(metric.rawValue) }
+        }
+    }
+
+    /// The chart-detail (downsampling) resolution for a scope.
+    func resolution(for scope: MetricScope) -> GraphResolution {
+        switch scope {
+        case .vitals: return settings.resolution
+        case .today: return settings.todayResolution
+        }
+    }
+
+    func setResolution(_ resolution: GraphResolution, for scope: MetricScope) {
+        switch scope {
+        case .vitals: settings.resolution = resolution
+        case .today: settings.todayResolution = resolution
         }
     }
 

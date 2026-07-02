@@ -85,11 +85,11 @@ trends.
 
 | Today | AI Coach | Sleep |
 | --- | --- | --- |
-| [![Today](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/today%20page%201.PNG)](/screenshots/today%20page%201.PNG) | [![Coach](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/LLM%20coach%20example%201.PNG)](/screenshots/LLM%20coach%20example%201.PNG) | [![Sleep](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/sleep%20page%201.PNG)](/screenshots/sleep%20page%201.PNG) |
+| [![Today](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/today%20page.png)](/screenshots/today%20page.png) | [![Coach](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/today%20coach%20summary.png)](/screenshots/today%20coach%20summary.png) | [![Sleep](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/sleep%20page.png)](/screenshots/sleep%20page.png) |
 
 | Activity | Vitals | Workout Summary |
 | --- | --- | --- |
-| [![Activity](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/activity%20page%201.PNG)](/screenshots/activity%20page%201.PNG) | [![Vitals](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/vitals%20page%201.PNG)](/screenshots/vitals%20page%201.PNG) | [![Workout Summary](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/activity%20recording-%20complete%201.PNG)](/screenshots/activity%20recording-%20complete%201.PNG) |
+| [![Activity](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/activity%20page.png)](/screenshots/activity%20page.png) | [![Vitals](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/vitals%20page.png)](/screenshots/vitals%20page.png) | [![Workout Summary](https://github.com/saksham2001/PulseLoopiOS/raw/main/screenshots/workout%20summary.png)](/screenshots/workout%20summary.png) |
 
 ## Also on Android
 

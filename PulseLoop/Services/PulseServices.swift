@@ -6,7 +6,7 @@ enum MetricsService {
     private static let calibrationDays = 7
     private static let minimumTrendDays = 3
     
-    static func buildTodaySummary(context: ModelContext) -> TodaySummary {
+    static func buildTodaySummary(context: ModelContext, scope: MetricScope = .vitals) -> TodaySummary {
         let calendar = Calendar.current
         let activityRows = MetricsRepository.activityRows(context: context)
         let device = DeviceRepository.current(context: context)
@@ -16,22 +16,17 @@ enum MetricsService {
         let today = activityRows.sorted { $0.date < $1.date }.last
         let anchorDate = today?.date ?? calendar.startOfDay(for: Date())
         let alignedRows = alignedWeekActivity(rows: activityRows, anchor: isDemo ? anchorDate : Date())
-        // 24h HR/SpO₂ samples come from windowed DB queries (demo keeps full history, matching the
-        // old `includeAll`). `samplesSinceCutoff` re-applies the cutoff so semantics are identical.
-        let cutoff24h = calendar.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
-        let hrRows = isDemo
-            ? MetricsRepository.measurementsAll(kind: .heartRate, context: context)
-            : MetricsRepository.measurements(kind: .heartRate, start: cutoff24h, end: Date(), context: context)
-        let spo2Rows = isDemo
-            ? MetricsRepository.measurementsAll(kind: .spo2, context: context)
-            : MetricsRepository.measurements(kind: .spo2, start: cutoff24h, end: Date(), context: context)
-        let hrSamples = samplesSinceCutoff(rows: hrRows, range: .twentyFourHours, includeAll: isDemo)
-        let spo2Samples = samplesSinceCutoff(rows: spo2Rows, range: .twentyFourHours, includeAll: isDemo)
-        // Display copies for the Today sparklines respect the user's graph-resolution setting (the raw
-        // copies above stay untouched for stats/timeline below). Full resolution → identity.
-        let buckets24h = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: .twentyFourHours)
-        let hrSamplesDisplay = MetricDownsampler.bucketAverage(hrSamples, targetBuckets: buckets24h)
-        let spo2SamplesDisplay = MetricDownsampler.bucketAverage(spo2Samples, targetBuckets: buckets24h)
+        // 24h HR/SpO₂ samples come through the SAME `rangeSamples` path Vitals uses — including its
+        // per-kind demo detection and 24h windowing — so Today and Vitals never disagree on the range,
+        // resting/peak, or graph. (Global `isDemo` above is per-summary; HR/SpO₂ windowing must be
+        // per-kind to match Vitals when a database mixes real + mock across different metrics.) This is
+        // one fetch per kind — same fetch count as the previous inline query.
+        let hrSamples = rangeSamples(kind: .heartRate, range: .twentyFourHours, context: context)
+        let spo2Samples = rangeSamples(kind: .spo2, range: .twentyFourHours, context: context)
+        // Display copies go through the same `displaySamples` transform Vitals applies (resolution
+        // downsampling). Byte-identical to `metricRange`'s output, so the sparkline shape matches too.
+        let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours, scope: scope)
+        let spo2SamplesDisplay = displaySamples(spo2Samples, range: .twentyFourHours, scope: scope)
         // Latest values are the newest reading of each kind regardless of age (the old code took
         // `.last` of the FULL kind history, not the 24h window) — fetch them independently so a
         // last reading older than 24h still surfaces.
@@ -88,7 +83,8 @@ enum MetricsService {
         )
     }
     
-    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
+    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext,
+                            scope: MetricScope = .vitals) -> [MetricSample] {
         let raw: [MetricSample]
         switch metric {
         case .heartRate:
@@ -114,9 +110,17 @@ enum MetricsService {
         default:
             return []
         }
-        // Display-only smoothing: bucket-average dense series per the user's resolution preference.
-        // `.full` (targetBuckets 0) is identity; raw stored rows are never modified.
-        let targetBuckets = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: range)
+        return displaySamples(raw, range: range, scope: scope)
+    }
+
+    /// The display transform applied to already-fetched, windowed samples: bucket-average per the
+    /// user's graph-resolution preference (`.full`/targetBuckets 0 is identity). This is the SINGLE
+    /// source of truth for the vitals sparkline/chart shape, so any caller that runs it over the same
+    /// samples gets a byte-identical result — used by both `metricRange` (Vitals) and
+    /// `buildTodaySummary` (Today) so the two pages never disagree on a metric's range/graph.
+    static func displaySamples(_ raw: [MetricSample], range: MetricRange,
+                               scope: MetricScope = .vitals) -> [MetricSample] {
+        let targetBuckets = MetricPrefsStore.shared.resolution(for: scope).targetBuckets(for: range)
         return MetricDownsampler.bucketAverage(raw, targetBuckets: targetBuckets)
     }
     
@@ -178,9 +182,9 @@ enum MetricsService {
     /// Whether a metric should be rendered right now: the device must support it (capability gate
     /// **first**, so a hidden-but-unsupported vital can never be force-shown) AND the user must not have
     /// hidden it. Every vitals call site funnels through this so visibility stays consistent app-wide.
-    static func isVisible(_ metric: MetricKey, context: ModelContext) -> Bool {
+    static func isVisible(_ metric: MetricKey, context: ModelContext, scope: MetricScope = .vitals) -> Bool {
         guard supports(metric, context: context) else { return false }
-        return !MetricPrefsStore.shared.isHidden(metric)
+        return !MetricPrefsStore.shared.isHidden(metric, scope: scope)
     }
     
     static func fetchDevices(_ context: ModelContext) -> [Device] {
@@ -525,10 +529,12 @@ enum MetricsService {
                 stepsDaily: goal.steps,
                 activeMinutesDaily: goal.activeMinutes,
                 sleepHours: Double(goal.sleepMinutes) / 60,
-                exerciseDaysWeekly: goal.workoutsPerWeek
+                exerciseDaysWeekly: goal.workoutsPerWeek,
+                distanceMetersDaily: goal.distanceMeters,
+                caloriesDaily: goal.calories
             )
         }
-        return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4)
+        return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4, distanceMetersDaily: 8000, caloriesDaily: 500)
     }
     
 }

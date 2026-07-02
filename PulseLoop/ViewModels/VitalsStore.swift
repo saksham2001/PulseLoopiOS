@@ -24,12 +24,18 @@ final class VitalsStore {
     /// Which metric cards are visible (capability + user-hidden), computed once per rebuild so the
     /// view doesn't call `isVisible` (a device fetch each) five times per render.
     private(set) var visibleMetrics: Set<MetricKey>
+    /// Fully-prepared card view-models keyed by `MetricKind`, computed off the `body` path. Views read
+    /// these directly instead of re-interpreting raw samples on every render.
+    private(set) var cards: [MetricKind: VitalCardViewModel] = [:]
 
     private let modelContext: ModelContext
+    /// Snapshot of the physiology profile used for thresholds; refreshed each rebuild.
+    private var profile: UserProfile?
     private var signature: String = ""
 
-    init(modelContext: ModelContext) {
+    init(modelContext: ModelContext, profile: UserProfile? = nil) {
         self.modelContext = modelContext
+        self.profile = profile
         self.summary = MetricsService.buildTodaySummary(context: modelContext)
         self.hrSamples = MetricsService.metricRange(metric: .heartRate, range: .twentyFourHours, context: modelContext)
         self.spo2Samples = MetricsService.metricRange(metric: .spo2, range: .twentyFourHours, context: modelContext)
@@ -42,17 +48,26 @@ final class VitalsStore {
         self.fatigueSamples = MetricsService.metricRange(metric: .fatigue, range: .twentyFourHours, context: modelContext)
         self.capabilities = MetricsService.deviceCapabilities(modelContext)
         self.visibleMetrics = Self.computeVisible(context: modelContext)
-        self.signature = Self.currentSignature(context: modelContext)
+        self.cards = [:]
+        self.signature = Self.currentSignature(context: modelContext, profile: profile)
+        self.cards = buildCards()
+    }
+
+    /// Update the physiology profile snapshot used for thresholds. The view passes the latest
+    /// `@Query` profile in; a change here invalidates the signature so cards re-interpret.
+    func updateProfile(_ profile: UserProfile?) {
+        self.profile = profile
+        refreshIfNeeded()
     }
 
     func refreshIfNeeded() {
-        let sig = Self.currentSignature(context: modelContext)
+        let sig = Self.currentSignature(context: modelContext, profile: profile)
         guard sig != signature else { return }
         rebuild(signature: sig)
     }
 
     func invalidate() {
-        rebuild(signature: Self.currentSignature(context: modelContext))
+        rebuild(signature: Self.currentSignature(context: modelContext, profile: profile))
     }
 
     private func rebuild(signature sig: String) {
@@ -68,7 +83,25 @@ final class VitalsStore {
         fatigueSamples = MetricsService.metricRange(metric: .fatigue, range: .twentyFourHours, context: modelContext)
         capabilities = MetricsService.deviceCapabilities(modelContext)
         visibleMetrics = Self.computeVisible(context: modelContext)
+        cards = buildCards()
         signature = sig
+    }
+
+    /// Assemble every card view-model from the current sample arrays + profile. Runs once per rebuild.
+    private func buildCards() -> [MetricKind: VitalCardViewModel] {
+        let physiology = UserPhysiologyProfile(profile)
+        let calibration = CalibrationStore.shared.settings
+        let inputs = VitalsCardFactory.Inputs(
+            hr: hrSamples, spo2: spo2Samples, hrv: hrvSamples,
+            stress: stressSamples, fatigue: fatigueSamples, temperature: tempSamples,
+            systolic: systolicSamples, diastolic: diastolicSamples, glucose: bloodSugarSamples,
+            summary: summary, range: .twentyFourHours
+        )
+        var result: [MetricKind: VitalCardViewModel] = [:]
+        for metric in MetricKind.allCases {
+            result[metric] = VitalsCardFactory.card(metric, inputs: inputs, profile: physiology, calibration: calibration)
+        }
+        return result
     }
 
     private static func computeVisible(context: ModelContext) -> Set<MetricKey> {
@@ -81,18 +114,25 @@ final class VitalsStore {
         return set
     }
 
-    /// Cheap fingerprint of the latest reading of every vitals metric + device state. A change here
-    /// means at least one chart/value changed, so we rebuild; otherwise we skip the six aggregations.
-    private static func currentSignature(context: ModelContext) -> String {
+    /// Cheap fingerprint of the latest reading of every vitals metric + device state + the inputs that
+    /// affect interpretation (physiology profile, calibration offsets). A change here means at least
+    /// one chart/value/zone changed, so we rebuild; otherwise we skip the aggregations. Including
+    /// profile + calibration means toggling athlete mode or calibrating BP recolors cards immediately,
+    /// without waiting for a new measurement.
+    private static func currentSignature(context: ModelContext, profile: UserProfile?) -> String {
         func latest(_ kind: MeasurementKind) -> String {
             guard let m = MetricsRepository.latestMeasurement(kind: kind, context: context) else { return "·" }
             return "\(Int(m.value))@\(Int(m.timestamp.timeIntervalSince1970))"
         }
         let device = DeviceRepository.current(context: context)
+        let cal = CalibrationStore.shared.settings
+        let calSig = "\(cal.bpSystolicOffset)/\(cal.bpDiastolicOffset)/\(cal.glucoseOffsetMgdl)/\(cal.hasBPReference)/\(cal.isGlucoseCalibrated)"
+        let profileSig = profile.map { "\(Int($0.updatedAt.timeIntervalSince1970))" } ?? "·"
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)" } ?? "·",
+            calSig, profileSig,
         ].joined(separator: "|")
     }
 }

@@ -37,7 +37,18 @@ enum SeedData {
         )
         context.insert(profile)
         context.insert(UserGoal(steps: 10000, sleepMinutes: 480, activeMinutes: 45, workoutsPerWeek: 4))
-        context.insert(Device(advertisedName: "SMART_RING", bleAddressHint: "41:42:2e:c7:5b:6a", batteryPercent: 82, state: .connected))
+        // Advertise the full sensor suite so the demo surfaces every vital (stress/HRV/BP/fatigue/
+        // glucose/temperature are capability-gated and stay hidden otherwise).
+        context.insert(Device(
+            advertisedName: "SMART_RING",
+            bleAddressHint: "41:42:2e:c7:5b:6a",
+            batteryPercent: 82,
+            state: .connected,
+            capabilities: [
+                .heartRate, .spo2, .steps, .sleep, .battery, .remSleep,
+                .stress, .hrv, .temperature, .bloodPressure, .bloodSugar, .fatigue
+            ]
+        ))
 
         // ~90 days of daily activity so Week/Month/Year range graphs render fully.
         for offset in stride(from: -89, through: 0, by: 1) {
@@ -59,16 +70,7 @@ enum SeedData {
             )
         }
 
-        // Dense recent HR/SpO2 samples for the Vitals charts.
-        for hour in stride(from: -24, through: 0, by: 1) {
-            guard let ts = calendar.date(byAdding: .hour, value: hour, to: now) else { continue }
-            let hr = 60 + Int((sin(Double(hour) * 0.7) + 1) * 14) + abs(hour % 5)
-            context.insert(Measurement(kind: .heartRate, value: Double(hr), unit: "bpm", timestamp: ts, source: .mock))
-        }
-        for hour in stride(from: -22, through: 0, by: 3) {
-            guard let ts = calendar.date(byAdding: .hour, value: hour, to: now) else { continue }
-            context.insert(Measurement(kind: .spo2, value: Double(96 + abs(hour % 4 == 0 ? 3 : abs(hour) % 3)), unit: "%", timestamp: ts, source: .mock))
-        }
+        seedVitals(context, now: now, calendar: calendar)
 
         // ~30 nights of sleep with stage blocks + per-night scores.
         for i in 0..<30 {
@@ -123,6 +125,7 @@ enum SeedData {
             session.perceivedEffort = "moderate"
             context.insert(session)
             context.insert(ActivityEvent(sessionId: session.id, kind: "finished"))
+            seedWorkoutSamples(context, session: session, start: start, minutes: workout.minutes)
             if let origin = workout.origin {
                 seedRoute(context, sessionId: session.id, start: start, durationMinutes: workout.minutes, origin: origin)
             }
@@ -149,7 +152,108 @@ enum SeedData {
         
         try? context.save()
     }
-    
+
+    /// Seeds every vital's measurement history for the demo. Each series is deterministic (no RNG) and
+    /// deliberately walks through its threshold zones — including over-threshold extremes — so the
+    /// zone-colored charts show their full color range. HR/SpO₂ are dense over the last 24h (the
+    /// dashboard's window); the slow vitals span ~30 days so the detail screen's baseline/trend fills.
+    @MainActor
+    private static func seedVitals(_ context: ModelContext, now: Date, calendar: Calendar) {
+        func add(_ kind: MeasurementKind, _ value: Double, _ ts: Date) {
+            context.insert(Measurement(kind: kind, value: value, unit: kind.unit, timestamp: ts, source: .mock))
+        }
+
+        // Heart rate — dense 24h. Mostly 58–95, with a couple of high spikes into the red (≥150).
+        for hour in stride(from: -24, through: 0, by: 1) {
+            guard let ts = calendar.date(byAdding: .hour, value: hour, to: now) else { continue }
+            var hr = 62 + (sin(Double(hour) * 0.7) + 1) * 15 + Double(abs(hour % 5))
+            if hour == -8 { hr = 152 }            // afternoon spike → High (red)
+            if hour == -2 { hr = 138 }            // recent effort → Elevated
+            add(.heartRate, hr.rounded(), ts)
+        }
+
+        // SpO₂ — 24h, every 2h. Mostly 96–99 with a dip to Low (91, orange) and one Very low (88, red).
+        for hour in stride(from: -24, through: 0, by: 2) {
+            guard let ts = calendar.date(byAdding: .hour, value: hour, to: now) else { continue }
+            var spo2 = 97.0 + Double(abs(hour) % 3 == 0 ? 2 : 0)
+            if hour == -10 { spo2 = 91 }          // Low
+            if hour == -16 { spo2 = 88 }          // Very low
+            add(.spo2, Swift.min(100, spo2), ts)
+        }
+
+        // Slow vitals over ~30 days (a few readings/day where useful). Each walks its zones.
+        for day in stride(from: -29, through: 0, by: 1) {
+            guard let dayStart = calendar.date(byAdding: .day, value: day, to: now) else { continue }
+            let phase = Double(day)
+
+            // Stress — 3 readings/day. Calm→High; a hard day pushes into the red (≥76).
+            for (h, base) in [(9, 22.0), (14, 48.0), (19, 66.0)] {
+                let ts = calendar.date(bySettingHour: h, minute: 0, second: 0, of: dayStart) ?? dayStart
+                var v = base + sin(phase * 0.5) * 12
+                if day == -4 && h == 14 { v = 84 }          // High (red)
+                add(.stress, Swift.max(3, Swift.min(99, v.rounded())), ts)
+            }
+
+            // Fatigue — 1 reading/day (evening). Fresh→High fatigue (≥75 red on a couple of days).
+            let fatTs = calendar.date(bySettingHour: 21, minute: 0, second: 0, of: dayStart) ?? dayStart
+            var fatigue = 40 + sin(phase * 0.4) * 22
+            if day == -3 || day == -12 { fatigue = 80 }     // High fatigue (red)
+            add(.fatigue, Swift.max(5, Swift.min(98, fatigue.rounded())), fatTs)
+
+            // HRV — 1 reading/day (overnight). ~55±18 so the 30-day baseline (mean±sd) forms and some
+            // days fall below/above it (amber/green bands).
+            let hrvTs = calendar.date(bySettingHour: 4, minute: 0, second: 0, of: dayStart) ?? dayStart
+            var hrv = 55 + sin(phase * 0.6) * 16 + Double(abs(day % 3)) * 3
+            if day == -6 { hrv = 26 }                       // sharp dip → below baseline
+            if day == -18 { hrv = 92 }                      // spike → above baseline
+            add(.hrv, hrv.rounded(), hrvTs)
+
+            // Blood pressure — 1 pair/day (morning). Normal→Stage 2; a couple of high days show red.
+            let bpTs = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: dayStart) ?? dayStart
+            var sys = 116 + sin(phase * 0.45) * 10
+            var dia = 76 + sin(phase * 0.45) * 6
+            if day == -2 || day == -15 { sys = 146; dia = 96 }   // Stage 2 (red)
+            if day == -9 { sys = 132; dia = 86 }                 // Stage 1
+            add(.bloodPressureSystolic, sys.rounded(), bpTs)
+            add(.bloodPressureDiastolic, dia.rounded(), bpTs)
+
+            // Glucose — 1 fasting reading/day (morning). Normal→High (≥126 red on a couple of days).
+            let gluTs = calendar.date(bySettingHour: 7, minute: 30, second: 0, of: dayStart) ?? dayStart
+            var glucose = 92 + sin(phase * 0.5) * 12
+            if day == -5 { glucose = 138 }                  // High (red)
+            if day == -20 { glucose = 112 }                 // Elevated (amber)
+            add(.bloodSugar, glucose.rounded(), gluTs)
+
+            // Temperature — skin temp, 1 reading/day. Typical 33–35.5 with a warm spike (≥36 amber) and
+            // a cool dip (<31 blue).
+            let tempTs = calendar.date(bySettingHour: 3, minute: 0, second: 0, of: dayStart) ?? dayStart
+            var temp = 34.0 + sin(phase * 0.5) * 1.2
+            if day == -7 { temp = 37.1 }                    // Warm
+            if day == -22 { temp = 30.4 }                   // Cool
+            add(.temperature, (temp * 10).rounded() / 10, tempTs)
+        }
+    }
+
+    /// Per-workout HR (every minute) and SpO₂ (every 5 min) samples so the workout-detail graphs render.
+    /// HR follows a warm-up → steady-effort (with a mid-workout push into the high zone) → cool-down
+    /// curve so the zone-colored line shows multiple colors.
+    @MainActor
+    private static func seedWorkoutSamples(_ context: ModelContext, session: ActivitySession, start: Date, minutes: Int) {
+        for minute in 0...minutes {
+            let ts = start.addingTimeInterval(Double(minute) * 60)
+            let progress = Double(minute) / Double(max(1, minutes))
+            // Warm-up ramp, steady middle, brief peak ~70% through, then cool-down.
+            var hr = 118 + sin(progress * .pi) * 34            // ~118 → ~152 → ~118 arc
+            if progress > 0.62 && progress < 0.74 { hr = 168 } // interval push → High zone (red)
+            if progress < 0.08 { hr = 96 + progress * 250 }    // early warm-up from ~96
+            context.insert(ActivitySample(sessionId: session.id, kind: MeasurementKind.heartRate.rawValue, value: hr.rounded(), unit: "bpm", timestamp: ts))
+            if minute % 5 == 0 {
+                let spo2 = 97.0 - (progress > 0.6 ? 2 : 0)     // slight dip under peak effort
+                context.insert(ActivitySample(sessionId: session.id, kind: MeasurementKind.spo2.rawValue, value: spo2, unit: "%", timestamp: ts))
+            }
+        }
+    }
+
     @MainActor
     static func clearAll(_ context: ModelContext) {
         deleteAll(Device.self, context)
@@ -177,10 +281,11 @@ enum SeedData {
     /// returned blocks carry a placeholder sessionId; callers re-key them to the
     /// real session when persisting.
     private static func stageBlocks(total: Int, start: Date) -> [SleepStageBlock] {
-        // Reference pattern (sums to 455m); scaled to the requested total.
+        // Reference pattern (sums to 455m); scaled to the requested total. REM cycles get longer
+        // later in the night, matching real sleep architecture.
         let pattern: [(SleepStage, Int)] = [
-            (.light, 58), (.deep, 46), (.light, 92), (.awake, 12),
-            (.deep, 71), (.light, 126), (.awake, 10), (.light, 40)
+            (.light, 58), (.deep, 46), (.light, 70), (.rem, 22), (.awake, 12),
+            (.deep, 71), (.light, 88), (.rem, 38), (.awake, 10), (.light, 40)
         ]
         let referenceTotal = pattern.reduce(0) { $0 + $1.1 }
         let scale = Double(total) / Double(referenceTotal)
