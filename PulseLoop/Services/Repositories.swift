@@ -290,6 +290,44 @@ enum MeasurementConfigRepository {
     }
 }
 
+/// User-logged cycle facts, keyed by local calendar day. Sensitive data — read only by the
+/// cycle feature (and the coach context builder behind an explicit opt-in).
+enum CycleRepository {
+    @MainActor
+    static func days(context: ModelContext) -> [CycleDay] {
+        let descriptor = FetchDescriptor<CycleDay>(sortBy: [SortDescriptor(\.date)])
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    @MainActor
+    static func day(for date: Date, context: ModelContext) -> CycleDay? {
+        let key = CycleDay.key(for: Calendar.current.startOfDay(for: date))
+        let descriptor = FetchDescriptor<CycleDay>(predicate: #Predicate { $0.dateString == key })
+        return (try? context.fetch(descriptor))?.first
+    }
+
+    /// Fetch the row for `date`, inserting a blank one if none exists yet. Callers mutate the
+    /// returned row and `save(_:context:)` it.
+    @MainActor
+    static func dayOrNew(for date: Date, context: ModelContext) -> CycleDay {
+        if let existing = day(for: date, context: context) { return existing }
+        let fresh = CycleDay(date: date)
+        context.insert(fresh)
+        return fresh
+    }
+
+    /// Persist edits, pruning rows that no longer assert anything so the table only ever
+    /// holds real user facts.
+    @MainActor
+    static func save(_ day: CycleDay, context: ModelContext) {
+        day.updatedAt = Date()
+        let empty = !day.isPeriod && !day.isDisturbed && (day.notes?.isEmpty ?? true)
+        if empty { context.delete(day) }
+        try? context.save()
+        PulseDataChange.shared.notify()
+    }
+}
+
 enum CoachRepository {
     @MainActor
     static func messages(context: ModelContext) -> [CoachMessage] {

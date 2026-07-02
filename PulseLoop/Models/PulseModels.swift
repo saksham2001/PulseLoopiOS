@@ -934,3 +934,48 @@ final class CoachToolCall {
         self.createdAt = Date()
     }
 }
+
+/// One calendar day of user-logged cycle facts. Deliberately minimal: only what the user
+/// asserts (period day, disturbed night, note) is stored — cycle starts, phases, coverline,
+/// ovulation, and predictions are all *derived* by `CycleAnalyzer` so they can never drift
+/// out of sync with the source facts. Highly sensitive data: never leaves the device and is
+/// excluded from coach context and diagnostics exports unless the user explicitly opts in.
+@Model
+final class CycleDay {
+    #Index<CycleDay>([\.date])
+    /// "yyyy-MM-dd" in the local calendar at write time, used as the uniqueness key so a day
+    /// can only ever have one row (upserts by key, no duplicate-day bugs across timezones).
+    @Attribute(.unique) var dateString: String
+    var date: Date                    // normalized startOfDay
+    var isPeriod: Bool                // a flow day (day 1 is derived, not stored)
+    var isDisturbed: Bool             // night excluded from temperature analysis (fever, alcohol…)
+    var disturbedAutoDetected: Bool   // exclusion was suggested by the app, not typed by the user
+    var notes: String?
+    var updatedAt: Date
+
+    /// Fixed-locale key formatter: `en_US_POSIX` + the current timezone so the key always
+    /// matches the local `startOfDay` the row stores, and never shifts under non-Gregorian
+    /// user calendars. Static — `DateFormatter` allocation is too costly per init.
+    static let keyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static func key(for date: Date) -> String {
+        keyFormatter.string(from: date)
+    }
+
+    init(date: Date, isPeriod: Bool = false, isDisturbed: Bool = false, disturbedAutoDetected: Bool = false, notes: String? = nil) {
+        let day = Calendar.current.startOfDay(for: date)
+        self.date = day
+        self.dateString = Self.key(for: day)
+        self.isPeriod = isPeriod
+        self.isDisturbed = isDisturbed
+        self.disturbedAutoDetected = disturbedAutoDetected
+        self.notes = notes
+        self.updatedAt = Date()
+    }
+}

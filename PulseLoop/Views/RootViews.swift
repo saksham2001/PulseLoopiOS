@@ -172,6 +172,10 @@ struct RootAppView: View {
                     StravaSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
+                case .settingsCycle:
+                    CycleSettingsView()
+                case .cycleDetail:
+                    CycleDetailView(path: $path)
                 case .settingsAbout:
                     AboutSettingsView(path: $path)
                 case .settingsNutrition:
