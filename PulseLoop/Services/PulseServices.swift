@@ -539,10 +539,26 @@ enum MetricsService {
     
 }
 
+extension Calendar {
+    /// Hour-of-day boundary between "belongs to last night" and "belongs to the coming night."
+    /// Sleep starting at or after this hour rolls onto the *next* morning's waking day; anything
+    /// earlier (including small-hours and daytime naps) stays on the current day.
+    static let sleepEveningBoundaryHour = 19  // 7 PM
+
+    /// The waking-morning day key for a sleep session starting at `date`. Sleep that begins at or
+    /// after 7 PM belongs to the *next* day's waking morning (you fall asleep tonight, wake tomorrow),
+    /// so a night that crosses midnight groups onto the single morning it ends on. Sleep before 7 PM
+    /// — early-morning hours or a daytime nap — stays on the current day / last night's session.
+    func wakingDay(forSleepStart date: Date) -> Date {
+        let base = startOfDay(for: date)
+        guard component(.hour, from: date) >= Self.sleepEveningBoundaryHour else { return base }
+        return self.date(byAdding: .day, value: 1, to: base) ?? base
+    }
+}
+
 @MainActor
 enum SleepService {
     static func latestSleep(context: ModelContext) -> SleepSummary? {
-        deduplicateSleepSessions(context: context)
         guard let session = SleepRepository.latestSession(context: context) else { return nil }
         // Gate on *today* so the Today screen only shows a recent night; a session more than a
         // day old (with nothing newer) is hidden rather than shown as if it were last night.
@@ -560,7 +576,6 @@ enum SleepService {
     }
     
     static func sleepRange(_ range: SleepRangeKey, context: ModelContext, now: Date = Date()) -> SleepRangeSummary {
-        deduplicateSleepSessions(context: context)
         let expected = expectedNights(for: range)
         // Day view is "last night" — anchored on the current reference night, not
         // the latest recorded one. If nothing was captured we want to show the
@@ -627,60 +642,57 @@ enum SleepService {
         return Calendar.current.startOfDay(for: Date())
     }
 
-    private static func deduplicateSleepSessions(context: ModelContext) {
+    /// One-time repair of sleep sessions that were split across midnight (or duplicated) by the old
+    /// start-of-day grouping. `persistSleepTimeline` now keys packets by the noon-to-noon waking day
+    /// at write time, so no *new* splits occur — this only fixes rows persisted before that fix.
+    /// Idempotent + `UserDefaults`-gated so it runs once, off the render path. Mirrors
+    /// `ActivityService.migrateInflatedActivityIfNeeded`.
+    static func migrateSplitSleepSessionsIfNeeded(context: ModelContext) {
+        let key = "sleepMidnightMerge.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        realignAndDedupeSleepSessions(context: context)
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    private static func realignAndDedupeSleepSessions(context: ModelContext) {
         let calendar = Calendar.current
-        
-        // 1. Re-align all session dates using the noon-to-noon boundary
-        let descriptor = FetchDescriptor<SleepSession>()
-        guard let allSessions = try? context.fetch(descriptor) else { return }
-        
-        var modified = false
+
+        // 1. Re-align every session's date onto its noon-to-noon waking day.
+        guard let allSessions = try? context.fetch(FetchDescriptor<SleepSession>()) else { return }
         for session in allSessions {
-            let hour = calendar.component(.hour, from: session.startAt)
-            let wakingDay = hour >= 12
-                ? calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: session.startAt)) ?? session.startAt
-                : calendar.startOfDay(for: session.startAt)
-            let targetDate = calendar.startOfDay(for: wakingDay)
-            
+            let targetDate = calendar.wakingDay(forSleepStart: session.startAt)
             if calendar.startOfDay(for: session.date) != targetDate {
                 session.date = targetDate
                 session.updatedAt = Date()
-                modified = true
             }
         }
-        
-        if modified {
-            try? context.save()
-        }
-        
-        // 2. Find and delete duplicate sessions for the same waking date, keeping the longest one
-        guard let updatedSessions = try? context.fetch(FetchDescriptor<SleepSession>()) else { return }
-        let grouped = Dictionary(grouping: updatedSessions) { calendar.startOfDay(for: $0.date) }
-        
+
+        // 2. Merge duplicates sharing a waking day. Fetch all blocks ONCE and group by session so we
+        // can both tie-break on block count and cascade-delete without re-scanning per session.
+        let allBlocks = (try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []
+        let blocksBySession = Dictionary(grouping: allBlocks) { $0.sessionId }
+
+        let grouped = Dictionary(grouping: allSessions) { calendar.startOfDay(for: $0.date) }
         for (_, sessionsForDate) in grouped where sessionsForDate.count > 1 {
-            let sorted = sessionsForDate.sorted { s1, s2 in
-                if s1.totalMinutes != s2.totalMinutes {
-                    return s1.totalMinutes > s2.totalMinutes
-                }
-                return s1.id.uuidString < s2.id.uuidString
+            // Keep the richest session: most sleep, then most blocks, then most recently updated;
+            // `id` only as a final deterministic fallback.
+            let sorted = sessionsForDate.sorted { a, b in
+                if a.totalMinutes != b.totalMinutes { return a.totalMinutes > b.totalMinutes }
+                let aBlocks = blocksBySession[a.id]?.count ?? 0
+                let bBlocks = blocksBySession[b.id]?.count ?? 0
+                if aBlocks != bBlocks { return aBlocks > bBlocks }
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+                return a.id.uuidString < b.id.uuidString
             }
-            
-            let toKeep = sorted[0]
-            let toDelete = sorted.suffix(from: 1)
-            
-            for session in toDelete {
-                // Delete associated stage blocks
-                let blockDescriptor = FetchDescriptor<SleepStageBlock>()
-                if let blocks = try? context.fetch(blockDescriptor) {
-                    let sessionBlocks = blocks.filter { $0.sessionId == session.id }
-                    for block in sessionBlocks {
-                        context.delete(block)
-                    }
+
+            for session in sorted.dropFirst() {
+                for block in blocksBySession[session.id] ?? [] {
+                    context.delete(block)
                 }
                 context.delete(session)
             }
         }
-        
+
         try? context.save()
     }
 }

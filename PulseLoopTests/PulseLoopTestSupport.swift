@@ -67,7 +67,10 @@ enum TestSupport {
         into context: ModelContext
     ) -> SleepSession {
         let end = Calendar.current.date(byAdding: .minute, value: stages.count, to: nightStart) ?? nightStart
-        let session = SleepSession(date: nightStart, startAt: nightStart, endAt: end, totalMinutes: stages.count, syncedAt: syncedAt)
+        // Key the session on its waking day, mirroring production `persistSleepTimeline`: a night
+        // starting before midnight belongs to the morning it ends on, not the calendar day it began.
+        let date = Calendar.current.wakingDay(forSleepStart: nightStart)
+        let session = SleepSession(date: date, startAt: nightStart, endAt: end, totalMinutes: stages.count, syncedAt: syncedAt)
         context.insert(session)
         for (index, stage) in stages.enumerated() {
             let blockStart = Calendar.current.date(byAdding: .minute, value: index, to: nightStart) ?? nightStart

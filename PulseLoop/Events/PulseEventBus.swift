@@ -325,14 +325,11 @@ final class EventPersistenceSubscriber {
     /// packet. Mirrors `persistence._on_sleep_timeline`.
     private func persistSleepTimeline(start: Date, stages: [SleepStage]) {
         let calendar = Calendar.current
-        
-        // Group packets using a noon-to-noon boundary (standard for sleep tracking).
-        // Sleep starting at or after 12:00 PM (noon) belongs to the next day's waking morning.
-        let hour = calendar.component(.hour, from: start)
-        let wakingDay = hour >= 12
-            ? calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: start)) ?? start
-            : calendar.startOfDay(for: start)
-        let dateKey = calendar.startOfDay(for: wakingDay)
+
+        // Group packets by the waking-day boundary (sleep from 7 PM rolls to the next morning) so a
+        // night that starts before midnight lands under the morning of waking. See
+        // `Calendar.wakingDay(forSleepStart:)`.
+        let dateKey = calendar.wakingDay(forSleepStart: start)
 
         let allSessions = (try? context.fetch(FetchDescriptor<SleepSession>())) ?? []
         let session = allSessions.first { calendar.isDate($0.date, inSameDayAs: dateKey) }

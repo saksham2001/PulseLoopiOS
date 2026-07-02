@@ -52,6 +52,9 @@ struct PulseLoopApp: App {
         // One-time cleanup of activity totals inflated by the old accumulator bug.
         ActivityService.migrateInflatedActivityIfNeeded(context: container.mainContext)
 
+        // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
+        SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
+
         // A persisted "connected" state can't survive a restart — the live link is gone. Reset it so
         // the UI never shows a false "Connected" until a real connection re-confirms.
         if !runningTests {
