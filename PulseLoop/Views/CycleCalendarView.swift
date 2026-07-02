@@ -117,6 +117,47 @@ struct CycleMonthCalendar: View {
     }
 }
 
+/// Compact legend for the calendar's markers. Fertility items disappear in hormonal-
+/// contraception mode, where the thermal analysis (and thus those markers) is paused.
+struct CycleCalendarLegend: View {
+    var showFertility = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 14) {
+                item(label: "Period") { Circle().fill(PulseColors.cycle) }
+                item(label: "Predicted") { Circle().fill(PulseColors.cycle.opacity(0.25)) }
+                if showFertility {
+                    item(label: "Fertile window") { Circle().fill(PulseColors.cycleFertile.opacity(0.35)) }
+                }
+            }
+            HStack(spacing: 14) {
+                if showFertility {
+                    item(label: "Est. ovulation") {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(PulseColors.cycleLuteal)
+                    }
+                }
+                item(label: "Excluded night") {
+                    Circle().fill(PulseColors.warning).frame(width: 5, height: 5)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func item<Symbol: View>(label: String, @ViewBuilder symbol: () -> Symbol) -> some View {
+        HStack(spacing: 5) {
+            symbol()
+                .frame(width: 10, height: 10)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(PulseColors.textMuted)
+        }
+    }
+}
+
 /// Quick log sheet for one day — the *only* manual input the feature asks for: period yes/no,
 /// disturbed night yes/no, optional note. Saving an all-empty day removes the row.
 struct CycleLogSheet: View {

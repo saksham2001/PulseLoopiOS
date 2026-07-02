@@ -236,9 +236,12 @@ struct CycleDetailView: View {
                 CycleMonthCalendar(month: displayedMonth, overview: overview, today: Date()) { day in
                     logItem = CycleLogItem(date: day)
                 }
+                CycleCalendarLegend(showFertility: !hormonal)
+                    .padding(.top, 2)
                 Text("Tap a day to log a period or exclude a disturbed night.")
                     .font(.system(size: 11))
                     .foregroundStyle(PulseColors.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
