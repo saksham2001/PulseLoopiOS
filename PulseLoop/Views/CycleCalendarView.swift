@@ -36,32 +36,38 @@ struct CycleMonthCalendar: View {
         let inFertileWindow = analysis?.fertileWindow?.contains(day) ?? false
         let ovulation = analysis?.ovulation.estimatedDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
 
+        // A fixed-size circle with the number drawn by the same center-aligned ZStack keeps the
+        // digit dead-center; the star/disturbed markers live in overlays so they can't skew it.
         return Button {
             onSelect(day)
         } label: {
-            ZStack(alignment: .topTrailing) {
+            ZStack {
                 Circle()
                     .fill(background(facts: facts, predicted: isPredictedPeriod, fertile: inFertileWindow))
                     .overlay(Circle().stroke(isToday ? PulseColors.accent : .clear, lineWidth: 1.5))
+                    .frame(width: 36, height: 36)
                 Text("\(calendar.component(.day, from: day))")
                     .font(.system(size: 13, weight: facts?.isPeriod == true ? .semibold : .regular))
+                    .monospacedDigit()
                     .foregroundStyle(facts?.isPeriod == true ? Color.white : (isFuture ? PulseColors.textMuted : PulseColors.textPrimary))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 40)
+            .overlay(alignment: .topTrailing) {
                 if ovulation {
                     Image(systemName: analysis?.ovulation.isConfirmed == true ? "star.fill" : "star")
                         .font(.system(size: 8))
                         .foregroundStyle(PulseColors.cycleLuteal)
-                        .offset(x: 1, y: -1)
+                        .offset(x: -2, y: 1)
                 }
+            }
+            .overlay(alignment: .bottom) {
                 if facts?.isDisturbed == true {
                     Circle()
                         .fill(PulseColors.warning)
                         .frame(width: 5, height: 5)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .offset(y: -2)
                 }
             }
-            .frame(height: 40)
             .opacity(isFuture ? 0.55 : 1)
         }
         .buttonStyle(.plain)

@@ -23,18 +23,24 @@ struct CyclePhaseRing<Center: View>: View {
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
+            // Stroke paths are centered on the circle's edge, so inset the track by half the
+            // line width to keep the band fully inside `side`. The marker then sits exactly on
+            // the band's centerline at radius (side - lineWidth) / 2.
             ZStack {
                 Circle()
                     .stroke(PulseColors.cardSoft, lineWidth: lineWidth)
+                    .padding(lineWidth / 2)
                 ForEach(segments) { segment in
                     Circle()
                         .trim(from: segment.start, to: segment.end)
                         .stroke(segment.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                         .rotationEffect(.degrees(-90))
+                        .padding(lineWidth / 2)
                 }
                 Circle()
                     .fill(PulseColors.textPrimary)
-                    .frame(width: lineWidth * 0.62, height: lineWidth * 0.62)
+                    .frame(width: lineWidth + 5, height: lineWidth + 5)
+                    .overlay(Circle().stroke(PulseColors.card, lineWidth: 3))
                     .offset(y: -(side - lineWidth) / 2)
                     .rotationEffect(.degrees(progress * 360))
                 center
