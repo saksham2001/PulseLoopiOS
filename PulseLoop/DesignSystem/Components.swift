@@ -638,8 +638,11 @@ enum ActivityMeta {
         guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
         let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
         let paceSec = UnitsFormatter.paceSeconds(perKmSeconds: paceSecPerKm, units: units)
-        let m = Int(paceSec) / 60
-        let s = Int(paceSec.rounded()) % 60
+        // Round to whole seconds first, then split — otherwise a value like 299.85 renders
+        // "4:00" (minute truncated, seconds rounded up to 60) instead of "5:00".
+        let total = Int(paceSec.rounded())
+        let m = total / 60
+        let s = total % 60
         return String(format: "%d:%02d %@", m, s, UnitsFormatter.paceUnit(units))
     }
 }
@@ -648,6 +651,7 @@ enum ActivityMeta {
 
 struct ActivityWorkoutRow: View {
     let session: ActivitySession
+    var units: UnitsPreference = .metric
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -672,7 +676,8 @@ struct ActivityWorkoutRow: View {
                     HStack(spacing: 12) {
                         Text(durationLabel).font(.system(size: 12).monospacedDigit())
                         if let distance = session.distanceMeters {
-                            Text(String(format: "%.2f km", distance / 1000)).font(.system(size: 12).monospacedDigit())
+                            let d = UnitsFormatter.distance(meters: distance, units: units)
+                            Text("\(d.value) \(d.unit)").font(.system(size: 12).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
                             Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())

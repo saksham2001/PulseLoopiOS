@@ -17,6 +17,33 @@ struct MetricDetailView: View {
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
 
     private var profile: UserPhysiologyProfile { UserPhysiologyProfile(profiles.first) }
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
+    private var glucoseUnit: GlucoseUnit { profile.preferredGlucoseUnit }
+
+    /// Canonical stored value (°C, mg/dL) → user's display unit. Identity for every
+    /// other metric. `toRaw` is the inverse, needed to color the line (thresholds are
+    /// evaluated in canonical units) after the samples are converted for display.
+    private func toDisplay(_ raw: Double) -> Double {
+        switch metric {
+        case .temperature: return UnitsFormatter.temperatureValue(celsius: raw, units: units)
+        case .glucose: return UnitsFormatter.glucoseValue(mgdl: raw, unit: glucoseUnit)
+        default: return raw
+        }
+    }
+    private func toRaw(_ disp: Double) -> Double {
+        switch metric {
+        case .temperature: return units == .imperial ? (disp - 32) * 5 / 9 : disp
+        case .glucose: return glucoseUnit == .mmol ? disp * 18.0182 : disp
+        default: return disp
+        }
+    }
+    private var unitLabel: String {
+        switch metric {
+        case .temperature: return UnitsFormatter.temperatureUnit(units)
+        case .glucose: return UnitsFormatter.glucoseUnit(glucoseUnit)
+        default: return metric.unit
+        }
+    }
 
     enum DetailPeriod: String, CaseIterable, Identifiable {
         case today = "Today"
@@ -64,11 +91,12 @@ struct MetricDetailView: View {
 
     @ViewBuilder
     private var chartSection: some View {
-        let chart = ChartSampleBuilder.from(primary)
+        let dispPrimary = primary.map { MetricSample(timestamp: $0.timestamp, value: toDisplay($0.value)) }
+        let chart = ChartSampleBuilder.from(dispPrimary)
         let baseline = baselineForChart
         VStack(alignment: .leading, spacing: 8) {
-            if !metric.unit.isEmpty {
-                Text(metric.unit)
+            if !unitLabel.isEmpty {
+                Text(unitLabel)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,11 +116,12 @@ struct MetricDetailView: View {
                     range: period.range,
                     showPoints: metric == .spo2,
                     showAxes: true,
-                    dashedRules: dashedRules(baseline: baseline),
+                    dashedRules: dashedRules(baseline: baseline).map(toDisplay),
                     height: 240,
-                    thresholds: VitalsThresholdEngine.zoneThresholds(for: metric, profile: profile, baseline: baseline),
+                    thresholds: VitalsThresholdEngine.zoneThresholds(for: metric, profile: profile, baseline: baseline).map(toDisplay),
                     colorForValue: { value in
-                        VitalsThresholdEngine.colorToken(forValue: value, metric: metric, profile: profile, baseline: baseline).color
+                        // Samples are in display units; color lookup needs canonical units.
+                        VitalsThresholdEngine.colorToken(forValue: toRaw(value), metric: metric, profile: profile, baseline: baseline).color
                     }
                 )
             }
@@ -130,10 +159,10 @@ struct MetricDetailView: View {
 
     private var statTiles: some View {
         let values = primary.map(\.value).filter { $0 > 0 }
-        let latest = values.last.map(fmt) ?? "--"
-        let avg = values.isEmpty ? "--" : fmt(values.reduce(0, +) / Double(values.count))
-        let lo = values.min().map(fmt) ?? "--"
-        let hi = values.max().map(fmt) ?? "--"
+        let latest = values.last.map { fmt(toDisplay($0)) } ?? "--"
+        let avg = values.isEmpty ? "--" : fmt(toDisplay(values.reduce(0, +) / Double(values.count)))
+        let lo = values.min().map { fmt(toDisplay($0)) } ?? "--"
+        let hi = values.max().map { fmt(toDisplay($0)) } ?? "--"
         return HStack(spacing: 0) {
             stat("Latest", latest)
             statDivider
@@ -256,12 +285,16 @@ struct MetricDetailView: View {
 
     // MARK: - Formatting helpers
 
+    /// Formats a value already in display units (temperature and mmol/L glucose want one decimal).
     private func fmt(_ value: Double) -> String {
-        metric == .temperature ? String(format: "%.1f", value) : "\(Int(value.rounded()))"
+        if metric == .temperature { return String(format: "%.1f", value) }
+        if metric == .glucose, glucoseUnit == .mmol { return String(format: "%.1f", value) }
+        return "\(Int(value.rounded()))"
     }
 
     private func rangeText(_ zone: MetricZone) -> String {
-        switch (zone.lower, zone.upper) {
+        // Zone bounds are canonical; convert to display units before formatting.
+        switch (zone.lower.map(toDisplay), zone.upper.map(toDisplay)) {
         case let (lo?, hi?): return "\(fmt(lo))–\(fmt(hi))"
         case let (lo?, nil): return "≥ \(fmt(lo))"
         case let (nil, hi?): return "< \(fmt(hi))"

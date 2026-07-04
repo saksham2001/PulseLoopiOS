@@ -110,7 +110,7 @@ final class TodayStore {
             hr: hr, spo2: spo2, hrv: hrv,
             stress: stress, fatigue: fatigue, temperature: temperature,
             systolic: systolic, diastolic: diastolic, glucose: glucose,
-            summary: summary, range: .twentyFourHours
+            summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric
         )
         var result: [MetricKind: VitalCardViewModel] = [:]
         for metric in MetricKind.allCases {

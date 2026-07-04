@@ -109,6 +109,7 @@ final class LiveWorkoutManager {
 
         let elapsed = max(0, Int((session.endedAt ?? now).timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
         let pace = paceSecondsPerKm(distanceMeters: distance, durationSeconds: elapsed)
+        let useImperial = (ProfileRepository.profile(context: context)?.units ?? .metric) == .imperial
         liveActivity.update(
             sessionID: session.id.uuidString,
             state: WorkoutActivityAttributes.ContentState(
@@ -122,7 +123,8 @@ final class LiveWorkoutManager {
                 lastHeartRate: coordinator.latestHRValue,
                 lastSpO2: coordinator.latestSpO2Value,
                 activityType: session.type,
-                lastUpdated: Date()
+                lastUpdated: Date(),
+                useImperial: useImperial
             )
         )
     }

@@ -32,6 +32,10 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         var lastSpO2: Int?
         var activityType: String      // "run","walk","cycle",...
         var lastUpdated: Date
+        /// Whether to render distance/pace in imperial (mi, /mi). Mirrors the user's
+        /// units preference; kept as a plain Bool because this shared type can't see
+        /// the app-only `UnitsPreference`. Defaults to metric for older payloads.
+        var useImperial: Bool = false
     }
 
     var sessionID: String
@@ -132,16 +136,17 @@ enum WorkoutLAColors {
         }
     }
 
-    static func paceLabel(_ secPerKm: Double?) -> String {
+    static func paceLabel(_ secPerKm: Double?, imperial: Bool = false) -> String {
         guard let secPerKm, secPerKm.isFinite, secPerKm > 0 else { return "—" }
-        let total = Int(secPerKm.rounded())
-        let minutes = total / 60
-        let seconds = total % 60
-        return String(format: "%d:%02d /km", minutes, seconds)
+        let secPerUnit = imperial ? secPerKm * 1.609344 : secPerKm
+        let total = Int(secPerUnit.rounded())
+        return String(format: "%d:%02d %@", total / 60, total % 60, imperial ? "/mi" : "/km")
     }
 
-    static func distanceLabel(_ meters: Double) -> String {
+    static func distanceLabel(_ meters: Double, imperial: Bool = false) -> String {
         guard meters >= 50 else { return "—" }
-        return String(format: "%.2f km", meters / 1000)
+        return imperial
+            ? String(format: "%.2f mi", meters / 1609.344)
+            : String(format: "%.2f km", meters / 1000)
     }
 }
