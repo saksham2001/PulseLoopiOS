@@ -54,7 +54,10 @@ final class LiveWorkoutManager {
             activityName: ActivityMeta.label(type),
             activityType: type,
             startDate: timerStart(session),
-            usesGps: useGps
+            displayOptions: WorkoutLiveActivityDisplayOptions(
+                usesGps: useGps,
+                useImperial: usesImperialUnits
+            )
         )
         lastPushedDistance = 0
         lastPushAt = Date()
@@ -109,7 +112,6 @@ final class LiveWorkoutManager {
 
         let elapsed = max(0, Int((session.endedAt ?? now).timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
         let pace = paceSecondsPerKm(distanceMeters: distance, durationSeconds: elapsed)
-        let useImperial = (ProfileRepository.profile(context: context)?.units ?? .metric) == .imperial
         liveActivity.update(
             sessionID: session.id.uuidString,
             state: WorkoutActivityAttributes.ContentState(
@@ -124,7 +126,7 @@ final class LiveWorkoutManager {
                 lastSpO2: coordinator.latestSpO2Value,
                 activityType: session.type,
                 lastUpdated: Date(),
-                useImperial: useImperial
+                useImperial: usesImperialUnits
             )
         )
     }
@@ -175,7 +177,10 @@ final class LiveWorkoutManager {
                 activityName: ActivityMeta.label(session.type),
                 activityType: session.type,
                 startDate: timerStart(session),
-                usesGps: session.useGps
+                displayOptions: WorkoutLiveActivityDisplayOptions(
+                    usesGps: session.useGps,
+                    useImperial: usesImperialUnits
+                )
             )
         }
         push(session, status: "recording", force: true)
@@ -186,6 +191,10 @@ final class LiveWorkoutManager {
     private func isFreshlyActive(_ session: ActivitySession) -> Bool {
         let last = [session.lastSensorPollAt, session.lastGpsPointAt].compactMap { $0 }.max() ?? session.startedAt
         return Date().timeIntervalSince(last) < 180
+    }
+
+    private var usesImperialUnits: Bool {
+        (ProfileRepository.profile(context: context)?.units ?? .metric) == .imperial
     }
 
     /// Consume a command written by a Live Activity App Intent (pause/resume/finish) via the App Group.

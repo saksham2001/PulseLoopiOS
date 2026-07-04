@@ -42,6 +42,39 @@ struct WorkoutActivityAttributes: ActivityAttributes {
     var activityName: String
 }
 
+extension WorkoutActivityAttributes.ContentState {
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case elapsedSeconds
+        case startDate
+        case pausedAt
+        case usesGps
+        case distanceMeters
+        case paceSecondsPerKm
+        case lastHeartRate
+        case lastSpO2
+        case activityType
+        case lastUpdated
+        case useImperial
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        elapsedSeconds = try container.decode(Int.self, forKey: .elapsedSeconds)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        pausedAt = try container.decodeIfPresent(Date.self, forKey: .pausedAt)
+        usesGps = try container.decode(Bool.self, forKey: .usesGps)
+        distanceMeters = try container.decode(Double.self, forKey: .distanceMeters)
+        paceSecondsPerKm = try container.decodeIfPresent(Double.self, forKey: .paceSecondsPerKm)
+        lastHeartRate = try container.decodeIfPresent(Int.self, forKey: .lastHeartRate)
+        lastSpO2 = try container.decodeIfPresent(Int.self, forKey: .lastSpO2)
+        activityType = try container.decode(String.self, forKey: .activityType)
+        lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
+        useImperial = try container.decodeIfPresent(Bool.self, forKey: .useImperial) ?? false
+    }
+}
+
 // MARK: - App Group command channel
 
 /// The widget control buttons write commands here; the app reads & clears them.
