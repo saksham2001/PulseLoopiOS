@@ -263,16 +263,20 @@ struct ConnectionStatusPill: View {
     }
 
     private var isPulsing: Bool {
-        state == .connecting || state == .reconnecting || state == .scanning
+        state == .connecting || state == .reconnecting
     }
 
     private var dotColor: Color {
         switch state {
         case .connected: return PulseColors.success
         case .connecting, .reconnecting: return PulseColors.accent
-        case .scanning: return PulseColors.textMuted
+        // No ring linked: the header's background auto-reconnect scan (which never
+        // resolves without a reachable ring) reads as "Disconnected" to the user,
+        // not an in-progress action. Show it in danger red like the other
+        // not-connected states. (Active pairing has its own UI in PairingView.)
+        case .scanning: return PulseColors.danger
         case .failed: return PulseColors.danger
-        case .idle, .disconnected: return PulseColors.textMuted
+        case .idle, .disconnected: return PulseColors.danger
         }
     }
 
@@ -282,7 +286,7 @@ struct ConnectionStatusPill: View {
             if let battery = batteryPercent, battery > 0 { return "Connected · \(battery)%" }
             return "Connected"
         case .connecting, .reconnecting: return "Connecting…"
-        case .scanning: return "Searching…"
+        case .scanning: return "Disconnected"
         case .failed: return "Sync failed"
         case .idle, .disconnected: return "Disconnected"
         }

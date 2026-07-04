@@ -56,7 +56,7 @@ enum OpenRouterModel: String, CaseIterable, Identifiable {
     case gpt54mini    = "openai/gpt-5.4-mini"
     case geminiFlash  = "google/gemini-2.5-flash"
     case geminiPro    = "google/gemini-2.5-pro"
-    case deepseekV4   = "deepseek/deepseek-v4"
+    case deepseekV4   = "deepseek/deepseek-v4-flash"
 
     var id: String { rawValue }
 
