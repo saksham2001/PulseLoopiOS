@@ -1,0 +1,88 @@
+name: Release IPA
+
+# Builds an unsigned IPA whenever a GitHub release is published and attaches it
+# as a release asset:
+#
+#   PulseLoop-<tag>.ipa — full build (includes Live Activity extension)
+#
+# Unsigned. Sign locally with Sideloadly (free Apple ID, 7-day re-sign),
+# ipasign.cc, or Feather with a distribution certificate.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach IPA to (e.g. beta, v1.0.0)'
+        required: true
+
+permissions:
+  contents: write   # required to upload assets to the release
+
+# Don't let two runs for the same tag race the upload.
+concurrency:
+  group: release-ipa-${{ github.event.inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15
+
+    steps:
+      # Check out the code AT the release tag, not the default branch. On a
+      # `release: published` run github.ref is already refs/tags/<tag>; on a
+      # manual `workflow_dispatch` run we must use the supplied tag or we'd
+      # build main HEAD instead of the released source.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Archive (unsigned, device slice)
+        run: |
+          xcodebuild archive \
+            -project PulseLoop.xcodeproj \
+            -scheme PulseLoop \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/PulseLoop.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Package full IPA (includes Live Activity extension)
+        run: |
+          APP="build/PulseLoop.xcarchive/Products/Applications/PulseLoop.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Archive did not produce $APP — build failed silently."
+            exit 1
+          fi
+          mkdir -p build/Payload
+          cp -r "$APP" build/Payload/
+          cd build && zip -r "PulseLoop-${{ steps.tag.outputs.tag }}.ipa" Payload
+
+      - name: Attach IPA to release
+        run: |
+          gh release upload "${{ steps.tag.outputs.tag }}" \
+            "build/PulseLoop-${{ steps.tag.outputs.tag }}.ipa" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
