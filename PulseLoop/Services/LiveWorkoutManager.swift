@@ -58,7 +58,9 @@ final class LiveWorkoutManager {
         session.vitalsModeRaw = plan.vitalsModeRaw
         polling.start(sessionID: session.id, plan: plan)
         if plan.hrMode == .stream { coordinator.startWorkoutHeartRate() }
-        if plan.bumpRingInterval { coordinator.applyWorkoutMeasurementInterval() }
+        if plan.bumpRingInterval {
+            coordinator.applyWorkoutMeasurementInterval(hrIntervalSeconds: WorkoutPrefsStore.shared.settings.hrPollIntervalSeconds)
+        }
         session.liveActivityID = liveActivity.start(
             sessionID: session.id.uuidString,
             activityName: ActivityMeta.label(type),

@@ -51,7 +51,8 @@ struct WorkoutVitalsPlan: Equatable, Sendable {
         return WorkoutVitalsPlan(
             hrMode: hr,
             spo2Mode: spo2,
-            bumpRingInterval: capabilities.contains(.measurementInterval)
+            // Only tighten the ring's HR log when HR capture is actually on.
+            bumpRingInterval: hr != .off && capabilities.contains(.measurementInterval)
         )
     }
 }

@@ -195,14 +195,17 @@ final class RingSyncCoordinator {
         updateSync(stage: "Updating workout…")
     }
 
-    /// Bump the ring's all-day HR log to its densest cadence for the duration of a workout, so the
-    /// on-ring log can backfill any stream gaps (disconnect, app suspension). The user's configured
-    /// interval is restored by calling `applyMeasurementSettings()` at finish.
-    func applyWorkoutMeasurementInterval() {
+    /// Tighten the ring's all-day HR log for the duration of a workout so it can backfill any stream
+    /// gaps (disconnect, app suspension). The cadence follows the user's "HR every" Activity-Tracking
+    /// setting — the ring firmware clamps to 5-min steps with a 5-min floor, so sub-5-min settings all
+    /// land at the ring's densest 5-min log. The user's normal interval is restored by
+    /// `applyMeasurementSettings()` at finish.
+    func applyWorkoutMeasurementInterval(hrIntervalSeconds: Int) {
         guard client.state == .connected, let device = DeviceRepository.current(context: context) else { return }
         var settings = MeasurementConfigRepository.configOrDefault(deviceId: device.id, context: context).asSettings
         settings.hrEnabled = true
-        settings.hrIntervalMinutes = 5
+        // Round the user's seconds up to whole minutes; the encoder floors at 5 min.
+        settings.hrIntervalMinutes = max(1, Int((Double(hrIntervalSeconds) / 60).rounded(.up)))
         engine?.applyMeasurementSettings(settings)
     }
 

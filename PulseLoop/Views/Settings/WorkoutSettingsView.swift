@@ -6,7 +6,8 @@ import SwiftUI
 struct WorkoutSettingsView: View {
     @State private var store = WorkoutPrefsStore.shared
 
-    private let hrIntervals = [15, 30, 60, 90, 120]
+    // Seconds. HR options span 15s spot cadence up to 5 min for the ring's background log.
+    private let hrIntervals = [15, 30, 60, 120, 300]
     private let spo2Intervals = [120, 300, 600]
 
     var body: some View {
@@ -87,8 +88,14 @@ struct WorkoutSettingsView: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
+    /// "45s", "1 min", "1.5 min", "5 min" — never truncates, so 90s reads "1.5 min" instead of
+    /// colliding with 60s on "1 min".
     private func intervalLabel(_ seconds: Int) -> String {
-        seconds < 60 ? "\(seconds)s" : "\(seconds / 60) min"
+        guard seconds >= 60 else { return "\(seconds)s" }
+        let minutes = Double(seconds) / 60
+        return minutes == minutes.rounded()
+            ? "\(Int(minutes)) min"
+            : String(format: "%.1f min", minutes)
     }
 
     // MARK: - Layout helpers (match the settings idiom)

@@ -1006,10 +1006,11 @@ struct RecordingQualityCard: View {
         let spo2Count = samples.filter { $0.kind == MeasurementKind.spo2.rawValue && $0.value > 0 }.count
         let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) } ?? 0
         let streamed = session.vitalsModeRaw == "stream"
+        let prefs = WorkoutPrefsStore.shared.settings
         // Healthy coverage baseline: a stream should land a sample at least every ~10s; spot polls
-        // aim for one per minute.
-        let expectedHR = max(1, duration / (streamed ? 10 : 60))
-        let expectedSpO2 = max(1, duration / 300)
+        // aim for one per configured HR interval; SpO₂ per its configured interval.
+        let expectedHR = max(1, duration / (streamed ? 10 : max(10, prefs.hrPollIntervalSeconds)))
+        let expectedSpO2 = max(1, duration / max(60, prefs.spo2PollIntervalSeconds))
         let pollFailures = session.hrPollFailureCount + session.spo2PollFailureCount
 
         var rows: [(String, String, Color)] = [

@@ -47,6 +47,7 @@ final class WorkoutVitalsPlanTests: XCTestCase {
         let plan = WorkoutVitalsPlan.plan(for: colmiCaps, prefs: off)
         XCTAssertEqual(plan.hrMode, .off)
         XCTAssertEqual(plan.spo2Mode, .off)
+        XCTAssertFalse(plan.bumpRingInterval, "no ring-log bump when HR capture is off")
     }
 
     func testSpO2OffWhenDeviceHasNeitherSpotNorHistory() {
