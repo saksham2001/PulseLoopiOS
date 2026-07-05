@@ -88,7 +88,11 @@ struct WorkoutSettingsView: View {
     }
 
     private func intervalLabel(_ seconds: Int) -> String {
-        seconds < 60 ? "\(seconds)s" : "\(seconds / 60) min"
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds % 60 == 0 { return "\(seconds / 60) min" }
+        // Non-whole minutes (e.g. 90s) as a decimal so it reads "1.5 min" and doesn't collide
+        // with 60 → "1 min" (the old `seconds / 60` integer division rendered both as "1 min").
+        return String(format: "%.1f min", Double(seconds) / 60)
     }
 
     // MARK: - Layout helpers (match the settings idiom)
