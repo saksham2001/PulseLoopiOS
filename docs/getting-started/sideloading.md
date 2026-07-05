@@ -1,6 +1,6 @@
 ---
 title: Sideloading the IPA
-description: Install the pre-built PulseLoop IPA on your iPhone without Xcode — via Sideloadly, AltStore/SideStore, Feather/ESign, TrollStore, or a paid Developer account.
+description: Install the pre-built PulseLoop IPA on your iPhone without Xcode. Sign it yourself via Sideloadly, AltStore/SideStore, Feather/ESign, TrollStore, or a paid Developer account.
 ---
 
 # Sideloading PulseLoop on iOS
@@ -12,16 +12,16 @@ ships a pre-built, **unsigned** IPA:
 PulseLoop-<tag>.ipa      e.g. PulseLoop-v1.0.0.ipa
 ```
 
-Nothing is signed in CI — there are no Apple certificates or secrets in the repo.
-You sign the IPA yourself with your own Apple ID using one of the tools below.
-This lets you run PulseLoop on a real iPhone without building it in Xcode.
+Nothing is signed in CI, so there are no Apple certificates or secrets in the
+repo. You sign the IPA yourself with your own Apple ID using one of the tools
+below. This lets you run PulseLoop on a real iPhone without building it in Xcode.
 
 !!! info "Prefer a hands-off install?"
-    The **[TestFlight beta](ios.md#testflight-beta)** needs no
-    signing, no computer, and no 7-day refresh. Sideloading is for people who
-    want the raw IPA or aren't on the TestFlight list yet.
+    The **[TestFlight beta](ios.md#testflight-beta)** needs no signing, no
+    computer, and no 7-day refresh. Sideloading is for people who want the raw
+    IPA or aren't on the TestFlight list yet.
 
-## :material-alert: Read this first — the App Group caveat
+## :material-alert: Read this first: the App Group caveat
 
 PulseLoop's only special entitlement is an **App Group**
 (`group.xyz.sakshambhutani.pulseloop2`). It's the shared container that the
@@ -33,12 +33,12 @@ entitlement at sign time. The result:
 
 | Feature | Free Apple ID sideload | Paid Developer account |
 | --- | --- | --- |
-| Core app — ring sync, vitals, sleep, coach, workouts, GPS | :material-check: Works | :material-check: Works |
+| Core app: ring sync, vitals, sleep, coach, workouts, GPS | :material-check: Works | :material-check: Works |
 | Home Screen widgets (Activity, Vitals) | :material-close: Broken | :material-check: Works |
 | Live Activity / Dynamic Island | :material-close: Broken | :material-check: Works |
 
-The app does **not** crash without the App Group — those features degrade
-gracefully. Everything else runs normally.
+The app does **not** crash without the App Group. Those features degrade
+gracefully and everything else runs normally.
 
 !!! tip "Want the widgets? Use a paid ($99/yr) Apple Developer account"
     Only a paid account provisions the App Group. Sign with a paid cert (via
@@ -65,9 +65,9 @@ gracefully. Everything else runs normally.
 | **Paid Dev + Xcode** | Yes | 1 year | Higher | Widgets + longest signing |
 
 !!! note "Free Apple ID limits (apply to Sideloadly, AltStore, SideStore)"
-    - **7-day expiry** — the app stops opening after a week until you re-sign.
+    - **7-day expiry**: the app stops opening after a week until you re-sign.
     - **Max 3 sideloaded apps** at once per Apple ID.
-    - **No App Groups** → no PulseLoop widgets / Live Activity (see above).
+    - **No App Groups**, so no PulseLoop widgets / Live Activity (see above).
     - Use a **secondary/burner Apple ID**, not your main one, to sign.
 
 ---
@@ -103,7 +103,7 @@ AltStore installs a companion app on the phone and re-signs automatically while
    Device Management**).
 4. Open **AltStore → My Apps → +**, pick `PulseLoop-<tag>.ipa`, sign in with a
    burner Apple ID.
-5. Keep AltServer running on the same Wi-Fi — AltStore refreshes the 7-day
+5. Keep AltServer running on the same Wi-Fi, and AltStore refreshes the 7-day
    signature in the background so the app doesn't lapse.
 
 !!! tip "EU users: AltStore PAL"
@@ -111,13 +111,13 @@ AltStore installs a companion app on the phone and re-signs automatically while
     doesn't need AltServer or the 7-day refresh. You still sideload the IPA
     manually as a source/app.
 
-## :material-cellphone-cog: SideStore (no computer after setup) — recommended for free IDs
+## :material-cellphone-cog: SideStore (no computer after setup, recommended for free IDs)
 
-An AltStore fork that refreshes **on-device** — no computer needed after the
-one-time setup, and no DNS tricks to avoid revokes. On-device refresh runs
-through **LocalDevVPN** (the SideStore team's local VPN, installed from the App
-Store). The **7-day** free-ID certificate is refreshed by tapping the counter in
-SideStore; after a refresh you can stay offline until it lapses.
+An AltStore fork that refreshes **on-device**, so no computer is needed after the
+one-time setup, and no DNS tricks are needed to avoid revokes. On-device refresh
+runs through **LocalDevVPN** (the SideStore team's local VPN, installed from the
+App Store). The **7-day** free-ID certificate is refreshed by tapping the counter
+in SideStore; after a refresh you can stay offline until it lapses.
 
 !!! info "Follow the official guide"
     Steps below match the SideStore docs. If anything drifts, the source of
@@ -130,17 +130,17 @@ SideStore; after a refresh you can stay offline until it lapses.
   connection (mobile data is not suitable).
 - A burner Apple Account (not your primary Apple ID).
 - A computer (Windows 8+, macOS High Sierra+, up-to-date Linux, or an
-  un-enrolled Chromebook) — needed **only** for the initial install.
+  un-enrolled Chromebook), needed **only** for the initial install.
 
-**On the device — install LocalDevVPN:**
+**On the device, install LocalDevVPN:**
 
 Install **[LocalDevVPN](https://apps.apple.com/us/app/localdevvpn/id6755608044)**
-from the **App Store** (or the **AltStore PAL** source),
-open it, and tap **Connect** — tap **Allow** and enter your passcode if prompted
-for "Allow VPN Configurations". This VPN must be **on** whenever you install,
-update, or refresh apps in SideStore.
+from the **App Store** (or the **AltStore PAL** source), open it, and tap
+**Connect**. Tap **Allow** and enter your passcode if prompted for "Allow VPN
+Configurations". This VPN must be **on** whenever you install, update, or refresh
+apps in SideStore.
 
-**On the computer — install iloader (per OS):**
+**On the computer, install iloader (per OS):**
 
 === "macOS"
 
@@ -148,14 +148,14 @@ update, or refresh apps in SideStore.
 
 === "Windows"
 
-    1. Install **iTunes** — from the Microsoft Store or directly from Apple.
+    1. Install **iTunes** from the Microsoft Store or directly from Apple.
     2. Download the **iloader** installer as an **MSI** (recommended) or **EXE**.
     3. Run the installer.
 
 === "Linux"
 
-    1. Install **usbmuxd** (often preinstalled; else use your package manager —
-       search "install usbmuxd _\<distro\>_").
+    1. Install **usbmuxd** (often preinstalled; else use your package manager,
+       e.g. search "install usbmuxd _\<distro\>_").
     2. Install **iloader** for your distro: **DEB** (Debian/Ubuntu), **RPM**
        (Fedora/openSUSE), or **AppImage** (others). ARM builds exist for all
        three.
@@ -173,8 +173,8 @@ update, or refresh apps in SideStore.
        ([Google's guide](https://support.google.com/chromebook/answer/9145439)).
     2. Update: `sudo apt-get update && sudo apt-get dist-upgrade`
     3. Install deps: `sudo apt-get install usbmuxd fuse curl`
-    4. Download the **iloader AppImage** for your arch (`uname -m` →
-       `x86_64` = amd64 build, `aarch64` = aarch64 build) from the
+    4. Download the **iloader AppImage** for your arch (`uname -m` gives
+       `x86_64` for the amd64 build, `aarch64` for the aarch64 build) from the
        [iloader releases](https://github.com/nab138/iloader/releases/latest).
     5. `sudo systemctl restart usbmuxd`, then connect the device and **quickly**
        enable it under **Settings → About ChromeOS → Developers → Linux
@@ -198,12 +198,12 @@ update, or refresh apps in SideStore.
     - **iOS 18+:** the trust prompt is **"Allow & Restart"** and asks for your
       passcode.
 
-4. Ensure **LocalDevVPN** is **connected** (from the earlier step) — it must be
+4. Ensure **LocalDevVPN** is **connected** (from the earlier step); it must be
    on to install, update, or refresh.
 5. Open **SideStore**, sign in with the **same** Apple Account used in iloader.
    In **My Apps**, tap the **"7 DAYS"** counter to refresh SideStore itself and
    confirm any certificate prompt.
-6. Disconnect the computer — you won't need it again unless you update SideStore
+6. Disconnect the computer. You won't need it again unless you update SideStore
    or replace the pairing file.
 
 **Install PulseLoop:**
@@ -213,33 +213,34 @@ update, or refresh apps in SideStore.
    It signs and installs on-device.
 
 **Stay refreshed (or the app lapses at day 7):** tap the day counter in **My
-Apps** before it hits zero, or automate it — a Shortcuts automation that
+Apps** before it hits zero, or automate it with a Shortcuts automation that
 *connects LocalDevVPN → waits a few seconds → refreshes SideStore apps →
 disconnects LocalDevVPN*, scheduled a few nights a week.
 
 !!! note "If it lapses, don't delete PulseLoop"
-    An expired app stops opening but is **not** revoked — your data is intact.
+    An expired app stops opening but is **not** revoked, so your data is intact.
     Reconnect and refresh in SideStore (re-run iloader only if SideStore itself
     lapsed). No need to redo the whole setup. Pairing files can expire after an
-    iOS update or reset — regenerate via iloader / the SideStore advanced guide
+    iOS update or reset; regenerate via iloader / the SideStore advanced guide
     if refresh starts failing.
 
-### LiveContainer — beat the 3-app limit (free IDs)
+### LiveContainer: beat the 3-app limit (free IDs)
 
-A free Apple ID caps you at **3 sideloaded apps**. **[LiveContainer](https://github.com/khcrysalis/LiveContainer)**
+A free Apple ID caps you at **3 sideloaded apps**. **[LiveContainer](https://github.com/LiveContainer/LiveContainer)**
 is one app that virtualizes and runs *other* apps inside it, so dozens of apps
-cost just **one** of your three slots — and the inner apps don't need individual
+cost just **one** of your three slots, and the inner apps don't need individual
 signing or refreshing (you only refresh LiveContainer in SideStore).
 
-!!! danger "PulseLoop's widgets do NOT work inside LiveContainer"
-    LiveContainer runs apps in a shared virtualized sandbox and **can't host app
-    extensions** — that includes PulseLoop's Home Screen widgets and the Live
-    Activity / Dynamic Island. The core app (ring sync, vitals, sleep, coach,
-    workouts, GPS) runs fine, but if you want the widgets, install PulseLoop
-    **directly** via SideStore (using a normal app slot), not inside
-    LiveContainer — and remember you still need a **paid** cert for the App Group.
-    LiveContainer is best when you're bundling many *other* modded apps and just
-    want PulseLoop's core app along for the ride.
+!!! warning "PulseLoop's widgets are not expected to work inside LiveContainer"
+    LiveContainer runs apps in a shared virtualized sandbox and generally can't
+    host app extensions, so PulseLoop's Home Screen widgets and the Live Activity
+    / Dynamic Island are **not expected to work** inside it (we haven't tested
+    this specific case). The core app (ring sync, vitals, sleep, coach, workouts,
+    GPS) should run fine. If you want the widgets, install PulseLoop **directly**
+    via SideStore (using a normal app slot) rather than inside LiveContainer, and
+    remember you still need a **paid** cert for the App Group. LiveContainer is
+    best when you're bundling many *other* modded apps and just want PulseLoop's
+    core app along for the ride.
 
 To use it: install `LiveContainer.ipa` through SideStore, complete its
 **JIT-Less Mode** setup (LiveContainer Settings → *Import Certificate from
@@ -259,17 +260,19 @@ Group, so the widgets and Live Activity work.
 4. Trust the profile under **Settings → General → VPN & Device Management**.
 
 !!! danger "Only import certificates you trust"
-    Never load a certificate or provisioning profile from an untrusted source —
-    a malicious cert can sign anything onto your device. Use your own paid
+    Never load a certificate or provisioning profile from an untrusted source. A
+    malicious cert can sign anything onto your device. Use your own paid
     Developer cert whenever possible.
 
 ## :material-shield-check: TrollStore (permanent, version-limited)
 
-TrollStore signs apps **permanently** — no Apple ID, no 7-day expiry, no app
+TrollStore signs apps **permanently**: no Apple ID, no 7-day expiry, no app
 limit. The catch: it only installs on iOS versions with a compatible exploit
-(broadly **iOS 14.0–16.6.1**, and specific 17.0 builds; **not** newer releases).
+(broadly **iOS 14.0 to 16.6.1**, and specific 17.0 builds; **not** newer
+releases).
 
-1. Check compatibility and install TrollStore via **[trollstore.app](https://trollstore.app/)**
+1. Check compatibility and install TrollStore via the
+   **[ios.cfw.guide install guide](https://ios.cfw.guide/installing-trollstore/)**
    or the official [TrollStore repo](https://github.com/opa334/TrollStore).
 2. Open `PulseLoop-<tag>.ipa` in TrollStore and install.
 
@@ -284,7 +287,7 @@ The most reliable path, and the only free-of-refresh way to get the **widgets
 and Live Activity**. Requires a paid [Apple Developer](https://developer.apple.com/programs/)
 account ($99/yr).
 
-If you have Xcode, prefer **[Build from source](ios.md#build-from-source-xcode)** —
+If you have Xcode, prefer **[Build from source](ios.md#build-from-source-xcode)**:
 set your Team on both the `PulseLoop` and `PulseLoopLiveActivity` targets and it
 provisions the App Group for you.
 
@@ -292,7 +295,7 @@ To sign the pre-built IPA instead, use Sideloadly / Feather / ESign with your
 **paid** Apple ID or Developer certificate. Paid signing gives you:
 
 - **1-year** certificate instead of 7 days.
-- The **App Group** entitlement → working widgets + Live Activity.
+- The **App Group** entitlement, so the widgets + Live Activity work.
 - No 3-app limit.
 
 ## :material-lifebuoy: Troubleshooting
@@ -302,12 +305,12 @@ To sign the pre-built IPA instead, use Sideloadly / Feather / ESign with your
     profile, and choose **Trust**. Needs an internet connection the first time.
 
 ??? question "App opens then immediately closes"
-    The signature likely expired (free 7-day limit) — re-sign with the same
+    The signature likely expired (free 7-day limit), so re-sign with the same
     tool. If it's a fresh install, the certificate/profile may be invalid.
 
 ??? question "Widgets or Live Activity don't work"
-    Expected on a **free** Apple ID — the App Group is stripped. Re-sign with a
-    **paid** Developer account/cert to enable them. See
+    Expected on a **free** Apple ID, since the App Group is stripped. Re-sign
+    with a **paid** Developer account/cert to enable them. See
     [the caveat](#read-this-first-the-app-group-caveat).
 
 ??? question "\"Maximum number of apps installed\""
@@ -321,12 +324,12 @@ To sign the pre-built IPA instead, use Sideloadly / Feather / ESign with your
 ## :material-scale-balance: A note on sideloading
 
 Sideloading with your own Apple ID is a supported Apple developer workflow.
-Third-party tools and certificates are provided by their respective projects —
+Third-party tools and certificates are provided by their respective projects, so
 review and trust them yourself. Never sign in with your primary Apple ID on an
 untrusted tool; use a secondary account.
 
 ## Next steps
 
-- [Getting Started on iOS](ios.md) — TestFlight and building from source.
-- [Supported hardware](../hardware/index.md) — pick a compatible ring.
-- [Privacy](../project/privacy.md) — where your data lives (it stays on-device).
+- [Getting Started on iOS](ios.md) covers TestFlight and building from source.
+- [Supported hardware](../hardware/index.md) helps you pick a compatible ring.
+- [Privacy](../project/privacy.md) explains where your data lives (on-device).

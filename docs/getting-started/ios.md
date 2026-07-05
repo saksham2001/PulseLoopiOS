@@ -21,8 +21,8 @@ The public TestFlight beta is live. **[Sign up here](https://docs.google.com/for
 to request an invite, or ask on the [Discord](https://discord.gg/t9y85ebaKD).
 
 !!! tip "Prefer the raw IPA?"
-    Every release ships a pre-built IPA you can sign with your own Apple ID —
-    see **[Sideloading the IPA](sideloading.md)**.
+    Every release ships a pre-built IPA you can sign with your own Apple ID.
+    See **[Sideloading the IPA](sideloading.md)**.
 
 !!! note "`56ff` ring not receiving any data?"
     Some users have reported receiving no data when setting the `56ff` ring up
