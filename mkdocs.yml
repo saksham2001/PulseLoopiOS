@@ -104,6 +104,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - iOS: getting-started/ios.md
+      - Sideloading the IPA: getting-started/sideloading.md
       - Android: getting-started/android.md
   - Hardware:
       - Overview: hardware/index.md

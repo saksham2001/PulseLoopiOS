@@ -19,7 +19,10 @@ upcoming public TestFlight beta, or building from source in Xcode.
 
 The public TestFlight beta is live. **[Sign up here](https://docs.google.com/forms/d/e/1FAIpQLSfvrwie82qep-kJs8rmA0qhWBlWN4mjiwwG-86BlTR2974SsQ/viewform?usp=sharing&ouid=106402737727550537169)**
 to request an invite, or ask on the [Discord](https://discord.gg/t9y85ebaKD).
-An IPA release is also planned.
+
+!!! tip "Prefer the raw IPA?"
+    Every release ships a pre-built IPA you can sign with your own Apple ID.
+    See **[Sideloading the IPA](sideloading.md)**.
 
 !!! note "`56ff` ring not receiving any data?"
     Some users have reported receiving no data when setting the `56ff` ring up
