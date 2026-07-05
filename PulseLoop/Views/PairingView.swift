@@ -72,6 +72,12 @@ struct PairingView: View {
         return matches.isEmpty ? ble.discovered : matches
     }
 
+    private var canUseBluetoothUI: Bool { ble.isBluetoothReady || forcePairingUIForTesting }
+    private var showsActionFooter: Bool {
+        guard ble.state != .connected else { return false }
+        return isLooking ? onSkip != nil : (canUseBluetoothUI || onSkip != nil)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -88,7 +94,7 @@ struct PairingView: View {
                     connectedCard
                 } else {
                     carousel
-                    actionArea
+                    if isLooking { scanningArea }
                 }
 
                 if let error = ble.lastError,
@@ -101,18 +107,6 @@ struct PairingView: View {
                         .frame(maxWidth: .infinity)
                 }
 
-                // Explore-without-a-ring path, available in every pre-connection state (carousel,
-                // scanning, bluetooth-off) so onboarding is never a dead end. Sits right under the
-                // Connect-ring button in the carousel state.
-                if let onSkip, ble.state != .connected {
-                    VStack(spacing: 8) {
-                        SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
-                        Text("You can pair a ring later from Settings.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(PulseColors.textMuted)
-                            .multilineTextAlignment(.center)
-                    }
-                }
             }
             .padding(24)
             .containerRelativeFrame(.horizontal) // size the column to the screen exactly (not to its
@@ -121,6 +115,11 @@ struct PairingView: View {
         .scrollBounceBehavior(.basedOnSize) // static when it fits; scrolls only if content overflows
                                             // (small devices / scanning list) so nothing clips
         .background(PulseColors.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showsActionFooter {
+                OnboardingActionFooter { pairingFooterContent }
+            }
+        }
         .onChange(of: ble.state) { _, state in
             if state == .connected, !didFireConnected {
                 didFireConnected = true
@@ -238,21 +237,33 @@ struct PairingView: View {
     // MARK: - Action area (scan + discovered rings)
 
     @ViewBuilder
-    private var actionArea: some View {
-        if !isLooking {
-            PrimaryButton(title: "Connect ring", systemImage: "dot.radiowaves.left.and.right") { // §4 Fix #3
-                isLooking = true
-                successHaptic.prepare()
-                ble.startScanning()
-            }
-            if ble.hasLastKnownRing && ble.state != .reconnecting {
-                SecondaryButton(title: "Reconnect last ring", systemImage: "arrow.clockwise") {
-                    ble.connectLastKnown()
+    private var pairingFooterContent: some View {
+        VStack(spacing: 10) {
+            if !isLooking, canUseBluetoothUI {
+                PrimaryButton(title: "Connect ring", systemImage: "dot.radiowaves.left.and.right") {
+                    isLooking = true
+                    successHaptic.prepare()
+                    ble.startScanning()
+                }
+                if ble.hasLastKnownRing && ble.state != .reconnecting {
+                    SecondaryButton(title: "Reconnect last ring", systemImage: "arrow.clockwise") {
+                        ble.connectLastKnown()
+                    }
                 }
             }
-        } else {
-            // §4 scanning state wrapped in card
-            VStack(spacing: 12) {
+
+            if let onSkip {
+                SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
+                Text("You can pair a ring later from Settings.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private var scanningArea: some View {
+        VStack(spacing: 12) {
                 HStack(spacing: 8) {
                     if ble.state == .connecting || ble.state == .reconnecting {
                         ProgressView()
@@ -289,15 +300,14 @@ struct PairingView: View {
                     isLooking = false
                     ble.stopScanning()
                 }
-            }
-            .padding(16) // §4 card wrapper
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(PulseColors.borderSubtle, lineWidth: 1)
-            )
         }
+        .padding(16) // §4 card wrapper
+        .background(PulseColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(PulseColors.borderSubtle, lineWidth: 1)
+        )
     }
 
     private func ringRow(_ ring: RingBLEClient.DiscoveredRing) -> some View {

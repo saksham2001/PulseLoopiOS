@@ -38,10 +38,11 @@ struct ProfileEditorView: View {
 
                     Divider().overlay(PulseColors.borderSubtle)
 
-                    VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
                         Text("Sex")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(PulseColors.textPrimary)
+                        Spacer(minLength: 8)
                         Picker("Sex", selection: $draft.sex) {
                             Text("Not set").tag(String?.none)
                             Text("Female").tag(String?.some("female"))
@@ -49,6 +50,7 @@ struct ProfileEditorView: View {
                             Text("Other").tag(String?.some("other"))
                         }
                         .pickerStyle(.segmented)
+                        .frame(maxWidth: 300)
                     }
                     .padding(.vertical, 10)
                 }

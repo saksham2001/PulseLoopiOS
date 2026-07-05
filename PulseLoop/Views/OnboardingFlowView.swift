@@ -137,7 +137,11 @@ private struct OnboardingTopBar: View {
     }
 
     private func topBarSlot<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content().frame(width: 60, height: 44, alignment: .leading)
+        ZStack(alignment: .leading) {
+            Color.clear
+            content()
+        }
+        .frame(width: 60, height: 44)
     }
 }
 
@@ -146,41 +150,56 @@ struct OnboardingWelcomeView: View {
     let exploreWithoutRing: () -> Void
 
     private let features = [
-        ("waveform.path.ecg", "Ring data", PulseColors.heartRate),
-        ("figure.walk", "Activity & sleep", PulseColors.steps),
-        ("sparkles", "AI coach", PulseColors.accent),
+        ("dollarsign.circle.fill", "No subscription", "Own your ring data", PulseColors.success),
+        ("lock.shield.fill", "Privacy first", "Data stays on device", PulseColors.info),
+        ("sparkles", "AI health coach", "Learns your baseline", PulseColors.accent),
+        ("waveform.path.ecg", "See your vitals", "HR, SpO₂, HRV & stress", PulseColors.heartRate),
+        ("moon.stars.fill", "Sleep tracking", "Stages and trends", PulseColors.sleep),
+        ("figure.run", "Activity recording", "Live workout tracking", PulseColors.steps),
+    ]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12),
     ]
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 22) {
+            VStack(spacing: 18) {
                 Image("pulseloop-logo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 132, height: 132)
-                    .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                    .shadow(color: PulseColors.accent.opacity(0.25), radius: 24)
+                    .frame(width: 92, height: 92)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .shadow(color: PulseColors.accent.opacity(0.22), radius: 18)
                     .accessibilityHidden(true)
 
                 CompactOnboardingHeader(
-                    title: "Set up PulseLoop",
-                    subtitle: "Connect your ring, personalize your profile, and set daily goals."
+                    title: "Set up PulseLoop"
                 )
 
-                HStack(spacing: 10) {
+                LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(features, id: \.1) { feature in
-                        VStack(spacing: 9) {
+                        VStack(spacing: 8) {
                             Image(systemName: feature.0)
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(feature.2)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(feature.3)
+                                .frame(width: 38, height: 38)
+                                .background(feature.3.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
                             Text(feature.1)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(PulseColors.textSecondary)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(PulseColors.textPrimary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                            Text(feature.2)
+                                .font(.system(size: 13))
+                                .foregroundStyle(PulseColors.textMuted)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 82)
+                        .frame(height: 118, alignment: .center)
+                        .padding(.horizontal, 13)
                         .background(PulseColors.card)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .overlay(
@@ -190,6 +209,16 @@ struct OnboardingWelcomeView: View {
                     }
                 }
 
+            }
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 24)
+            .padding(.top, 10)
+            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter {
                 VStack(spacing: 10) {
                     PrimaryButton(title: "Get started", systemImage: "arrow.right", action: getStarted)
                     SecondaryButton(
@@ -199,13 +228,7 @@ struct OnboardingWelcomeView: View {
                     )
                 }
             }
-            .frame(maxWidth: 560)
-            .padding(.horizontal, 24)
-            .padding(.top, 18)
-            .padding(.bottom, 28)
-            .frame(maxWidth: .infinity)
         }
-        .scrollBounceBehavior(.basedOnSize)
     }
 }
 
@@ -226,7 +249,6 @@ struct OnboardingProfileView: View {
                     subtitle: "Used to tune calories, activity goals, and summaries."
                 )
                 ProfileEditorView(draft: $draft)
-                PrimaryButton(title: "Continue", systemImage: "arrow.right", action: saveAndContinue)
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 20)
@@ -235,6 +257,11 @@ struct OnboardingProfileView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .onAppear(perform: loadIfNeeded)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter {
+                PrimaryButton(title: "Continue", systemImage: "arrow.right", action: saveAndContinue)
+            }
+        }
     }
 
     private func loadIfNeeded() {
@@ -277,7 +304,6 @@ struct OnboardingGoalsView: View {
                     subtitle: "Start with recommended targets. You can change these anytime."
                 )
                 GoalEditorView(draft: $draft, units: units, includeWeeklyWorkouts: false)
-                PrimaryButton(title: "Save goals", systemImage: "checkmark", action: saveAndContinue)
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 20)
@@ -285,6 +311,11 @@ struct OnboardingGoalsView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear(perform: loadIfNeeded)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter {
+                PrimaryButton(title: "Save goals", systemImage: "checkmark", action: saveAndContinue)
+            }
+        }
     }
 
     private func loadIfNeeded() {
@@ -376,7 +407,6 @@ struct OnboardingBaselineView: View {
                         .stroke(PulseColors.borderSubtle, lineWidth: 1)
                 )
 
-                PrimaryButton(title: "Go to app", systemImage: "arrow.right", action: finish)
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 24)
@@ -385,6 +415,11 @@ struct OnboardingBaselineView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter {
+                PrimaryButton(title: "Go to app", systemImage: "arrow.right", action: finish)
+            }
+        }
     }
 }
 
@@ -399,7 +434,12 @@ struct OnboardingPairView: View {
 
 private struct CompactOnboardingHeader: View {
     let title: String
-    let subtitle: String
+    let subtitle: String?
+
+    init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -407,12 +447,33 @@ private struct CompactOnboardingHeader: View {
                 .font(.system(size: 30, weight: .semibold, design: .rounded))
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.center)
-            Text(subtitle)
-                .font(.system(size: 15))
-                .foregroundStyle(PulseColors.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 15))
+                    .foregroundStyle(PulseColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+            }
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+struct OnboardingActionFooter<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(PulseColors.borderSubtle)
+                    .frame(height: 1)
+            }
     }
 }
