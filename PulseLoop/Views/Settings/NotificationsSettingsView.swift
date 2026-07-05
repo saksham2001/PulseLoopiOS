@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 
-/// Notifications detail screen. Hosts the daily Coach check-in controls (enable, morning/evening
+/// Coach Check-Ins detail screen. Hosts the daily Coach check-in controls (enable, morning/evening
 /// windows, test send). These depend on the AI Coach being enabled, so when it's off the controls are
 /// shown disabled with a hint to turn the Coach on.
 struct NotificationsSettingsView: View {
@@ -32,7 +32,7 @@ struct NotificationsSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Notifications")
+        .navigationTitle("Coach Check-Ins")
     }
 
     @ViewBuilder private var notificationsControls: some View {
