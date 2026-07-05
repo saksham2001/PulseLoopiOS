@@ -10,43 +10,51 @@ import SwiftUI
 struct WearableModel: Identifiable {
     let id: String
     let displayName: String
+    /// Marketing brand, used to group models under the pairing screen's brand tabs.
+    let brand: String
     let family: RingDeviceType
     let tint: Color
     let blurb: String
+    /// Asset-catalog image name for this ring's product art. When nil, `RingArtView` falls back to
+    /// the stylized vector torus. Set this per model once real ring images are added to the catalog.
+    var imageName: String? = nil
 }
 
 extension WearableModel {
+    // "jring" is intentionally lowercase — that's how the brand styles its name (kept as-is in the tab).
     static let jring = WearableModel(
-        id: "jring", displayName: "jring", family: .jring,
-        tint: PulseColors.accent, blurb: "Heart rate · SpO₂ · Sleep"
+        id: "jring", displayName: "jring", brand: "jring", family: .jring,
+        tint: PulseColors.accent, blurb: "Heart rate · SpO₂ · Sleep", imageName: "jring"
     )
 
     // Colmi line — all share the Colmi protocol/driver (family .colmiR02).
-    static let colmiR02 = colmi("colmi-r02", "Colmi R02")
-    static let colmiR03 = colmi("colmi-r03", "Colmi R03")
-    static let colmiR06 = colmi("colmi-r06", "Colmi R06")
-    static let colmiR07 = colmi("colmi-r07", "Colmi R07")
-    static let colmiR09 = colmi("colmi-r09", "Colmi R09")
-    static let colmiR10 = colmi("colmi-r10", "Colmi R10")
-    static let colmiR12 = colmi("colmi-r12", "Colmi R12")
+    static let colmiR02 = colmiFamily("colmi-r02", "Colmi R02", brand: "Colmi")
+    static let colmiR03 = colmiFamily("colmi-r03", "Colmi R03", brand: "Colmi")
+    static let colmiR06 = colmiFamily("colmi-r06", "Colmi R06", brand: "Colmi")
+    static let colmiR07 = colmiFamily("colmi-r07", "Colmi R07", brand: "Colmi")
+    static let colmiR09 = colmiFamily("colmi-r09", "Colmi R09", brand: "Colmi")
+    static let colmiR10 = colmiFamily("colmi-r10", "Colmi R10", brand: "Colmi")
+    static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi")
 
     // Yawell-branded variants of the same hardware.
-    static let yawellR05 = colmi("yawell-r05", "Yawell R05")
-    static let yawellR10 = colmi("yawell-r10", "Yawell R10")
-    static let yawellR11 = colmi("yawell-r11", "Yawell R11")
-    static let h59 = colmi("h59", "H59 Ring")
+    static let yawellR05 = colmiFamily("yawell-r05", "Yawell R05", brand: "Yawell")
+    static let yawellR10 = colmiFamily("yawell-r10", "Yawell R10", brand: "Yawell")
+    static let yawellR11 = colmiFamily("yawell-r11", "Yawell R11", brand: "Yawell")
+    static let h59 = colmiFamily("h59", "H59 Ring", brand: "H59")
 
-    private static func colmi(_ id: String, _ name: String) -> WearableModel {
+    private static func colmiFamily(_ id: String, _ name: String, brand: String) -> WearableModel {
+        // Asset-catalog image name matches the model id (see PulseLoop/Assets.xcassets).
         WearableModel(
-            id: id, displayName: name, family: .colmiR02,
-            tint: PulseColors.hrv, blurb: "HR · SpO₂ · HRV · Stress · Temp · Sleep"
+            id: id, displayName: name, brand: brand, family: .colmiR02,
+            tint: PulseColors.hrv, blurb: "HR · SpO₂ · HRV · Stress · Temp · Sleep", imageName: id
         )
     }
 
-    /// Carousel order: the most common cheap models first.
+    /// Every supported model. The pairing screen groups these by `brand` and sorts each tab
+    /// alphabetically, so this array's order is not user-visible.
     static let catalog: [WearableModel] = [
-        colmiR02, colmiR06, colmiR10, yawellR11, jring,
-        colmiR03, colmiR07, colmiR09, colmiR12,
-        yawellR05, yawellR10, h59,
+        jring,
+        colmiR02, colmiR03, colmiR06, colmiR07, colmiR09, colmiR10, colmiR12,
+        yawellR05, yawellR10, yawellR11, h59,
     ]
 }
