@@ -52,7 +52,10 @@ struct WorkoutMapView: View {
             .overlay(alignment: .topTrailing) { if follow { followControls } }
             .onAppear { recenter() }
             .onChange(of: coordinates.count) { _, _ in
-                if follow && following { reframe() }
+                // Live (follow) mode tracks growth while auto-follow is engaged; static (summary)
+                // mode always refits — its points can arrive after first render, and without this
+                // the camera would stay frozen on the initial start/stop-only region.
+                if follow ? following : true { reframe() }
             }
         }
     }

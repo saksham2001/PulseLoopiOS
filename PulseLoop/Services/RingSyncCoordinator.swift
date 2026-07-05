@@ -163,9 +163,11 @@ final class RingSyncCoordinator {
     /// the ring supports. Samples persist via `EventPersistenceSubscriber` and attach to the active
     /// session through `ActivityRecorderService.linkSample`.
     func startWorkoutHeartRate() {
+        // Record the intent even while disconnected: the reconnect handler re-issues the stream
+        // command for any connection made while a workout wants live HR.
+        workoutHRActive = true
         guard client.state == .connected else { return }
         engine?.startHeartRate()
-        workoutHRActive = true
     }
 
     /// Stop the workout's live HR stream and restore the ring's normal background cadence.
@@ -173,6 +175,35 @@ final class RingSyncCoordinator {
         guard workoutHRActive else { return }
         engine?.stopHeartRate()
         workoutHRActive = false
+    }
+
+    /// Re-issue the live HR stream command if a workout stream should be running — used by the
+    /// stream-health check when samples stall and after ring reconnects (a fresh connection builds a
+    /// fresh engine whose stream flag starts off).
+    func restartWorkoutHeartRateIfActive() {
+        guard workoutHRActive, client.state == .connected else { return }
+        engine?.startHeartRate()
+    }
+
+    /// Post-workout reconcile: pull the ring's own HR/SpO2 logs so samples recorded while the phone
+    /// was away or suspended land in the just-finished session (via `linkSample`'s finished-session
+    /// window) and the summary can refresh. No-op while disconnected — the next connect's full
+    /// startup sync covers the same data.
+    func syncWorkoutVitals() {
+        guard client.state == .connected else { return }
+        engine?.syncVitalsHistory()
+        updateSync(stage: "Updating workout…")
+    }
+
+    /// Bump the ring's all-day HR log to its densest cadence for the duration of a workout, so the
+    /// on-ring log can backfill any stream gaps (disconnect, app suspension). The user's configured
+    /// interval is restored by calling `applyMeasurementSettings()` at finish.
+    func applyWorkoutMeasurementInterval() {
+        guard client.state == .connected, let device = DeviceRepository.current(context: context) else { return }
+        var settings = MeasurementConfigRepository.configOrDefault(deviceId: device.id, context: context).asSettings
+        settings.hrEnabled = true
+        settings.hrIntervalMinutes = 5
+        engine?.applyMeasurementSettings(settings)
     }
 
     func querySleep() {
@@ -229,6 +260,9 @@ final class RingSyncCoordinator {
             }
         }
         engine?.stopHeartRate()
+        // A spot read's stop also tears down the realtime stream (Colmi stops both 0x69 and 0x1e);
+        // if a workout stream is supposed to be running, bring it straight back.
+        restartWorkoutHeartRateIfActive()
         hrState = result.map { .done($0) } ?? .failed
         return result
     }
@@ -279,6 +313,9 @@ final class RingSyncCoordinator {
             if let percent { latestSpO2Value = percent }
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
+            // Ring came back mid-workout: the new connection's engine doesn't know a stream was
+            // running, so re-issue the live HR command.
+            restartWorkoutHeartRateIfActive()
         case let .deviceStateChanged(state, _):
             // Any non-connected transition (disconnect / failure) ends an in-flight sync.
             if state != .connected { endSync() }

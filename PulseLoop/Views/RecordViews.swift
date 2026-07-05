@@ -329,12 +329,17 @@ struct RecordLiveView: View {
                 let elapsedSec = elapsed(session: session, now: timeline.date)
                 ScrollView {
                     VStack(spacing: 16) {
-                        VStack(spacing: 6) {
-                            HStack(spacing: 8) {
-                                Image(systemName: ActivityMeta.icon(session.type)).foregroundStyle(PulseColors.accent)
-                                Text("\(paused ? "Paused" : "Recording") \(ActivityMeta.label(session.type))")
-                                    .font(.system(size: 15, weight: .semibold))
+                        VStack(spacing: 8) {
+                            HStack(spacing: 10) {
+                                Image(systemName: ActivityMeta.icon(session.type))
+                                    .font(.system(size: 22, weight: .semibold))
+                                    .foregroundStyle(PulseColors.accent)
+                                Text(ActivityMeta.label(session.type))
+                                    .font(.system(size: 28, weight: .bold))
                                     .foregroundStyle(PulseColors.textPrimary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.6)
+                                RecordingStatusPill(paused: paused)
                             }
                             WorkoutStatusStrip(session: session, ringState: ble.state, gpsAccuracy: latestAccuracy(points))
                         }
@@ -364,21 +369,25 @@ struct RecordLiveView: View {
                                 muted: coordinator.latestHRValue == nil
                             )
                             LiveSensorTile(
-                                value: coordinator.latestSpO2Value.map { "\($0)%" } ?? "—",
+                                value: spo2TileValue().map { "\($0)%" } ?? "—",
                                 unit: nil,
                                 label: "SpO₂",
                                 subtitle: spo2Subtitle(session, now: timeline.date),
                                 pulsing: coordinator.spo2State == .measuring,
                                 tint: PulseColors.spo2,
-                                muted: coordinator.latestSpO2Value == nil
+                                muted: spo2TileValue() == nil
                             )
                             if session.useGps {
-                                LiveStatTile(value: paceLabel(points: points, elapsedSec: elapsedSec, session: session), label: "Pace")
+                                if ActivityMetricSet.set(for: session.type).showsSpeed {
+                                    LiveStatTile(value: speedLabel(points: points, elapsedSec: elapsedSec, session: session), label: "Speed")
+                                } else {
+                                    LiveStatTile(value: paceLabel(points: points, elapsedSec: elapsedSec, session: session), label: "Pace")
+                                }
                             }
                         }
 
                         if showSplits(session) {
-                            SplitStrip(points: points, units: units)
+                            SplitStrip(points: points, units: units, activityType: session.type)
                         }
 
                         if session.useGps {
@@ -396,6 +405,9 @@ struct RecordLiveView: View {
 
                             if gps.isPermissionDenied {
                                 Text("Location access is denied — enable it in Settings to record your route.")
+                                    .font(.caption).foregroundStyle(PulseColors.warning).multilineTextAlignment(.center)
+                            } else if !gps.hasAlwaysAuthorization {
+                                Text("Route will pause when the screen locks — allow “Always” location in Settings for full background tracking.")
                                     .font(.caption).foregroundStyle(PulseColors.warning).multilineTextAlignment(.center)
                             }
                         } else if paused {
@@ -431,17 +443,25 @@ struct RecordLiveView: View {
                         .tint(PulseColors.textSecondary)
                 }
             }
-            .confirmationDialog("Finish workout?", isPresented: $confirmFinish, titleVisibility: .visible) {
-                Button("Finish") { finish(session) }
-                Button("Keep recording", role: .cancel) {}
-            } message: {
-                Text("Your workout will be saved with its time, route, and ring measurements.")
+            .sheet(isPresented: $confirmFinish) {
+                WorkoutEndSheet(
+                    title: "Finish workout?",
+                    message: "Your workout will be saved with its time, route, and ring measurements.",
+                    stats: endSheetStats(session: session, points: points),
+                    confirmTitle: "Finish workout",
+                    confirmIcon: "flag.checkered",
+                    destructive: false
+                ) { finish(session) }
             }
-            .confirmationDialog("Discard workout?", isPresented: $confirmDiscard, titleVisibility: .visible) {
-                Button("Discard", role: .destructive) { discard(session) }
-                Button("Keep recording", role: .cancel) {}
-            } message: {
-                Text("This recording will be deleted and won't count toward your activity.")
+            .sheet(isPresented: $confirmDiscard) {
+                WorkoutEndSheet(
+                    title: "Discard workout?",
+                    message: "This recording will be deleted and won't count toward your activity.",
+                    stats: endSheetStats(session: session, points: points),
+                    confirmTitle: "Discard workout",
+                    confirmIcon: "trash",
+                    destructive: true
+                ) { discard(session) }
             }
         } else {
             EmptyStateView(title: "No active workout", body: "Start a workout from Activity.")
@@ -464,6 +484,13 @@ struct RecordLiveView: View {
     // MARK: freshness copy
 
     private func hrSubtitle(_ session: ActivitySession) -> String {
+        // Stream mode: samples land continuously — say "live" while they're fresh, then fall back to
+        // the staleness copy (ring away / stream stalled).
+        if liveWorkout.activePlan?.hrMode == .stream,
+           let last = lastSampleTime(session.id, kind: "hr"),
+           Date().timeIntervalSince(last) < 15 {
+            return "live"
+        }
         // Keep the last value on screen and never flash an error: while a reading is in progress show
         // "measuring…", otherwise the time since the last sample. Only "waiting…" before the first one.
         if coordinator.hrState == .measuring { return "measuring…" }
@@ -473,9 +500,30 @@ struct RecordLiveView: View {
 
     private func spo2Subtitle(_ session: ActivitySession, now: Date) -> String {
         if coordinator.spo2State == .measuring { return "reading…" }
-        guard let last = lastSampleTime(session.id, kind: "spo2") else { return "every 5 min" }
-        let remaining = max(0, 300 - now.timeIntervalSince(last))
+        switch liveWorkout.activePlan?.spo2Mode {
+        case .ringLog:
+            // No instant SpO2 on this ring — the tile shows the newest all-day log value.
+            if let ts = MetricsRepository.latestMeasurement(kind: .spo2, context: modelContext)?.timestamp {
+                return "ring log · \(agoLabel(ts))"
+            }
+            return "from ring log"
+        case .off:
+            return "off"
+        default:
+            break
+        }
+        let interval = TimeInterval(WorkoutPrefsStore.shared.settings.spo2PollIntervalSeconds)
+        guard let last = lastSampleTime(session.id, kind: "spo2") else { return "every \(max(1, Int(interval) / 60)) min" }
+        let remaining = max(0, interval - now.timeIntervalSince(last))
         return remaining > 0 ? "next in \(ActivityMeta.duration(Int(remaining)))" : "due now"
+    }
+
+    /// Tile value: live reading normally; in ring-log mode, the newest all-day log value.
+    private func spo2TileValue() -> Int? {
+        if liveWorkout.activePlan?.spo2Mode == .ringLog {
+            return MetricsRepository.latestMeasurement(kind: .spo2, context: modelContext).map { Int($0.value) }
+        }
+        return coordinator.latestSpO2Value
     }
 
     private func agoLabel(_ date: Date) -> String {
@@ -493,14 +541,14 @@ struct RecordLiveView: View {
     }
 
     private func showSplits(_ session: ActivitySession) -> Bool {
-        session.useGps && ["run", "walk", "cycle", "hike"].contains(session.type)
+        session.useGps && ActivityMetricSet.set(for: session.type).showsSplits
     }
 
     // MARK: live stats
 
     private func distanceLabel(points: [ActivityGpsPoint], session: ActivitySession) -> String {
         guard session.useGps else { return "—" }
-        let meters = routeDistance(points)
+        let meters = RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
         guard meters > 0 else { return "—" }
         let d = UnitsFormatter.distance(meters: meters, units: units)
         return "\(d.value) \(d.unit)"
@@ -508,52 +556,131 @@ struct RecordLiveView: View {
 
     private func paceLabel(points: [ActivityGpsPoint], elapsedSec: Int, session: ActivitySession) -> String {
         guard session.useGps else { return "—" }
-        return ActivityMeta.pace(distanceMeters: routeDistance(points), durationSeconds: elapsedSec, units: units) ?? "—"
+        let meters = RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
+        return ActivityMeta.pace(distanceMeters: meters, durationSeconds: elapsedSec, units: units) ?? "—"
     }
 
-    private func routeDistance(_ points: [ActivityGpsPoint]) -> Double {
-        guard points.count >= 2 else { return 0 }
-        return zip(points, points.dropFirst()).reduce(0) { total, pair in
-            total + haversineMeters(pair.0, pair.1)
-        }
+    /// Average speed for cycling (pace-style min/km reads oddly on a bike).
+    private func speedLabel(points: [ActivityGpsPoint], elapsedSec: Int, session: ActivitySession) -> String {
+        guard session.useGps, elapsedSec > 0 else { return "—" }
+        let meters = RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
+        guard meters >= 50 else { return "—" }
+        let mps = meters / Double(elapsedSec)
+        return units == .imperial
+            ? String(format: "%.1f mph", mps * 2.23694)
+            : String(format: "%.1f km/h", mps * 3.6)
     }
 
     private func elapsed(session: ActivitySession, now: Date) -> Int {
         max(0, Int((session.endedAt ?? now).timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
     }
-}
 
-/// Shared haversine in meters for route points (used by live view + split strip).
-func haversineMeters(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint) -> Double {
-    let r = 6_371_000.0
-    let p1 = a.latitude * .pi / 180, p2 = b.latitude * .pi / 180
-    let dPhi = (b.latitude - a.latitude) * .pi / 180
-    let dLambda = (b.longitude - a.longitude) * .pi / 180
-    let h = sin(dPhi / 2) * sin(dPhi / 2) + cos(p1) * cos(p2) * sin(dLambda / 2) * sin(dLambda / 2)
-    return 2 * r * asin(min(1, sqrt(h)))
-}
-
-/// Seconds elapsed for each *completed* kilometre of a route, in order. Walks the cumulative
-/// haversine distance and records the elapsed time every time distance crosses the next km mark.
-/// Shared by the live `SplitStrip` and the summary `SplitsTable`.
-/// Seconds to cover each successive `splitMeters` segment of the route (1 km by
-/// default; pass 1609.344 for per-mile splits). Each value is therefore the pace
-/// per split unit.
-func kmSplitSeconds(_ points: [ActivityGpsPoint], splitMeters: Double = 1000) -> [Double] {
-    guard points.count >= 2, let first = points.first, splitMeters > 0 else { return [] }
-    var cumulative = 0.0
-    var markTime = first.timestamp
-    var nextMark = splitMeters
-    var splits: [Double] = []
-    for (a, b) in zip(points, points.dropFirst()) {
-        cumulative += haversineMeters(a, b)
-        while cumulative >= nextMark {
-            splits.append(b.timestamp.timeIntervalSince(markTime))
-            markTime = b.timestamp
-            nextMark += splitMeters
+    /// Mini recap shown on the finish/discard sheets.
+    private func endSheetStats(session: ActivitySession, points: [ActivityGpsPoint]) -> [(label: String, value: String)] {
+        var stats: [(label: String, value: String)] = [
+            (label: "Duration", value: ActivityMeta.duration(elapsed(session: session, now: Date())))
+        ]
+        if session.useGps {
+            stats.append((label: "Distance", value: distanceLabel(points: points, session: session)))
         }
+        if let hr = coordinator.latestHRValue {
+            stats.append((label: "Heart rate", value: "\(hr) bpm"))
+        }
+        return stats
     }
-    return splits
+}
+
+/// Small REC / PAUSED chip next to the activity name on the live screen.
+struct RecordingStatusPill: View {
+    let paused: Bool
+
+    private var color: Color { paused ? PulseColors.warning : PulseColors.danger }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(paused ? "PAUSED" : "REC")
+                .font(.system(size: 11, weight: .semibold)).tracking(1.0)
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(color.opacity(0.14), in: Capsule())
+    }
+}
+
+/// Branded replacement for the system finish/discard dialogs: a compact bottom sheet with a mini
+/// recap of the workout and the app's own button styling.
+private struct WorkoutEndSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let message: String
+    let stats: [(label: String, value: String)]
+    let confirmTitle: String
+    let confirmIcon: String
+    var destructive: Bool = false
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(PulseColors.textPrimary)
+                .padding(.top, 8)
+
+            HStack(spacing: 0) {
+                ForEach(stats.indices, id: \.self) { i in
+                    if i > 0 {
+                        Rectangle().fill(PulseColors.borderSubtle).frame(width: 1, height: 34)
+                    }
+                    VStack(spacing: 4) {
+                        Text(stats[i].value)
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(PulseColors.textPrimary)
+                        Text(stats[i].label.uppercased())
+                            .font(.system(size: 10, weight: .medium)).tracking(1.0)
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.vertical, 14)
+            .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(PulseColors.textMuted)
+                .multilineTextAlignment(.center)
+
+            Button {
+                dismiss()
+                onConfirm()
+            } label: {
+                Label(confirmTitle, systemImage: confirmIcon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .foregroundStyle(.white)
+                    .background(destructive ? PulseColors.danger : PulseColors.accent)
+                    .clipShape(Capsule())
+            }
+
+            Button { dismiss() } label: {
+                Text("Keep recording")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .background(PulseColors.cardSoft)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+            }
+        }
+        .padding(20)
+        .presentationDetents([.height(360)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(PulseColors.card)
+    }
 }
 
 /// Total ascent / descent in metres over a route, ignoring sub-metre jitter. nil when there is
@@ -619,7 +746,11 @@ func hrZoneDurations(samples: [MetricSample], age: Int?) -> [HRZone] {
 
 struct RecordSummaryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(RingSyncCoordinator.self) private var coordinator
     @Query private var sessions: [ActivitySession]
+    /// This session's linked samples — observed so the summary recomputes as the post-workout
+    /// ring-log backfill lands (samples can keep arriving for a few seconds after finish).
+    @Query private var samples: [ActivitySample]
     let sessionId: UUID
     @Binding var path: NavigationPath
     @State private var effort: String?
@@ -627,10 +758,26 @@ struct RecordSummaryView: View {
 
     private let efforts: [(String, String)] = [("easy", "Easy"), ("moderate", "Moderate"), ("hard", "Hard"), ("very_hard", "Very hard")]
 
+    init(sessionId: UUID, path: Binding<NavigationPath>) {
+        self.sessionId = sessionId
+        self._path = path
+        _samples = Query(filter: #Predicate<ActivitySample> { $0.sessionId == sessionId })
+    }
+
     var body: some View {
         if let session = sessions.first(where: { $0.id == sessionId }) {
             ScrollView {
                 VStack(spacing: 16) {
+                    if coordinator.isSyncing {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.mini)
+                            Text("Updating from ring…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(PulseColors.textMuted)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+
                     // Same rich body as the activity detail screen, kept in sync via the shared view.
                     WorkoutMetricsSections(session: session, savedBadge: true)
 
@@ -649,6 +796,10 @@ struct RecordSummaryView: View {
                     .background(.ultraThinMaterial)
             }
             .onAppear { effort = session.perceivedEffort; note = session.notes ?? "" }
+            .onChange(of: samples.count) { _, _ in
+                // Late ring-log samples attached — recompute the aggregates (idempotent).
+                ActivityService.refreshSummary(for: session, context: modelContext)
+            }
         } else {
             EmptyStateView(title: "Summary unavailable", body: "This workout could not be loaded.")
         }
@@ -796,6 +947,7 @@ struct StatusPill: View {
 struct SplitStrip: View {
     let points: [ActivityGpsPoint]
     var units: UnitsPreference = .metric
+    var activityType: String = "run"
 
     private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
     private var splitWord: String { units == .imperial ? "mi" : "km" }
@@ -810,15 +962,11 @@ struct SplitStrip: View {
     }
 
     private func kmSplits() -> (last: String?, best: String?, current: String?) {
-        guard points.count >= 2, let lastPoint = points.last else { return (nil, nil, nil) }
-        let splitSeconds = kmSplitSeconds(points, splitMeters: splitMeters)
-        let cumulative = zip(points, points.dropFirst()).reduce(0) { $0 + haversineMeters($1.0, $1.1) }
-        // Partial distance / time since the last whole split mark.
-        let distSinceMark = cumulative.truncatingRemainder(dividingBy: splitMeters)
-        let elapsed = lastPoint.timestamp.timeIntervalSince(points.first?.timestamp ?? lastPoint.timestamp)
-        let timeSinceMark = elapsed - splitSeconds.reduce(0, +)
-        let currentPace = distSinceMark >= 50 && timeSinceMark > 0 ? timeSinceMark / (distSinceMark / splitMeters) : nil
-        return (paceString(splitSeconds.last), paceString(splitSeconds.min()), paceString(currentPace))
+        let result = RouteDistanceEngine.splits(points, splitMeters: splitMeters, profile: .profile(for: activityType))
+        let completed = result.completedSeconds
+        let currentPace = result.partialMeters >= 50 && result.partialSeconds > 0
+            ? result.partialSeconds / (result.partialMeters / splitMeters) : nil
+        return (paceString(completed.last), paceString(completed.min()), paceString(currentPace))
     }
 
     private func paceString(_ secPerUnit: Double?) -> String? {
@@ -857,11 +1005,16 @@ struct RecordingQualityCard: View {
         let hrCount = samples.filter { $0.kind == MeasurementKind.heartRate.rawValue && $0.value > 0 }.count
         let spo2Count = samples.filter { $0.kind == MeasurementKind.spo2.rawValue && $0.value > 0 }.count
         let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) } ?? 0
-        let expectedHR = max(1, duration / 60)
+        let streamed = session.vitalsModeRaw == "stream"
+        // Healthy coverage baseline: a stream should land a sample at least every ~10s; spot polls
+        // aim for one per minute.
+        let expectedHR = max(1, duration / (streamed ? 10 : 60))
         let expectedSpO2 = max(1, duration / 300)
         let pollFailures = session.hrPollFailureCount + session.spo2PollFailureCount
 
-        var rows: [(String, String, Color)] = []
+        var rows: [(String, String, Color)] = [
+            ("HR capture", streamed ? "Live stream" : "Spot readings", PulseColors.textPrimary)
+        ]
         if session.useGps {
             let accepted = session.gpsPointCount
             let total = accepted + session.rejectedGpsPointCount

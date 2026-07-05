@@ -34,8 +34,8 @@ struct WorkoutMetricsSections: View {
             statsGrid(elevationGain: elevation?.gain)
 
             if session.useGps {
-                WorkoutMapView(points: points)
-                SplitsTable(points: accepted, units: units)
+                WorkoutMapView(points: accepted)
+                SplitsTable(points: accepted, units: units, activityType: session.type)
             }
 
             if hr.count > 1 {
@@ -171,7 +171,7 @@ struct WorkoutMetricsSections: View {
             WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
-            if session.useGps, let elevationGain {
+            if session.useGps, ActivityMetricSet.set(for: session.type).showsElevation, let elevationGain {
                 WorkoutStat(label: "Elev gain", value: String(format: "%.0f m", elevationGain))
             }
         }
@@ -191,12 +191,10 @@ private struct SummaryHeroBand: View {
         let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
         if session.useGps {
             let d = session.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units) }
-            let paceUnit = UnitsFormatter.paceUnit(units)
-            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
             return [
                 Metric(value: d?.value ?? "—", label: (d?.unit ?? "km").uppercased(), tint: PulseColors.distance),
                 Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
-                Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+                thirdGpsMetric
             ]
         } else {
             let cals = session.calories.map { "\(Int($0))" } ?? "—"
@@ -206,6 +204,25 @@ private struct SummaryHeroBand: View {
                 Metric(value: cals, label: "CALORIES", tint: PulseColors.calories)
             ]
         }
+    }
+
+    /// Pace for foot activities, average speed for cycling, calories otherwise (e.g. sport).
+    private var thirdGpsMetric: Metric {
+        let set = ActivityMetricSet.set(for: session.type)
+        if set.showsSpeed {
+            if let meters = session.distanceMeters, let seconds = durationSeconds, seconds > 0, meters >= 50 {
+                let mps = meters / Double(seconds)
+                let value = units == .imperial ? String(format: "%.1f", mps * 2.23694) : String(format: "%.1f", mps * 3.6)
+                return Metric(value: value, label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+            }
+            return Metric(value: "—", label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+        }
+        if set.showsPace {
+            let paceUnit = UnitsFormatter.paceUnit(units)
+            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
+            return Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+        }
+        return Metric(value: session.calories.map { "\(Int($0))" } ?? "—", label: "CALORIES", tint: PulseColors.calories)
     }
 
     var body: some View {
@@ -239,13 +256,14 @@ private struct SummaryHeroBand: View {
 private struct SplitsTable: View {
     let points: [ActivityGpsPoint]
     var units: UnitsPreference = .metric
+    var activityType: String = "run"
 
     private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
     private var splitLabel: String { units == .imperial ? "MI" : "KM" }
     private var paceUnit: String { units == .imperial ? "/mi" : "/km" }
 
     var body: some View {
-        let splits = kmSplitSeconds(points, splitMeters: splitMeters)
+        let splits = RouteDistanceEngine.splitSeconds(points, splitMeters: splitMeters, profile: .profile(for: activityType))
         if splits.count >= 1 {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1

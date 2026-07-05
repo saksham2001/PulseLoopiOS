@@ -16,6 +16,11 @@ final class LiveWorkoutManager {
     /// Set when a Live Activity / deep link asks the app to open a specific workout.
     private(set) var pendingDeepLinkSession: UUID?
 
+    /// The vitals plan for the current workout (nil when nothing is recording). Computed from the
+    /// connected device's capabilities at start/recovery; the live screen reads it to label the
+    /// HR/SpO₂ tiles honestly (stream vs spot vs ring log).
+    private(set) var activePlan: WorkoutVitalsPlan?
+
     // Throttle state for Live Activity pushes (duration auto-counts in the widget; we only push
     // on meaningful distance/HR/status changes).
     private var lastPushedDistance: Double = 0
@@ -48,7 +53,12 @@ final class LiveWorkoutManager {
 
         let session = ActivityRecorderService.start(type: type, useGps: useGps, notes: nil, context: context)
         if useGps { gps.start(sessionId: session.id, activityType: type) }
-        polling.start(sessionID: session.id)
+        let plan = vitalsPlan()
+        activePlan = plan
+        session.vitalsModeRaw = plan.vitalsModeRaw
+        polling.start(sessionID: session.id, plan: plan)
+        if plan.hrMode == .stream { coordinator.startWorkoutHeartRate() }
+        if plan.bumpRingInterval { coordinator.applyWorkoutMeasurementInterval() }
         session.liveActivityID = liveActivity.start(
             sessionID: session.id.uuidString,
             activityName: ActivityMeta.label(type),
@@ -69,6 +79,7 @@ final class LiveWorkoutManager {
         ActivityRecorderService.pause(session, context: context)
         gps.stop()
         polling.pause()
+        coordinator.stopWorkoutHeartRate()
         push(session, status: "paused", force: true)
     }
 
@@ -76,21 +87,42 @@ final class LiveWorkoutManager {
         ActivityRecorderService.resume(session, context: context)
         if session.useGps { gps.start(sessionId: session.id, activityType: session.type) }
         polling.resume()
+        if (activePlan ?? vitalsPlan()).hrMode == .stream { coordinator.startWorkoutHeartRate() }
         push(session, status: "recording", force: true)
     }
 
     func finish(_ session: ActivitySession) {
         gps.stop()
         polling.stop()
+        endWorkoutVitals()
         liveActivity.end(sessionID: session.id.uuidString)
         ActivityRecorderService.finish(session, context: context)
+        // Reconcile with the ring's own log: anything it recorded while the phone was away lands
+        // in this session (finished-window linking) and the summary refreshes as samples arrive.
+        coordinator.syncWorkoutVitals()
     }
 
     func cancel(_ session: ActivitySession) {
         gps.stop()
         polling.stop()
+        endWorkoutVitals()
         liveActivity.end(sessionID: session.id.uuidString)
         ActivityRecorderService.cancel(session, context: context)
+    }
+
+    /// Tear down workout vitals capture: stop the live HR stream and put the ring's all-day
+    /// measurement config back to the user's persisted settings (undoes the workout interval bump).
+    private func endWorkoutVitals() {
+        coordinator.stopWorkoutHeartRate()
+        if activePlan?.bumpRingInterval == true { coordinator.applyMeasurementSettings() }
+        activePlan = nil
+    }
+
+    /// Capability-driven capture plan for the currently paired device (spot fallback when no
+    /// device/capabilities are stamped yet).
+    private func vitalsPlan() -> WorkoutVitalsPlan {
+        let capabilities = DeviceRepository.current(context: context)?.capabilities ?? []
+        return WorkoutVitalsPlan.plan(for: capabilities, prefs: WorkoutPrefsStore.shared.settings)
     }
 
     // MARK: - Live Activity sync (called from the live screen's per-second tick)
@@ -102,7 +134,7 @@ final class LiveWorkoutManager {
     }
 
     private func push(_ session: ActivitySession, status: String, force: Bool) {
-        let distance = acceptedDistance(session.id)
+        let distance = acceptedDistance(session)
         let now = Date()
         let movedEnough = abs(distance - lastPushedDistance) >= 30
         let timeEnough = now.timeIntervalSince(lastPushAt) >= 20
@@ -158,10 +190,26 @@ final class LiveWorkoutManager {
         if let active = ActivityRepository.sessions(context: context)
             .first(where: { $0.status == .recording }), isFreshlyActive(active) {
             if active.useGps && !gps.isTracking { gps.start(sessionId: active.id, activityType: active.type) }
-            polling.recoverIfNeeded(activeSession: active)
+            reattachVitals(active)
             push(active, status: "recording", force: true)
         }
         applyPendingCommand()
+    }
+
+    /// Recompute the plan and (re)start vitals capture for an in-progress session — shared by
+    /// `recover()` and `ensureActive(_:)` so relaunch/foreground always restores the stream.
+    private func reattachVitals(_ session: ActivitySession) {
+        let plan = activePlan ?? vitalsPlan()
+        activePlan = plan
+        session.vitalsModeRaw = plan.vitalsModeRaw
+        polling.recoverIfNeeded(activeSession: session, plan: plan)
+        if plan.hrMode == .stream {
+            coordinator.startWorkoutHeartRate()
+            // A long silence means the phone was suspended while the ring kept logging on its own —
+            // pull the ring log now so the chart gap fills without waiting for finish.
+            let last = session.lastSensorPollAt ?? session.startedAt
+            if Date().timeIntervalSince(last) > 300 { coordinator.syncWorkoutVitals() }
+        }
     }
 
     /// Ensure the workout the live screen is showing is actively recording (polling + GPS + Live
@@ -170,7 +218,7 @@ final class LiveWorkoutManager {
     func ensureActive(_ session: ActivitySession) {
         guard session.status == .recording else { return }
         if session.useGps && !gps.isTracking { gps.start(sessionId: session.id, activityType: session.type) }
-        polling.recoverIfNeeded(activeSession: session)
+        reattachVitals(session)
         if session.liveActivityID == nil {
             session.liveActivityID = liveActivity.start(
                 sessionID: session.id.uuidString,
@@ -187,10 +235,13 @@ final class LiveWorkoutManager {
     }
 
     /// A recording session counts as live only if it saw activity recently; otherwise it was
-    /// abandoned (the app didn't get to finish/cancel it) and must not keep polling.
+    /// abandoned (the app didn't get to finish/cancel it) and must not keep polling. Stream-mode
+    /// sessions get a longer window: the phone can be suspended for a while with the ring still
+    /// logging on its own, and the reconcile fills the gap on recovery.
     private func isFreshlyActive(_ session: ActivitySession) -> Bool {
         let last = [session.lastSensorPollAt, session.lastGpsPointAt].compactMap { $0 }.max() ?? session.startedAt
-        return Date().timeIntervalSince(last) < 180
+        let window: TimeInterval = session.vitalsModeRaw == "stream" ? 600 : 180
+        return Date().timeIntervalSince(last) < window
     }
 
     private var usesImperialUnits: Bool {
@@ -222,19 +273,9 @@ final class LiveWorkoutManager {
 
     // MARK: - Distance helpers (accepted points only; matches ActivityService.gpsDistance)
 
-    private func acceptedDistance(_ sessionId: UUID) -> Double {
-        let points = ActivityRepository.gpsPoints(sessionId: sessionId, context: context).filter { $0.accepted }
-        guard points.count >= 2 else { return 0 }
-        return zip(points, points.dropFirst()).reduce(0) { $0 + haversine($1.0, $1.1) }
-    }
-
-    private func haversine(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint) -> Double {
-        let r = 6_371_000.0
-        let p1 = a.latitude * .pi / 180, p2 = b.latitude * .pi / 180
-        let dPhi = (b.latitude - a.latitude) * .pi / 180
-        let dLambda = (b.longitude - a.longitude) * .pi / 180
-        let h = sin(dPhi / 2) * sin(dPhi / 2) + cos(p1) * cos(p2) * sin(dLambda / 2) * sin(dLambda / 2)
-        return 2 * r * asin(min(1, sqrt(h)))
+    private func acceptedDistance(_ session: ActivitySession) -> Double {
+        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+        return RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
     }
 
     private func paceSecondsPerKm(distanceMeters: Double, durationSeconds: Int) -> Double? {

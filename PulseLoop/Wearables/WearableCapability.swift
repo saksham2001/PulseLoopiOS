@@ -40,8 +40,13 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
 
     // Configurable all-day measurement: the device exposes a settable HR sampling interval and
     // per-vital monitoring toggles (Colmi `0x16` + prefs). The generic jring has no such control, so
-    // it never declares this and the Measurement settings screen stays hidden for it.
+    // it never surfaces it and the Measurement settings screen stays hidden for it.
     case measurementInterval
+
+    // The device records all-day SpO2 on-ring and the app can read that log back (Colmi big-data
+    // `0xbc 0x2a`). Drives the workout vitals plan: a device with no `manualSpo2` but with this
+    // capability shows the latest logged value instead of pretending it can spot-measure.
+    case spo2History
 }
 
 extension Set where Element == WearableCapability {
