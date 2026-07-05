@@ -35,7 +35,7 @@ struct WorkoutMetricsSections: View {
 
             if session.useGps {
                 WorkoutMapView(points: points)
-                SplitsTable(points: accepted)
+                SplitsTable(points: accepted, units: units)
             }
 
             if hr.count > 1 {
@@ -238,9 +238,14 @@ private struct SummaryHeroBand: View {
 /// there isn't at least one full completed kilometre.
 private struct SplitsTable: View {
     let points: [ActivityGpsPoint]
+    var units: UnitsPreference = .metric
+
+    private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
+    private var splitLabel: String { units == .imperial ? "MI" : "KM" }
+    private var paceUnit: String { units == .imperial ? "/mi" : "/km" }
 
     var body: some View {
-        let splits = kmSplitSeconds(points)
+        let splits = kmSplitSeconds(points, splitMeters: splitMeters)
         if splits.count >= 1 {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1
@@ -250,7 +255,7 @@ private struct SplitsTable: View {
                     let isFastest = seconds == fastest
                     let frac = slowest > fastest ? (seconds - fastest) / (slowest - fastest) : 0
                     HStack(spacing: 12) {
-                        Text("KM \(index + 1)")
+                        Text("\(splitLabel) \(index + 1)")
                             .font(.system(size: 12, weight: .medium).monospacedDigit())
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 44, alignment: .leading)
@@ -277,8 +282,10 @@ private struct SplitsTable: View {
         }
     }
 
-    private func paceLabel(_ secPerKm: Double) -> String {
-        String(format: "%d:%02d /km", Int(secPerKm) / 60, Int(secPerKm.rounded()) % 60)
+    private func paceLabel(_ secPerUnit: Double) -> String {
+        // Round to whole seconds before splitting so a value like 299.85 shows 5:00, not 4:00.
+        let total = Int(secPerUnit.rounded())
+        return String(format: "%d:%02d %@", total / 60, total % 60, paceUnit)
     }
 }
 

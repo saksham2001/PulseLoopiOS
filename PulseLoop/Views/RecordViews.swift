@@ -378,7 +378,7 @@ struct RecordLiveView: View {
                         }
 
                         if showSplits(session) {
-                            SplitStrip(points: points)
+                            SplitStrip(points: points, units: units)
                         }
 
                         if session.useGps {
@@ -536,18 +536,21 @@ func haversineMeters(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint) -> Double {
 /// Seconds elapsed for each *completed* kilometre of a route, in order. Walks the cumulative
 /// haversine distance and records the elapsed time every time distance crosses the next km mark.
 /// Shared by the live `SplitStrip` and the summary `SplitsTable`.
-func kmSplitSeconds(_ points: [ActivityGpsPoint]) -> [Double] {
-    guard points.count >= 2, let first = points.first else { return [] }
+/// Seconds to cover each successive `splitMeters` segment of the route (1 km by
+/// default; pass 1609.344 for per-mile splits). Each value is therefore the pace
+/// per split unit.
+func kmSplitSeconds(_ points: [ActivityGpsPoint], splitMeters: Double = 1000) -> [Double] {
+    guard points.count >= 2, let first = points.first, splitMeters > 0 else { return [] }
     var cumulative = 0.0
     var markTime = first.timestamp
-    var nextKm = 1000.0
+    var nextMark = splitMeters
     var splits: [Double] = []
     for (a, b) in zip(points, points.dropFirst()) {
         cumulative += haversineMeters(a, b)
-        while cumulative >= nextKm {
+        while cumulative >= nextMark {
             splits.append(b.timestamp.timeIntervalSince(markTime))
             markTime = b.timestamp
-            nextKm += 1000
+            nextMark += splitMeters
         }
     }
     return splits
@@ -792,30 +795,37 @@ struct StatusPill: View {
 /// Per-kilometre splits for distance activities (last / best / current km pace).
 struct SplitStrip: View {
     let points: [ActivityGpsPoint]
+    var units: UnitsPreference = .metric
+
+    private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
+    private var splitWord: String { units == .imperial ? "mi" : "km" }
+
     var body: some View {
         let splits = kmSplits()
         HStack(spacing: 12) {
-            WorkoutStat(label: "Last km", value: splits.last ?? "—")
-            WorkoutStat(label: "Best km", value: splits.best ?? "—")
-            WorkoutStat(label: "This km", value: splits.current ?? "—")
+            WorkoutStat(label: "Last \(splitWord)", value: splits.last ?? "—")
+            WorkoutStat(label: "Best \(splitWord)", value: splits.best ?? "—")
+            WorkoutStat(label: "This \(splitWord)", value: splits.current ?? "—")
         }
     }
 
     private func kmSplits() -> (last: String?, best: String?, current: String?) {
         guard points.count >= 2, let lastPoint = points.last else { return (nil, nil, nil) }
-        let splitSeconds = kmSplitSeconds(points)
+        let splitSeconds = kmSplitSeconds(points, splitMeters: splitMeters)
         let cumulative = zip(points, points.dropFirst()).reduce(0) { $0 + haversineMeters($1.0, $1.1) }
-        // Partial distance / time since the last whole-km mark.
-        let distSinceMark = cumulative.truncatingRemainder(dividingBy: 1000)
+        // Partial distance / time since the last whole split mark.
+        let distSinceMark = cumulative.truncatingRemainder(dividingBy: splitMeters)
         let elapsed = lastPoint.timestamp.timeIntervalSince(points.first?.timestamp ?? lastPoint.timestamp)
         let timeSinceMark = elapsed - splitSeconds.reduce(0, +)
-        let currentPace = distSinceMark >= 50 && timeSinceMark > 0 ? timeSinceMark / (distSinceMark / 1000) : nil
+        let currentPace = distSinceMark >= 50 && timeSinceMark > 0 ? timeSinceMark / (distSinceMark / splitMeters) : nil
         return (paceString(splitSeconds.last), paceString(splitSeconds.min()), paceString(currentPace))
     }
 
-    private func paceString(_ secPerKm: Double?) -> String? {
-        guard let secPerKm, secPerKm > 0 else { return nil }
-        return String(format: "%d:%02d", Int(secPerKm) / 60, Int(secPerKm.rounded()) % 60)
+    private func paceString(_ secPerUnit: Double?) -> String? {
+        guard let secPerUnit, secPerUnit > 0 else { return nil }
+        // Round to whole seconds before splitting so :60 carries the minute.
+        let total = Int(secPerUnit.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

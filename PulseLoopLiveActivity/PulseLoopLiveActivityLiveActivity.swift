@@ -39,7 +39,7 @@ struct WorkoutLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
                         if state.usesGps {
-                            Text(WorkoutLAColors.distanceLabel(state.distanceMeters))
+                            Text(WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial))
                                 .foregroundStyle(.blue)
                         } else {
                             Text(state.lastSpO2.map { "SpO₂ \($0)%" } ?? "SpO₂ —")
@@ -47,7 +47,7 @@ struct WorkoutLiveActivityWidget: Widget {
                         }
                         Spacer()
                         Text(state.status == "paused" ? "Paused"
-                             : (state.usesGps ? WorkoutLAColors.paceLabel(state.paceSecondsPerKm) : ""))
+                             : (state.usesGps ? WorkoutLAColors.paceLabel(state.paceSecondsPerKm, imperial: state.useImperial) : ""))
                             .foregroundStyle(.white)
                     }
                     .font(.caption).monospacedDigit()
@@ -98,7 +98,7 @@ struct WorkoutLockScreenView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 // Distance is only meaningful for GPS activities; indoor shows HR/SpO₂ only.
                 if state.usesGps {
-                    metric("DIST", WorkoutLAColors.distanceLabel(state.distanceMeters), .blue)
+                    metric("DIST", WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial), .blue)
                 }
                 metric("HR", state.lastHeartRate.map { "\($0) bpm" } ?? "—", .pink)
                 metric("SpO₂", state.lastSpO2.map { "\($0)%" } ?? "—", .cyan)

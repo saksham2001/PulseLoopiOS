@@ -77,7 +77,7 @@ struct ActivityView: View {
                         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
                     } else {
                         ForEach(todayWorkouts) { session in
-                            ActivityWorkoutRow(session: session) { path.append(AppRoute.activityDetail(session.id)) }
+                            ActivityWorkoutRow(session: session, units: units) { path.append(AppRoute.activityDetail(session.id)) }
                         }
                     }
                 }
@@ -116,7 +116,7 @@ struct ActivityView: View {
         .refreshable { await coordinator.pullToRefresh() }
         .sheet(isPresented: $goalsOpen) { GoalEditorSheet() }
         .sheet(isPresented: $historyOpen) {
-            WorkoutHistorySheet { id in
+            WorkoutHistorySheet(units: units) { id in
                 historyOpen = false
                 path.append(AppRoute.activityDetail(id))
             }
@@ -310,6 +310,7 @@ struct GoalEditorSheet: View {
 struct WorkoutHistorySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \ActivitySession.startedAt, order: .reverse) private var sessions: [ActivitySession]
+    var units: UnitsPreference = .metric
     let onSelect: (UUID) -> Void
 
     var body: some View {
@@ -321,7 +322,7 @@ struct WorkoutHistorySheet: View {
                         EmptyStateView(title: "No workouts yet", body: "Recorded workouts will appear here.")
                     } else {
                         ForEach(finished) { session in
-                            ActivityWorkoutRow(session: session) { onSelect(session.id) }
+                            ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
                         }
                     }
                 }
