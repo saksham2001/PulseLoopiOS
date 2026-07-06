@@ -222,6 +222,7 @@ struct DeviceHeroCard: View {
         switch type {
         case .jring: return "jring"
         case .colmiR02: return nil
+        case .tk5: return nil
         case nil: return nil
         }
     }

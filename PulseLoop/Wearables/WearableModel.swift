@@ -43,6 +43,13 @@ extension WearableModel {
     )
     static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi", pattern: "^COLMI R12_.*")
 
+    // TK5 — its own protocol (be940 service, SmartHealth app). Advertises as "TK5 <4 hex>".
+    static let tk5 = WearableModel(
+        id: "tk5", displayName: "TK5", brand: "TK", family: .tk5,
+        tint: PulseColors.spo2, blurb: "Heart rate · SpO₂ · Steps",
+        advertisedNamePatterns: ["^TK5 ?[0-9A-Fa-f]{0,4}$"], imageName: nil
+    )
+
     // Yawell-branded variants of the same hardware.
     static let yawellR05 = colmiFamily("yawell-r05", "Yawell R05", brand: "Yawell", pattern: "^R05_[0-9A-F]{4}$")
     static let yawellR10 = colmiFamily("yawell-r10", "Yawell R10", brand: "Yawell", pattern: "^R10_[0-9A-F]{4}$")
@@ -70,6 +77,7 @@ extension WearableModel {
         jring,
         colmiR02, colmiR03, colmiR06, colmiR07, colmiR09, colmiR10, colmiR11, colmiR12,
         yawellR05, yawellR10, yawellR11, h59,
+        tk5,
     ]
 
     static func model(id: String?) -> WearableModel? {
