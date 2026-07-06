@@ -25,6 +25,8 @@ struct PulseLoopApp: App {
     private let anomalyMonitor: CoachAnomalyMonitor
     /// Retained so it keeps recording the structured wearable diagnostics timeline.
     private let diagnostics: DiagnosticsSubscriber
+    /// Retained so it keeps projecting synced data into the home-screen-widget snapshot.
+    private let widgetPublisher: WidgetSnapshotPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
 
@@ -77,6 +79,8 @@ struct PulseLoopApp: App {
         self.anomalyMonitor = CoachAnomalyMonitor(context: container.mainContext)
         let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
         self.diagnostics = diagnostics
+        let widgetPublisher = WidgetSnapshotPublisher(context: container.mainContext)
+        self.widgetPublisher = widgetPublisher
 
         // Skip the live subsystems entirely under XCTest — the test target exercises these
         // components directly with their own fixtures; the app host just needs to launch cleanly.
@@ -89,6 +93,7 @@ struct PulseLoopApp: App {
         summaryCoordinator.start()
         anomalyMonitor.start()
         diagnostics.start()
+        widgetPublisher.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate
@@ -111,6 +116,10 @@ struct PulseLoopApp: App {
             // Flush any batched-but-unsaved ring writes before the app suspends so a mid-sync
             // batch isn't lost.
             if phase != .active { persistence.flush() }
+            // Republish the widget snapshot at scene edges: leaving-active captures the freshest
+            // flushed data before suspension; becoming-active catches Settings edits (goals, units,
+            // visibility) that change tiles without bumping the sync token. No-ops when unchanged.
+            if !Self.isRunningUnitTests { widgetPublisher.publish(reason: .scenePhase) }
             guard phase == .active else { return }
             // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
             // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the

@@ -19,6 +19,7 @@ enum VitalsCardFactory {
         var summary: TodaySummary?
         var range: MetricRange = .twentyFourHours
         var now: Date = Date()
+        var units: UnitsPreference = .metric
     }
 
     static func card(_ metric: MetricKind,
@@ -153,23 +154,43 @@ enum VitalsCardFactory {
     // MARK: - Temperature
 
     private static func temperature(_ inputs: Inputs, _ profile: UserPhysiologyProfile, _ cal: Calibration) -> VitalCardViewModel {
-        let samples = inputs.temperature
-        let latest = samples.last?.value
-        let quality = SourceQualityResolver.quality(for: .temperature, latest: samples.last?.timestamp, now: inputs.now, calibration: cal)
+        let units = inputs.units
+        let rawSamples = inputs.temperature
+        let latest = rawSamples.last?.value
+        let quality = SourceQualityResolver.quality(for: .temperature, latest: rawSamples.last?.timestamp, now: inputs.now, calibration: cal)
+        // Status/zone interpretation stays in canonical °C; only the display converts.
         let interp = latest.map { VitalsThresholdEngine.interpret(value: $0, metric: .temperature, profile: profile) }
-        let chart = ChartSampleBuilder.from(samples, quality: quality)
-        let domain = clampedDomain(samples, fallback: 30...38, pad: 0.5, hardLower: 20, hardUpper: 45)
+        // Convert samples, y-domain, and zone bounds to the display unit so the whole
+        // card (line, axis, bands, trend) is consistent — °C for metric, °F for imperial.
+        let dispSamples = rawSamples.map { MetricSample(timestamp: $0.timestamp, value: UnitsFormatter.temperatureValue(celsius: $0.value, units: units)) }
+        let chart = ChartSampleBuilder.from(dispSamples, quality: quality)
+        let domain = clampedDomain(
+            dispSamples,
+            fallback: UnitsFormatter.temperatureValue(celsius: 30, units: units)...UnitsFormatter.temperatureValue(celsius: 38, units: units),
+            pad: UnitsFormatter.temperatureDelta(celsius: 0.5, units: units),
+            hardLower: UnitsFormatter.temperatureValue(celsius: 20, units: units),
+            hardUpper: UnitsFormatter.temperatureValue(celsius: 45, units: units)
+        )
+        let zones = VitalsThresholdEngine.zones(for: .temperature, profile: profile).map { z in
+            MetricZone(
+                id: z.id, label: z.label,
+                lower: z.lower.map { UnitsFormatter.temperatureValue(celsius: $0, units: units) },
+                upper: z.upper.map { UnitsFormatter.temperatureValue(celsius: $0, units: units) },
+                severity: z.severity, colorToken: z.colorToken, explanation: z.explanation
+            )
+        }
+        let formatted = latest.map { UnitsFormatter.temperature(celsius: $0, units: units) }
         return VitalCardViewModel(
             metric: .temperature, title: MetricKind.temperature.title,
-            valueText: latest.map { String(format: "%.1f", $0) } ?? "--", unitText: latest != nil ? "°C" : nil,
+            valueText: formatted?.value ?? "--", unitText: formatted?.unit,
             statusText: interp?.displayLabel ?? "No data", statusColor: interp?.statusColor ?? PulseColors.textMuted,
             subtitleText: nil,
-            samples: chart, zones: VitalsThresholdEngine.zones(for: .temperature, profile: profile),
+            samples: chart, zones: zones,
             yDomain: domain, referenceBands: [], dashedRules: [],
-            trend: TrendSummary.compute(samples: chart, metric: .temperature, unitLabel: "°"),
+            trend: TrendSummary.compute(samples: chart, metric: .temperature, unitLabel: UnitsFormatter.temperatureUnit(units)),
             sourceQuality: quality, isEstimated: false, confidenceLabel: nil,
-            lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
-            isEmpty: samples.count < 2
+            lastUpdatedText: lastUpdated(rawSamples.last?.timestamp, now: inputs.now),
+            isEmpty: rawSamples.count < 2
         )
     }
 
@@ -216,16 +237,29 @@ enum VitalsCardFactory {
         let interp = latest.map {
             VitalsThresholdEngine.interpret(value: $0, metric: .glucose, profile: profile, context: unknownContext)
         }
-        let chart = ChartSampleBuilder.from(samples, quality: quality)
-        let domain = clampedDomain(samples, fallback: 60...200, pad: 15, hardLower: 40, hardUpper: 400)
+        // Convert samples, domain, zones, and reference band to the user's glucose unit
+        // (mg/dL or mmol/L) so the whole card stays consistent. Interpretation stays in mg/dL.
+        let gUnit = profile.preferredGlucoseUnit
+        func gv(_ mgdl: Double) -> Double { UnitsFormatter.glucoseValue(mgdl: mgdl, unit: gUnit) }
+        let dispSamples = samples.map { MetricSample(timestamp: $0.timestamp, value: gv($0.value)) }
+        let chart = ChartSampleBuilder.from(dispSamples, quality: quality)
+        let domain = clampedDomain(dispSamples, fallback: gv(60)...gv(200), pad: gv(15), hardLower: gv(40), hardUpper: gv(400))
+        let zones = VitalsThresholdEngine.zones(for: .glucose, profile: profile, context: unknownContext).map { z in
+            MetricZone(
+                id: z.id, label: z.label,
+                lower: z.lower.map(gv), upper: z.upper.map(gv),
+                severity: z.severity, colorToken: z.colorToken, explanation: z.explanation
+            )
+        }
+        let formatted = latest.map { UnitsFormatter.glucose(mgdl: $0, unit: gUnit) }
         return VitalCardViewModel(
             metric: .glucose, title: MetricKind.glucose.title,
-            valueText: latest.map { "\(Int($0.rounded()))" } ?? "--", unitText: latest != nil ? "mg/dL" : nil,
+            valueText: formatted?.value ?? "--", unitText: formatted?.unit,
             statusText: interp?.displayLabel ?? "No estimate", statusColor: interp?.statusColor ?? PulseColors.textMuted,
             subtitleText: "Estimated wellness metric",
-            samples: chart, zones: VitalsThresholdEngine.zones(for: .glucose, profile: profile, context: unknownContext),
-            yDomain: domain, referenceBands: [ReferenceBand(lower: 70, upper: 140, colorToken: .mint)], dashedRules: [],
-            trend: TrendSummary.compute(samples: chart, metric: .glucose, unitLabel: "mg/dL"),
+            samples: chart, zones: zones,
+            yDomain: domain, referenceBands: [ReferenceBand(lower: gv(70), upper: gv(140), colorToken: .mint)], dashedRules: [],
+            trend: TrendSummary.compute(samples: chart, metric: .glucose, unitLabel: UnitsFormatter.glucoseUnit(gUnit)),
             sourceQuality: quality, isEstimated: true, confidenceLabel: interp?.confidenceLabel,
             lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
             isEmpty: samples.count < 2

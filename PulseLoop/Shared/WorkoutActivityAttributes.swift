@@ -32,10 +32,47 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         var lastSpO2: Int?
         var activityType: String      // "run","walk","cycle",...
         var lastUpdated: Date
+        /// Whether to render distance/pace in imperial (mi, /mi). Mirrors the user's
+        /// units preference; kept as a plain Bool because this shared type can't see
+        /// the app-only `UnitsPreference`. Defaults to metric for older payloads.
+        var useImperial: Bool = false
     }
 
     var sessionID: String
     var activityName: String
+}
+
+extension WorkoutActivityAttributes.ContentState {
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case elapsedSeconds
+        case startDate
+        case pausedAt
+        case usesGps
+        case distanceMeters
+        case paceSecondsPerKm
+        case lastHeartRate
+        case lastSpO2
+        case activityType
+        case lastUpdated
+        case useImperial
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        elapsedSeconds = try container.decode(Int.self, forKey: .elapsedSeconds)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        pausedAt = try container.decodeIfPresent(Date.self, forKey: .pausedAt)
+        usesGps = try container.decode(Bool.self, forKey: .usesGps)
+        distanceMeters = try container.decode(Double.self, forKey: .distanceMeters)
+        paceSecondsPerKm = try container.decodeIfPresent(Double.self, forKey: .paceSecondsPerKm)
+        lastHeartRate = try container.decodeIfPresent(Int.self, forKey: .lastHeartRate)
+        lastSpO2 = try container.decodeIfPresent(Int.self, forKey: .lastSpO2)
+        activityType = try container.decode(String.self, forKey: .activityType)
+        lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
+        useImperial = try container.decodeIfPresent(Bool.self, forKey: .useImperial) ?? false
+    }
 }
 
 // MARK: - App Group command channel
@@ -132,16 +169,17 @@ enum WorkoutLAColors {
         }
     }
 
-    static func paceLabel(_ secPerKm: Double?) -> String {
+    static func paceLabel(_ secPerKm: Double?, imperial: Bool = false) -> String {
         guard let secPerKm, secPerKm.isFinite, secPerKm > 0 else { return "—" }
-        let total = Int(secPerKm.rounded())
-        let minutes = total / 60
-        let seconds = total % 60
-        return String(format: "%d:%02d /km", minutes, seconds)
+        let secPerUnit = imperial ? secPerKm * 1.609344 : secPerKm
+        let total = Int(secPerUnit.rounded())
+        return String(format: "%d:%02d %@", total / 60, total % 60, imperial ? "/mi" : "/km")
     }
 
-    static func distanceLabel(_ meters: Double) -> String {
+    static func distanceLabel(_ meters: Double, imperial: Bool = false) -> String {
         guard meters >= 50 else { return "—" }
-        return String(format: "%.2f km", meters / 1000)
+        return imperial
+            ? String(format: "%.2f mi", meters / 1609.344)
+            : String(format: "%.2f km", meters / 1000)
     }
 }

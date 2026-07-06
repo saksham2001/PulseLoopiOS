@@ -5,7 +5,13 @@ enum PulseEvent: Sendable {
     case deviceStateChanged(state: RingConnectionState, address: String?)
     /// Emitted on connect once the active wearable's type + capabilities are known, so persistence
     /// can stamp the `Device` and the UI can capability-gate its surfaces.
-    case deviceIdentified(deviceType: RingDeviceType, capabilities: Set<WearableCapability>)
+    case deviceIdentified(
+        deviceType: RingDeviceType,
+        wearableModelID: String?,
+        advertisedName: String?,
+        capabilities: Set<WearableCapability>
+    )
+    case deviceForgotten
     case batteryLevel(percent: Int)
     case rawPacket(direction: PacketDirection, data: Data, decoded: RingDecodedEvent)
     case derivedUpdate(kind: String, entityType: String, entityId: String, payloadJSON: String?)
@@ -174,6 +180,8 @@ final class EventPersistenceSubscriber {
         PulseDataChange.shared.notify()
     }
 
+    // This is an exhaustive event router; each enum case is independent rather than branching logic.
+    // swiftlint:disable:next cyclomatic_complexity
     private func applyPersist(_ event: PulseEvent) {
         switch event {
         case let .deviceStateChanged(state, address):
@@ -185,10 +193,17 @@ final class EventPersistenceSubscriber {
                 device.lastSyncAt = Date()
             }
             context.insert(device)
-        case let .deviceIdentified(deviceType, capabilities):
+        case let .deviceIdentified(deviceType, wearableModelID, advertisedName, capabilities):
             let device = MetricsService.fetchDevices(context).first ?? Device()
             device.deviceType = deviceType
+            device.wearableModelID = wearableModelID
+            if let advertisedName { device.advertisedName = advertisedName }
             device.capabilities = capabilities
+            context.insert(device)
+        case .deviceForgotten:
+            guard let device = MetricsService.fetchDevices(context).first else { break }
+            device.wearableModelID = nil
+            device.advertisedName = nil
             context.insert(device)
         case let .batteryLevel(percent):
             let device = MetricsService.fetchDevices(context).first ?? Device()

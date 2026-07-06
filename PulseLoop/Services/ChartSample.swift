@@ -1,5 +1,18 @@
 import Foundation
 
+// NOTE: This file is compiled into both the app and the PulseLoopWidgets extension targets — keep it
+// free of SwiftData model types and app services. Model-touching helpers (e.g. building samples from
+// `[MetricSample]`) live in Services/VitalsModelBridge.swift.
+
+/// The chart/query time window. Lives here (not DerivedSummaries.swift) so the shared charts can
+/// compile without the SwiftData-backed summary types.
+enum MetricRange: String, CaseIterable {
+    case twentyFourHours = "24h"
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+    case twelveMonths = "12mo"
+}
+
 /// A charting sample carrying enough context to render honestly: a real timestamp (so spacing
 /// reflects time, not array index) and a source-quality flag (so low-confidence stretches can be
 /// styled differently). Built from the store's `[MetricSample]` at view-model time.
@@ -18,14 +31,6 @@ struct ChartSample: Identifiable, Equatable {
 }
 
 enum ChartSampleBuilder {
-    /// Map stored samples to chart samples, tagging each with a single resolved quality. Samples are
-    /// assumed already time-sorted by `metricRange`; we sort defensively anyway.
-    static func from(_ samples: [MetricSample], quality: SourceQuality = .good) -> [ChartSample] {
-        samples
-            .sorted { $0.timestamp < $1.timestamp }
-            .map { ChartSample(timestamp: $0.timestamp, value: $0.value, quality: quality) }
-    }
-
     /// Split a series into contiguous segments, breaking wherever the gap between adjacent samples
     /// exceeds `maxGap`. This prevents a line from drawing a false bridge across hours with no data
     /// (e.g. connecting a 2 AM reading straight to a 10 PM reading). Pure and order-preserving.

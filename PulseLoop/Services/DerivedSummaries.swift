@@ -37,12 +37,7 @@ enum MetricKey: String, CaseIterable {
     }
 }
 
-enum MetricRange: String, CaseIterable {
-    case twentyFourHours = "24h"
-    case sevenDays = "7d"
-    case thirtyDays = "30d"
-    case twelveMonths = "12mo"
-}
+// `MetricRange` lives in ChartSample.swift (shared with the widget extension).
 
 enum SleepRangeKey: String, CaseIterable {
     case day

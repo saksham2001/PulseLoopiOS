@@ -312,51 +312,6 @@ struct ProgressRingView<Center: View>: View {
     }
 }
 
-// MARK: - Concentric activity rings (Daily activity summary)
-
-/// One ring's inputs. `value == nil` means the metric is unavailable → track only (no arc).
-struct ActivityRing {
-    let value: Double?
-    let goal: Double
-    let color: Color
-
-    /// Clamped 0…1 progress; safe against nil value and zero/negative goal.
-    var progress: Double {
-        guard let value, goal > 0 else { return 0 }
-        return Swift.min(1, Swift.max(0, value / goal))
-    }
-}
-
-/// Apple-Fitness-style concentric progress rings. Outer→inner in the order passed in. Each ring draws
-/// a muted background track plus a rounded-cap progress arc starting at 12 o'clock, moving clockwise,
-/// visually capped at a full circle (the numeric value elsewhere still shows real over-100% totals).
-struct ActivityRingsView: View {
-    /// Outer ring first. Typically [steps, distance, calories].
-    let rings: [ActivityRing]
-    var size: CGFloat = 116
-    var stroke: CGFloat = 10
-    /// Gap between concentric rings.
-    var spacing: CGFloat = 5
-
-    var body: some View {
-        ZStack {
-            ForEach(Array(rings.enumerated()), id: \.offset) { index, ring in
-                let inset = CGFloat(index) * (stroke + spacing)
-                let ringSize = size - inset * 2
-                ZStack {
-                    Circle().stroke(PulseColors.elevated, lineWidth: stroke)
-                    Circle()
-                        .trim(from: 0, to: ring.progress)
-                        .stroke(ring.color, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                .frame(width: ringSize, height: ringSize)
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 // MARK: - Weekly pill calendar (Activity weekly goal)
 
 struct WeeklyDay: Identifiable {
@@ -638,8 +593,11 @@ enum ActivityMeta {
         guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
         let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
         let paceSec = UnitsFormatter.paceSeconds(perKmSeconds: paceSecPerKm, units: units)
-        let m = Int(paceSec) / 60
-        let s = Int(paceSec.rounded()) % 60
+        // Round to whole seconds first, then split — otherwise a value like 299.85 renders
+        // "4:00" (minute truncated, seconds rounded up to 60) instead of "5:00".
+        let total = Int(paceSec.rounded())
+        let m = total / 60
+        let s = total % 60
         return String(format: "%d:%02d %@", m, s, UnitsFormatter.paceUnit(units))
     }
 }
@@ -648,6 +606,7 @@ enum ActivityMeta {
 
 struct ActivityWorkoutRow: View {
     let session: ActivitySession
+    var units: UnitsPreference = .metric
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -672,7 +631,8 @@ struct ActivityWorkoutRow: View {
                     HStack(spacing: 12) {
                         Text(durationLabel).font(.system(size: 12).monospacedDigit())
                         if let distance = session.distanceMeters {
-                            Text(String(format: "%.2f km", distance / 1000)).font(.system(size: 12).monospacedDigit())
+                            let d = UnitsFormatter.distance(meters: distance, units: units)
+                            Text("\(d.value) \(d.unit)").font(.system(size: 12).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
                             Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())

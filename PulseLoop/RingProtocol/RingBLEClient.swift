@@ -41,6 +41,8 @@ final class RingBLEClient: NSObject {
         let isLikelyRing: Bool
         /// The wearable family this advertisement matched, if any (drives the device card + icon).
         let deviceType: RingDeviceType?
+        /// Exact catalog model inferred from the Bluetooth local name, when recognizable.
+        let wearableModelID: String?
     }
 
     // MARK: Observable state (read by SwiftUI)
@@ -52,6 +54,8 @@ final class RingBLEClient: NSObject {
 
     /// The wearable family of the active connection (nil until a driver is selected).
     private(set) var activeDeviceType: RingDeviceType?
+    private(set) var activeWearableModelID: String?
+    var activeWearableModel: WearableModel? { WearableModel.model(id: activeWearableModelID) }
     /// What the active device can do — the single source the capability-gated UI consults.
     private(set) var activeCapabilities: Set<WearableCapability> = []
 
@@ -76,6 +80,7 @@ final class RingBLEClient: NSObject {
     private var activeCoordinator: WearableCoordinator?
     private var activeDriver: WearableDriver?
     private var activeSyncEngine: RingSyncEngine?
+    private var activeAdvertisedName: String?
 
     // MARK: Write serialization
     /// Each queued write carries its already-framed bytes and which characteristic to send it to.
@@ -107,6 +112,7 @@ final class RingBLEClient: NSObject {
 
     private static let lastPeripheralKey = "ring.lastPeripheralIdentifier"
     private static let lastDeviceTypeKey = "ring.lastDeviceType"
+    private static let lastWearableModelKey = "ring.lastWearableModel"
 
     /// The 0x180F battery service, used only when the active driver exposes GATT battery.
     private let batteryServiceCBUUID = CBUUID(string: "180F")
@@ -153,22 +159,32 @@ final class RingBLEClient: NSObject {
         if state == .scanning { state = .idle }
     }
 
-    func connect(to id: UUID) {
+    func connect(to id: UUID, selectedModelID: String? = nil) {
         // Prefer the freshly-scanned object; fall back to the system cache (paired/known).
         guard let target = discoveredPeripherals[id] ?? central.retrievePeripherals(withIdentifiers: [id]).first else {
             lastError = "Ring no longer available; scan again."
             return
         }
         // Use the matched device type from discovery if we have it.
-        let matchedType = discovered.first { $0.id == id }?.deviceType
-        beginConnect(to: target, deviceType: matchedType)
+        let discoveredRing = discovered.first { $0.id == id }
+        beginConnect(
+            to: target,
+            deviceType: discoveredRing?.deviceType,
+            selectedModelID: discoveredRing?.wearableModelID ?? selectedModelID,
+            advertisedName: discoveredRing?.name
+        )
     }
 
     /// Silently reconnect to the last paired ring (used on launch). Falls back to scanning.
     func connectLastKnown() {
         guard isBluetoothReady, let id = lastKnownIdentifier else { return }
         if let known = central.retrievePeripherals(withIdentifiers: [id]).first {
-            beginConnect(to: known, deviceType: lastKnownDeviceType)
+            beginConnect(
+                to: known,
+                deviceType: lastKnownDeviceType,
+                selectedModelID: lastKnownWearableModelID,
+                advertisedName: known.name
+            )
         } else {
             startScanning()
         }
@@ -205,8 +221,12 @@ final class RingBLEClient: NSObject {
         disconnect()
         UserDefaults.standard.removeObject(forKey: Self.lastPeripheralKey)
         UserDefaults.standard.removeObject(forKey: Self.lastDeviceTypeKey)
+        UserDefaults.standard.removeObject(forKey: Self.lastWearableModelKey)
         activeDeviceType = nil
+        activeWearableModelID = nil
         activeCapabilities = []
+        activeAdvertisedName = nil
+        publish(.deviceForgotten)
     }
 
     /// Queue a logical command for writing. The active driver's framing (padding/checksum) is applied
@@ -232,6 +252,10 @@ final class RingBLEClient: NSObject {
         UserDefaults.standard.string(forKey: Self.lastDeviceTypeKey).flatMap(RingDeviceType.init)
     }
 
+    var lastKnownWearableModelID: String? {
+        UserDefaults.standard.string(forKey: Self.lastWearableModelKey)
+    }
+
     var hasLastKnownRing: Bool { lastKnownIdentifier != nil }
 
     /// The active sync engine, exposed so the `RingSyncCoordinator` façade can drive command flows.
@@ -239,7 +263,12 @@ final class RingBLEClient: NSObject {
 
     // MARK: - Internal
 
-    private func beginConnect(to target: CBPeripheral, deviceType: RingDeviceType?) {
+    private func beginConnect(
+        to target: CBPeripheral,
+        deviceType: RingDeviceType?,
+        selectedModelID: String?,
+        advertisedName: String?
+    ) {
         central.stopScan()
         autoReconnect = true
         // Force-close any stale connection (incl. a different peripheral) before opening a new one, so
@@ -256,6 +285,12 @@ final class RingBLEClient: NSObject {
         // Select the coordinator/driver for this connection. Default to jring if discovery didn't
         // tag a type (e.g. reconnect to an unknown cached peripheral) — preserves prior behavior.
         let coordinatorType = Self.coordinators.first { $0.deviceType == deviceType } ?? JringCoordinator.self
+        activeAdvertisedName = advertisedName
+        activeWearableModelID = WearableModel.resolve(
+            advertisedName: advertisedName,
+            selectedModelID: selectedModelID,
+            family: coordinatorType.deviceType
+        )?.id
         installDriver(coordinatorType)
         state = .connecting
         central.connect(target, options: nil)
@@ -409,6 +444,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
         MainActor.assumeIsolated {
             let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
             let matchedType = matchDeviceType(name: name, advertisementData: advertisementData)
+            let matchedModel = WearableModel.model(advertisedName: name)
             // List any *named* peripheral so the user can always find their ring, even if its
             // advertisement omits the service UUID / manufacturer bytes; recognized rings sort first.
             guard let displayName = name, !displayName.isEmpty else { return }
@@ -418,7 +454,8 @@ extension RingBLEClient: CBCentralManagerDelegate {
                 name: displayName,
                 rssi: RSSI.intValue,
                 isLikelyRing: matchedType != nil,
-                deviceType: matchedType
+                deviceType: matchedType,
+                wearableModelID: matchedModel?.family == matchedType ? matchedModel?.id : nil
             )
             if let index = discovered.firstIndex(where: { $0.id == ring.id }) {
                 discovered[index] = ring
@@ -551,9 +588,19 @@ extension RingBLEClient: CBPeripheralDelegate {
             if let type = activeDeviceType {
                 UserDefaults.standard.set(type.rawValue, forKey: Self.lastDeviceTypeKey)
             }
+            if let modelID = activeWearableModelID {
+                UserDefaults.standard.set(modelID, forKey: Self.lastWearableModelKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.lastWearableModelKey)
+            }
             publish(.deviceStateChanged(state: .connected, address: nil))
             if let type = activeDeviceType {
-                publish(.deviceIdentified(deviceType: type, capabilities: activeCapabilities))
+                publish(.deviceIdentified(
+                    deviceType: type,
+                    wearableModelID: activeWearableModelID,
+                    advertisedName: activeAdvertisedName,
+                    capabilities: activeCapabilities
+                ))
             }
             noteActivity()
             startKeepalive()

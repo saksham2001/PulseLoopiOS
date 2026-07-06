@@ -95,7 +95,7 @@ final class VitalsStore {
             hr: hrSamples, spo2: spo2Samples, hrv: hrvSamples,
             stress: stressSamples, fatigue: fatigueSamples, temperature: tempSamples,
             systolic: systolicSamples, diastolic: diastolicSamples, glucose: bloodSugarSamples,
-            summary: summary, range: .twentyFourHours
+            summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric
         )
         var result: [MetricKind: VitalCardViewModel] = [:]
         for metric in MetricKind.allCases {
