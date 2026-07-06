@@ -92,7 +92,7 @@ struct ProfileEditorView: View {
 
     private var weightLabel: String? {
         guard let value = draft.weightDisplayValue else { return nil }
-        return "\(value) \(draft.units == .metric ? "kg" : "lb")"
+        return "\(LocalizedDecimalInput.format(value)) \(draft.units == .metric ? "kg" : "lb")"
     }
 
     private func formCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -156,16 +156,100 @@ struct ProfileEditorView: View {
                 onSave: { draft.setHeight(displayValue: $0) }
             )
         case .weight:
-            let values = draft.units == .metric ? Array(35...250) : Array(77...551)
-            IntegerPickerSheet(
+            DecimalValueSheet(
                 title: "Weight",
-                values: values,
                 initialValue: draft.weightDisplayValue,
-                fallback: draft.units == .metric ? 70 : 154,
-                label: { "\($0) \(draft.units == .metric ? "kg" : "lb")" },
+                unit: draft.units == .metric ? "kg" : "lb",
+                validRange: draft.units == .metric ? 35...250 : 77...551,
                 onSave: { draft.setWeight(displayValue: $0) }
             )
         }
+    }
+}
+
+private struct DecimalValueSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var fieldFocused: Bool
+    @State private var text: String
+
+    let title: String
+    let unit: String
+    let validRange: ClosedRange<Double>
+    let onSave: (Double?) -> Void
+
+    init(
+        title: String,
+        initialValue: Double?,
+        unit: String,
+        validRange: ClosedRange<Double>,
+        onSave: @escaping (Double?) -> Void
+    ) {
+        self.title = title
+        self.unit = unit
+        self.validRange = validRange
+        self.onSave = onSave
+        _text = State(initialValue: initialValue.map { LocalizedDecimalInput.format($0) } ?? "")
+    }
+
+    private var parsedValue: Double? {
+        guard let value = LocalizedDecimalInput.parse(text), validRange.contains(value) else { return nil }
+        return value
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Enter your weight in \(unit)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(PulseColors.textPrimary)
+
+                TextField(LocalizedDecimalInput.format(70.5), text: $text)
+                    .keyboardType(.decimalPad)
+                    .focused($fieldFocused)
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .padding(14)
+                    .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(PulseColors.borderSubtle, lineWidth: 1)
+                    )
+                    .accessibilityLabel("Weight in \(unit)")
+
+                Text("You can use either a comma or a period as the decimal separator.")
+                    .font(.caption)
+                    .foregroundStyle(PulseColors.textMuted)
+
+                if !text.isEmpty && parsedValue == nil {
+                    Text("Enter a weight between \(Int(validRange.lowerBound)) and \(Int(validRange.upperBound)) \(unit).")
+                        .font(.caption)
+                        .foregroundStyle(PulseColors.danger)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .background(PulseColors.background)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Clear") {
+                        onSave(nil)
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        onSave(parsedValue)
+                        dismiss()
+                    }
+                    .disabled(parsedValue == nil)
+                }
+            }
+            .onAppear { fieldFocused = true }
+        }
+        .presentationDetents([.height(280)])
+        .presentationDragIndicator(.visible)
     }
 }
 

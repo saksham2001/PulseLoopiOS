@@ -35,10 +35,14 @@ final class DiagnosticsSubscriber {
         switch event {
         case let .deviceStateChanged(state, _):
             log(.connection, .info, "Connection state: \(state.rawValue)")
-        case let .deviceIdentified(deviceType, capabilities):
+        case let .deviceIdentified(deviceType, wearableModelID, _, capabilities):
             activeDeviceType = deviceType
-            log(.connection, .info, "Identified \(deviceType.displayName)",
+            let displayName = WearableModel.model(id: wearableModelID)?.displayName ?? deviceType.displayName
+            log(.connection, .info, "Identified \(displayName)",
                 metadata: ["capabilities": capabilities.csv])
+        case .deviceForgotten:
+            log(.connection, .info, "Forgot wearable")
+            activeDeviceType = nil
         case let .batteryLevel(percent):
             log(.battery, .info, "Battery \(percent)%")
         case let .syncProgress(stage):

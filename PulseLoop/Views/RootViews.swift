@@ -103,7 +103,7 @@ struct RootAppView: View {
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
                 case .settingsAbout:
-                    AboutSettingsView()
+                    AboutSettingsView(path: $path)
                 case .pairing:
                     PairingView(onConnected: { path.removeLast() })
                 case .debug:

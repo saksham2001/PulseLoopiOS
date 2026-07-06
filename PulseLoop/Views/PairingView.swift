@@ -281,7 +281,7 @@ struct PairingView: View {
 
                 ForEach(matchingRings) { ring in
                     Button {
-                        ble.connect(to: ring.id)
+                        ble.connect(to: ring.id, selectedModelID: selectedModel.id)
                     } label: {
                         ringRow(ring)
                     }
@@ -320,7 +320,9 @@ struct PairingView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(ring.name).font(.subheadline.weight(.medium)).foregroundStyle(PulseColors.textPrimary)
                 if let type = ring.deviceType {
-                    Text(type.displayName).font(.caption2).foregroundStyle(PulseColors.accent)
+                    Text(WearableModel.model(id: ring.wearableModelID)?.displayName ?? type.displayName)
+                        .font(.caption2)
+                        .foregroundStyle(PulseColors.accent)
                 }
             }
             Spacer()
@@ -365,7 +367,7 @@ struct PairingView: View {
                     .foregroundStyle(PulseColors.success)
                     .scaleEffect(didFireConnected ? 1.0 : 0.3) // §6 checkmark spring
                     .animation(.spring(response: 0.45, dampingFraction: 0.55), value: didFireConnected) // §6
-                Text("Connected to \(ble.activeDeviceType?.displayName ?? selectedModel.displayName)")
+                Text("Connected to \(ble.activeWearableModel?.displayName ?? ble.activeDeviceType?.displayName ?? selectedModel.displayName)")
                     .font(.headline)
                     .foregroundStyle(PulseColors.textPrimary)
             }

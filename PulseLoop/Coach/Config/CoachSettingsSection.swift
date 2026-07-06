@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 /// "AI Coach" block for `SettingsView`: provider mode, model, OpenAI/Gemini/
 /// OpenRouter key (stored in Keychain), action/measurement toggles, and saved
@@ -10,6 +11,10 @@ struct CoachSettingsSection: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
+    /// Presents the "Enable Coach Check-Ins?" prompt when the coach is first switched on.
+    @State private var askEnableCheckIns = false
+    /// Set when the user opts into check-ins but iOS denies notification permission.
+    @State private var checkInPermissionDenied = false
     private let openAIKeyStore = OpenAIKeychainStore()
     private let geminiKeyStore = GeminiKeychainStore()
     private let openRouterKeyStore = OpenRouterKeychainStore()
@@ -63,6 +68,19 @@ struct CoachSettingsSection: View {
         SectionHeader(title: "AI Coach", action: nil)
         StatusCopy(title: "Status", body: flags.statusLine)
         toggleRow("Enable AI Coach", isOn: masterEnabledBinding)
+            .alert("Enable Coach Check-Ins?", isPresented: $askEnableCheckIns) {
+                Button("Enable") { enableCheckIns() }
+                Button("Not now", role: .cancel) {}
+            } message: {
+                Text("Get a daily check-in from your coach. You can change this anytime in Coach Check-Ins.")
+            }
+
+        if checkInPermissionDenied {
+            Text("Notifications are off for PulseLoop. Turn them on in iOS Settings to get check-ins.")
+                .font(.caption)
+                .foregroundStyle(PulseColors.danger)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
 
         if store.settings.coachMasterEnabled {
             labeledRow("Provider") {
@@ -380,9 +398,23 @@ struct CoachSettingsSection: View {
                     CoachNotificationScheduler.shared.cancel()
                 } else if store.settings.notificationsEnabled {
                     CoachNotificationScheduler.shared.scheduleNext()
+                } else {
+                    // First time on: ask before enabling check-ins (OS permission only on "Enable").
+                    askEnableCheckIns = true
                 }
             }
         )
+    }
+
+    /// Requests notification permission and enables daily check-ins when the user opts in.
+    private func enableCheckIns() {
+        Task {
+            let granted = (try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            store.settings.notificationsEnabled = granted
+            checkInPermissionDenied = !granted
+            if granted { CoachNotificationScheduler.shared.scheduleNext() }
+        }
     }
 
     private var providerBinding: Binding<CoachProviderMode> {

@@ -76,6 +76,25 @@ final class OnboardingSupportTests: XCTestCase {
         XCTAssertNil(draft.weightKg)
     }
 
+    func testWeightInputAcceptsCommaAndPeriodDecimalSeparators() {
+        let europeanLocale = Locale(identifier: "de_DE")
+        let usLocale = Locale(identifier: "en_US")
+
+        XCTAssertEqual(LocalizedDecimalInput.parse("72,5", locale: europeanLocale), 72.5)
+        XCTAssertEqual(LocalizedDecimalInput.parse("72.5", locale: europeanLocale), 72.5)
+        XCTAssertEqual(LocalizedDecimalInput.parse("72,5", locale: usLocale), 72.5)
+        XCTAssertEqual(LocalizedDecimalInput.parse("72.5", locale: usLocale), 72.5)
+    }
+
+    func testDecimalWeightRoundTripsThroughProfileDraft() {
+        var draft = ProfileDraft(locale: Locale(identifier: "de_DE"))
+        draft.units = .metric
+        draft.setWeight(displayValue: LocalizedDecimalInput.parse("72,5", locale: Locale(identifier: "de_DE")))
+
+        XCTAssertEqual(draft.weightKg ?? 0, 72.5, accuracy: 0.001)
+        XCTAssertEqual(draft.weightDisplayValue ?? 0, 72.5, accuracy: 0.001)
+    }
+
     func testGoalDraftUsesCanonicalRecommendationsInBothUnitSystems() {
         let metric = GoalDraft(units: .metric)
         let imperial = GoalDraft(units: .imperial)

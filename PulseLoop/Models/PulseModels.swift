@@ -96,6 +96,8 @@ final class Device {
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
     var firmwareVersion: String?
+    /// Exact catalog model (for example `colmi-r10`), separate from the protocol/driver family.
+    var wearableModelID: String?
     // Defaulted so SwiftData lightweight migration is additive (existing rows become jring with no
     // declared capabilities until the next connect stamps them).
     var deviceTypeRaw: String = RingDeviceType.jring.rawValue
@@ -112,6 +114,7 @@ final class Device {
         batteryPercent: Int? = nil,
         state: RingConnectionState = .idle,
         deviceType: RingDeviceType = .jring,
+        wearableModelID: String? = nil,
         capabilities: Set<WearableCapability> = []
     ) {
         self.id = id
@@ -122,6 +125,7 @@ final class Device {
         self.batteryPercent = batteryPercent
         self.stateRaw = state.rawValue
         self.deviceTypeRaw = deviceType.rawValue
+        self.wearableModelID = wearableModelID
         self.capabilitiesRaw = capabilities.csv
         self.createdAt = Date()
         self.updatedAt = Date()

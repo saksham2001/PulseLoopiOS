@@ -1,5 +1,34 @@
 import Foundation
 
+/// Parses decimal-pad input without assuming one separator. iOS keyboards follow the user's
+/// region, so European users commonly enter `72,5` while other regions enter `72.5`.
+enum LocalizedDecimalInput {
+    static func parse(_ text: String, locale: Locale = .current) -> Double? {
+        var normalized = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
+
+        if let separator = locale.decimalSeparator, separator != "." {
+            normalized = normalized.replacingOccurrences(of: separator, with: ".")
+        }
+        normalized = normalized.replacingOccurrences(of: ",", with: ".")
+
+        guard !normalized.isEmpty,
+              normalized.filter({ $0 == "." }).count <= 1 else { return nil }
+        return Double(normalized)
+    }
+
+    static func format(_ value: Double, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        formatter.usesGroupingSeparator = false
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+}
+
 enum OnboardingStep: String, CaseIterable, Codable, Identifiable {
     case welcome
     case ring
@@ -63,9 +92,9 @@ struct ProfileDraft: Equatable {
         return units == .metric ? Int(heightCm.rounded()) : Int((heightCm / 2.54).rounded())
     }
 
-    var weightDisplayValue: Int? {
+    var weightDisplayValue: Double? {
         guard let weightKg else { return nil }
-        return units == .metric ? Int(weightKg.rounded()) : Int((weightKg * 2.2046226).rounded())
+        return units == .metric ? weightKg : weightKg * 2.2046226
     }
 
     mutating func setHeight(displayValue: Int?) {
@@ -73,9 +102,9 @@ struct ProfileDraft: Equatable {
         heightCm = units == .metric ? Double(displayValue) : Double(displayValue) * 2.54
     }
 
-    mutating func setWeight(displayValue: Int?) {
+    mutating func setWeight(displayValue: Double?) {
         guard let displayValue else { weightKg = nil; return }
-        weightKg = units == .metric ? Double(displayValue) : Double(displayValue) / 2.2046226
+        weightKg = units == .metric ? displayValue : displayValue / 2.2046226
     }
 
     func apply(to profile: UserProfile) {
