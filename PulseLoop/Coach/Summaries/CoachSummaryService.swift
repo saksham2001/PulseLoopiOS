@@ -11,6 +11,7 @@ final class CoachSummaryService {
     private let keyStore: APIKeyStore
     private let geminiKeyStore: APIKeyStore
     private let openRouterKeyStore: APIKeyStore
+    private let minimaxKeyStore: APIKeyStore
     private let settingsStore: CoachSettingsStore
     private let clientFactory: (String) -> ResponsesClient
 
@@ -22,6 +23,7 @@ final class CoachSummaryService {
         keyStore: APIKeyStore = OpenAIKeychainStore(),
         geminiKeyStore: APIKeyStore = GeminiKeychainStore(),
         openRouterKeyStore: APIKeyStore = OpenRouterKeychainStore(),
+        minimaxKeyStore: APIKeyStore = MiniMaxKeychainStore(),
         settingsStore: CoachSettingsStore = .shared,
         clientFactory: @escaping (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) {
@@ -29,6 +31,7 @@ final class CoachSummaryService {
         self.keyStore = keyStore
         self.geminiKeyStore = geminiKeyStore
         self.openRouterKeyStore = openRouterKeyStore
+        self.minimaxKeyStore = minimaxKeyStore
         self.settingsStore = settingsStore
         self.clientFactory = clientFactory
     }
@@ -96,6 +99,7 @@ final class CoachSummaryService {
             openAIKeyStore: keyStore,
             geminiKeyStore: geminiKeyStore,
             openRouterKeyStore: openRouterKeyStore,
+            minimaxKeyStore: minimaxKeyStore,
             openAIClientFactory: clientFactory
         )
     }

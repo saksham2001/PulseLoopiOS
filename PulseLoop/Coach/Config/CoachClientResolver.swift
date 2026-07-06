@@ -14,6 +14,7 @@ enum CoachClientResolver {
         openAIKeyStore: APIKeyStore,
         geminiKeyStore: APIKeyStore,
         openRouterKeyStore: APIKeyStore,
+        minimaxKeyStore: APIKeyStore,
         openAIClientFactory: (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) -> (key: String?, client: ResponsesClient) {
         switch settings.providerMode {
@@ -29,7 +30,8 @@ enum CoachClientResolver {
             return directClient(
                 settings.providerMode, settings: settings,
                 openAIKeyStore: openAIKeyStore, geminiKeyStore: geminiKeyStore,
-                openRouterKeyStore: openRouterKeyStore, openAIClientFactory: openAIClientFactory
+                openRouterKeyStore: openRouterKeyStore, minimaxKeyStore: minimaxKeyStore,
+                openAIClientFactory: openAIClientFactory
             )
         }
     }
@@ -43,6 +45,7 @@ enum CoachClientResolver {
         openAIKeyStore: APIKeyStore,
         geminiKeyStore: APIKeyStore,
         openRouterKeyStore: APIKeyStore,
+        minimaxKeyStore: APIKeyStore,
         openAIClientFactory: (String) -> ResponsesClient
     ) -> (key: String?, client: ResponsesClient) {
         switch mode {
@@ -56,6 +59,9 @@ enum CoachClientResolver {
                 model: settings.openRouterModel,
                 privacyRouting: settings.orEnablePrivacyRouting,
                 providerSort: settings.orProviderSort))
+        case .userMiniMaxKey:
+            let key = (try? minimaxKeyStore.readKey()) ?? nil
+            return (key, MiniMaxClient(apiKey: key ?? "", model: settings.minimaxModel))
         default:
             // userOpenAIKey / offlineStub / backendProxy (and appleOnDevice never
             // reaches here) all use the OpenAI key + factory.

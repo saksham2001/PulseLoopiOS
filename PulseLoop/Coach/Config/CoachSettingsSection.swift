@@ -18,6 +18,7 @@ struct CoachSettingsSection: View {
     private let openAIKeyStore = OpenAIKeychainStore()
     private let geminiKeyStore = GeminiKeychainStore()
     private let openRouterKeyStore = OpenRouterKeychainStore()
+    private let minimaxKeyStore = MiniMaxKeychainStore()
 
     /// Picker tag that selects the free-text "Custom" OpenRouter model entry.
     private let customModelTag = "__custom__"
@@ -40,11 +41,18 @@ struct CoachSettingsSection: View {
     @State private var showOpenRouterKey: Bool = false
     @State private var openRouterKeyError: String?
 
+    // MiniMax key state
+    @State private var minimaxKeyDraft: String = ""
+    @State private var hasMiniMaxKey: Bool = false
+    @State private var showMiniMaxKey: Bool = false
+    @State private var minimaxKeyError: String?
+
     private var flags: CoachFeatureFlags {
         let hasKey: Bool
         switch store.settings.providerMode {
         case .userGeminiKey: hasKey = hasGeminiKey
         case .userOpenRouterKey: hasKey = hasOpenRouterKey
+        case .userMiniMaxKey: hasKey = hasMiniMaxKey
         default: hasKey = hasSavedKey
         }
         return CoachFeatureFlags(settings: store.settings, hasAPIKey: hasKey)
@@ -54,6 +62,17 @@ struct CoachSettingsSection: View {
     /// (i.e. the user is using the free-text "Custom" slug).
     private var isCustomOpenRouterModel: Bool {
         !OpenRouterModel.allCases.contains { $0.rawValue == store.settings.model }
+    }
+
+    /// Whether to offer the image-input (multimodal) toggle. Hidden on-device (no
+    /// image API) and on text-only MiniMax models — only MiniMax-M3 is multimodal,
+    /// so attaching a photo to M2.x would just error.
+    private var showsImageInputToggle: Bool {
+        switch store.settings.providerMode {
+        case .appleOnDevice: return false
+        case .userMiniMaxKey: return store.settings.model == MiniMaxModel.m3.rawValue
+        default: return true
+        }
     }
 
     /// Which provider's key field to surface. The on-device provider needs no
@@ -111,6 +130,10 @@ struct CoachSettingsSection: View {
                                 Text(model.label).tag(model.rawValue)
                             }
                             Text("Custom…").tag(customModelTag)
+                        case .userMiniMaxKey:
+                            ForEach(MiniMaxModel.allCases) { model in
+                                Text(model.label).tag(model.rawValue)
+                            }
                         default:
                             ForEach(CoachModel.allCases) { model in
                                 Text(model.label).tag(model.rawValue)
@@ -161,11 +184,24 @@ struct CoachSettingsSection: View {
                     onSave: saveOpenRouterKey,
                     onRemove: removeOpenRouterKey
                 )
+            } else if effectiveKeyProvider == .userMiniMaxKey {
+                apiKeyField(
+                    placeholder: "MiniMax API key",
+                    hint: "Stored only in your device Keychain. Used to call MiniMax directly.",
+                    draft: $minimaxKeyDraft,
+                    showRaw: $showMiniMaxKey,
+                    hasSaved: hasMiniMaxKey,
+                    error: minimaxKeyError,
+                    onSave: saveMiniMaxKey,
+                    onRemove: removeMiniMaxKey
+                )
             }
 
-            // The on-device provider is tool-less: it ignores web search, so the
-            // toggle isn't offered there.
-            if store.settings.providerMode != .appleOnDevice {
+            // Web search is provider-hosted. MiniMax's API exposes no web search,
+            // and the on-device model is tool-less — so the toggle is only offered
+            // for providers that can actually search.
+            if store.settings.providerMode != .appleOnDevice,
+               store.settings.providerMode != .userMiniMaxKey {
                 toggleRow("Web search", isOn: webSearchBinding)
             }
 
@@ -200,9 +236,7 @@ struct CoachSettingsSection: View {
 
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
-            // The on-device model has no image-input API in the shipping SDK, so
-            // the option isn't offered there.
-            if store.settings.providerMode != .appleOnDevice {
+            if showsImageInputToggle {
                 toggleRow("Image input (attach photos)", isOn: imageInputBinding)
             }
 
@@ -428,6 +462,11 @@ struct CoachSettingsSection: View {
                     store.settings.model = GeminiModel.flash25.rawValue
                 case .userOpenRouterKey:
                     store.settings.model = OpenRouterModel.default.rawValue
+                case .userMiniMaxKey:
+                    store.settings.model = MiniMaxModel.default.rawValue
+                    // MiniMax has no web search; clear any leftover-on state so the
+                    // (now hidden) toggle can't linger enabled.
+                    store.settings.enableWebSearch = false
                 default:
                     store.settings.model = CoachModel.gpt54.rawValue
                 }
@@ -457,6 +496,12 @@ struct CoachSettingsSection: View {
                     if !isCustomOpenRouterModel { store.settings.model = "" }
                 } else {
                     store.settings.model = newValue
+                }
+                // MiniMax: only M3 is multimodal — drop image input on text-only
+                // picks so the (now hidden) toggle can't linger enabled.
+                if store.settings.providerMode == .userMiniMaxKey,
+                   store.settings.model != MiniMaxModel.m3.rawValue {
+                    store.settings.enableImageInput = false
                 }
             }
         )
@@ -497,6 +542,7 @@ struct CoachSettingsSection: View {
         hasSavedKey = ((try? openAIKeyStore.readKey()) ?? nil) != nil
         hasGeminiKey = ((try? geminiKeyStore.readKey()) ?? nil) != nil
         hasOpenRouterKey = ((try? openRouterKeyStore.readKey()) ?? nil) != nil
+        hasMiniMaxKey = ((try? minimaxKeyStore.readKey()) ?? nil) != nil
     }
 
     private func saveOpenAIKey() {
@@ -565,6 +611,29 @@ struct CoachSettingsSection: View {
             refreshKeyState()
         } catch {
             openRouterKeyError = error.localizedDescription
+        }
+    }
+
+    private func saveMiniMaxKey() {
+        minimaxKeyError = nil
+        do {
+            try minimaxKeyStore.saveKey(minimaxKeyDraft)
+            minimaxKeyDraft = ""
+            showMiniMaxKey = false
+            refreshKeyState()
+        } catch {
+            minimaxKeyError = error.localizedDescription
+        }
+    }
+
+    private func removeMiniMaxKey() {
+        minimaxKeyError = nil
+        do {
+            try minimaxKeyStore.deleteKey()
+            minimaxKeyDraft = ""
+            refreshKeyState()
+        } catch {
+            minimaxKeyError = error.localizedDescription
         }
     }
 }

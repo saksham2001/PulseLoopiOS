@@ -9,6 +9,7 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     case userOpenAIKey
     case userGeminiKey
     case userOpenRouterKey
+    case userMiniMaxKey
     case backendProxy
 
     var id: String { rawValue }
@@ -20,9 +21,46 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
         case .userOpenAIKey: return "OpenAI (your key)"
         case .userGeminiKey: return "Gemini (your key)"
         case .userOpenRouterKey: return "OpenRouter (your key)"
+        case .userMiniMaxKey: return "MiniMax (your key)"
         case .backendProxy: return "Backend proxy"
         }
     }
+}
+
+/// Preset MiniMax model choices surfaced in Settings. MiniMax's catalog is small
+/// and fixed (unlike OpenRouter), so these are exact API model names rather than a
+/// free-text field. The stored `CoachSettings.model` stays a string, so a new
+/// model name still works if typed/served; these are just the curated picks.
+enum MiniMaxModel: String, CaseIterable, Identifiable {
+    case m3            = "MiniMax-M3"
+    case m27           = "MiniMax-M2.7"
+    case m27highspeed  = "MiniMax-M2.7-highspeed"
+    case m25           = "MiniMax-M2.5"
+    case m25highspeed  = "MiniMax-M2.5-highspeed"
+    case m21           = "MiniMax-M2.1"
+    case m21highspeed  = "MiniMax-M2.1-highspeed"
+    case m2            = "MiniMax-M2"
+
+    var id: String { rawValue }
+
+    var label: String { rawValue }
+
+    var blurb: String {
+        switch self {
+        case .m3:           return "Latest — agentic reasoning, tool use, 1M context (default)"
+        case .m27:          return "Recursive self-improvement (~60 tps)"
+        case .m27highspeed: return "M2.7 — same performance, faster (~100 tps)"
+        case .m25:          return "Peak performance & value (~60 tps)"
+        case .m25highspeed: return "M2.5 — same performance, faster (~100 tps)"
+        case .m21:          return "Strong multi-language programming (~60 tps)"
+        case .m21highspeed: return "M2.1 — faster (~100 tps)"
+        case .m2:           return "Agentic capabilities, advanced reasoning"
+        }
+    }
+
+    /// Sensible default when switching to MiniMax — the latest agentic model, best
+    /// suited to the coach's multi-round tool loop.
+    static let `default` = MiniMaxModel.m3
 }
 
 /// Preset Gemini model choices surfaced in Settings.
@@ -148,6 +186,13 @@ struct CoachSettings: Codable, Equatable {
     var openRouterModel: String {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? OpenRouterModel.default.rawValue : trimmed
+    }
+
+    /// The MiniMax model name to use. Falls back to the default only when the
+    /// stored `model` is blank.
+    var minimaxModel: String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? MiniMaxModel.default.rawValue : trimmed
     }
 
     static let `default` = CoachSettings()

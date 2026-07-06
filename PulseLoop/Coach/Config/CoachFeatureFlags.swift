@@ -24,7 +24,7 @@ struct CoachFeatureFlags {
             // device. Otherwise the coach degrades to scripted and on-device
             // failures surface as an error in chat.
             return AppleOnDeviceAvailability.current.isAvailable
-        case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey:
+        case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey, .userMiniMaxKey:
             return hasAPIKey
         case .backendProxy:
             return false  // not implemented in v1
@@ -54,6 +54,8 @@ struct CoachFeatureFlags {
             return hasAPIKey ? "Ready · \(settings.model)" : "Add a Gemini key to enable."
         case .userOpenRouterKey:
             return hasAPIKey ? "Ready · \(settings.openRouterModel)" : "Add an OpenRouter key to enable."
+        case .userMiniMaxKey:
+            return hasAPIKey ? "Ready · \(settings.minimaxModel)" : "Add a MiniMax key to enable."
         case .backendProxy:
             return "Backend proxy not available yet."
         }

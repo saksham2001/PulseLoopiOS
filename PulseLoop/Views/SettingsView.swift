@@ -33,6 +33,8 @@ struct SettingsView: View {
             return GeminiModel(rawValue: settings.model)?.label ?? settings.model
         case .userOpenRouterKey:
             return OpenRouterModel(rawValue: settings.model)?.label ?? settings.openRouterModel
+        case .userMiniMaxKey:
+            return MiniMaxModel(rawValue: settings.model)?.label ?? settings.minimaxModel
         case .backendProxy:
             return "Backend proxy"
         }

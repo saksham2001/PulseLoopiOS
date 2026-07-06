@@ -701,6 +701,152 @@ final class OpenRouterClientTests: XCTestCase {
     }
 }
 
+// MARK: - MiniMaxClient
+
+final class MiniMaxClientTests: XCTestCase {
+    private func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    private let okBody = Data(#"{"id":"mm-1","choices":[{"message":{"content":"ok"}}]}"#.utf8)
+
+    private func sentBody() throws -> [String: Any] {
+        let data = try XCTUnwrap(StubURLProtocol.lastRequestBody)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// Requests hit MiniMax's OpenAI-compatible endpoint with the model sent as-is
+    /// (no `:online` suffix — MiniMax has no hosted web search).
+    func testEndpointAndModelSentAsIs() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "ignored", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        XCTAssertEqual(StubURLProtocol.lastRequestURL?.absoluteString, "https://api.minimax.io/v1/chat/completions")
+        XCTAssertEqual(try sentBody()["model"] as? String, "MiniMax-M3")
+    }
+
+    func testParsesContentAndToolCalls() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"id":"mm-2","choices":[{"message":{"content":null,"tool_calls":[
+          {"id":"call_1","type":"function","function":{"name":"get_daily_summary","arguments":"{\\"date\\":\\"2026-06-01\\"}"}}
+        ]}}]}
+        """.utf8)
+
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        let response = try await client.send(requestBody: body)
+
+        XCTAssertEqual(response.functionCalls.count, 1)
+        XCTAssertEqual(response.functionCalls.first?.name, "get_daily_summary")
+        XCTAssertEqual(response.functionCalls.first?.callID, "call_1")
+        XCTAssertTrue(response.functionCalls.first?.arguments.contains("2026-06-01") ?? false)
+    }
+
+    /// The hosted `web_search` tool has no MiniMax equivalent, so it must be
+    /// dropped (not forwarded as a function tool) and the model left unchanged.
+    func testDropsHostedWebSearchTool() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [["type": "web_search"]], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let json = try sentBody()
+        XCTAssertEqual(json["model"] as? String, "MiniMax-M3")
+        XCTAssertNil(json["tools"], "hosted web_search must be dropped, not forwarded")
+    }
+
+    /// MiniMax's compat endpoint doesn't document `response_format`, the OpenAI
+    /// `reasoning` object, or a provider-routing block, so none are sent even when
+    /// the app supplies a schema and reasoning effort.
+    func testOmitsResponseFormatReasoningAndProvider() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: CoachResponseSchema.textFormat,
+            previousResponseId: nil, reasoningEffort: "high")
+        _ = try await client.send(requestBody: body)
+
+        let json = try sentBody()
+        XCTAssertNil(json["response_format"])
+        XCTAssertNil(json["reasoning"])
+        XCTAssertNil(json["provider"])
+    }
+
+    /// M-series models emit reasoning inline as `<think>…</think>`; those blocks
+    /// must be stripped so the coach_response JSON parses.
+    func testStripsThinkingBlocks() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(
+            #"{"id":"mm-3","choices":[{"message":{"content":"<think>let me reason</think>the answer"}}]}"#.utf8)
+
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        let response = try await client.send(requestBody: body)
+
+        XCTAssertEqual(response.outputText, "the answer")
+    }
+
+    /// Continuation turn: the assistant `tool_calls` message must be replayed
+    /// before the `tool` result answering it (Chat Completions ordering), on the
+    /// same client instance.
+    func testReplaysAssistantToolCallsOnContinuation() async throws {
+        let client = MiniMaxClient(apiKey: "mm-test", model: "MiniMax-M3", session: session())
+
+        // Turn 1: the model asks for a tool call.
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"id":"mm-turn1","choices":[{"message":{"content":null,"tool_calls":[
+          {"id":"call_1","type":"function","function":{"name":"get_daily_summary","arguments":"{}"}}
+        ]}}]}
+        """.utf8)
+        let first = try await client.send(requestBody: try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil))
+        let callID = try XCTUnwrap(first.functionCalls.first).callID
+
+        // Turn 2: we feed the tool result back, keyed by the prior response id.
+        StubURLProtocol.responseBody = okBody
+        _ = try await client.send(requestBody: try OpenAIRequestBuilder.data(
+            model: "x",
+            input: [["type": "function_call_output", "call_id": "call_1", "output": "{\"steps\":100}"]],
+            tools: [], textFormat: nil, previousResponseId: "mm-turn1", reasoningEffort: nil))
+
+        let messages = try XCTUnwrap(try sentBody()["messages"] as? [[String: Any]])
+        // The replayed assistant message carrying the tool call.
+        let assistant = try XCTUnwrap(messages.first { ($0["role"] as? String) == "assistant" })
+        let toolCalls = try XCTUnwrap(assistant["tool_calls"] as? [[String: Any]])
+        XCTAssertEqual(toolCalls.first?["id"] as? String, "call_1")
+        // The tool result, ordered after the assistant message.
+        let toolMsg = try XCTUnwrap(messages.first { ($0["role"] as? String) == "tool" })
+        XCTAssertEqual(toolMsg["tool_call_id"] as? String, "call_1")
+        XCTAssertEqual(toolMsg["content"] as? String, "{\"steps\":100}")
+
+        let assistantIdx = try XCTUnwrap(messages.firstIndex { ($0["role"] as? String) == "assistant" })
+        let toolIdx = try XCTUnwrap(messages.firstIndex { ($0["role"] as? String) == "tool" })
+        XCTAssertLessThan(assistantIdx, toolIdx, "assistant tool_calls must precede the tool result")
+        XCTAssertEqual(callID, "call_1")
+    }
+}
+
 // MARK: - CoachTurnError mapping
 
 final class CoachTurnErrorTests: XCTestCase {
