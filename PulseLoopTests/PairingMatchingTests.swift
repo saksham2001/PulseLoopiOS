@@ -90,4 +90,8 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertNil(WearableModel.resolve(advertisedName: nil, selectedModelID: nil, family: .colmiR02))
         XCTAssertEqual(RingDeviceType.colmiR02.displayName, "Colmi / Yawell ring")
     }
+
+    func testColmiR11ReusesYawellR11Image() {
+        XCTAssertEqual(WearableModel.colmiR11.imageName, WearableModel.yawellR11.imageName)
+    }
 }

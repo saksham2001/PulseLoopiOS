@@ -39,7 +39,7 @@ extension WearableModel {
     static let colmiR09 = colmiFamily("colmi-r09", "Colmi R09", brand: "Colmi", pattern: "^R09_.*")
     static let colmiR10 = colmiFamily("colmi-r10", "Colmi R10", brand: "Colmi", pattern: "^COLMI R10_.*")
     static let colmiR11 = colmiFamily(
-        "colmi-r11", "Colmi R11", brand: "Colmi", pattern: "^R11C_[0-9A-F]{4}$", hasImage: false
+        "colmi-r11", "Colmi R11", brand: "Colmi", pattern: "^R11C_[0-9A-F]{4}$", imageName: "yawell-r11"
     )
     static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi", pattern: "^COLMI R12_.*")
 
@@ -54,13 +54,13 @@ extension WearableModel {
         _ name: String,
         brand: String,
         pattern: String,
-        hasImage: Bool = true
+        imageName: String? = nil
     ) -> WearableModel {
         // Asset-catalog image name matches the model id (see PulseLoop/Assets.xcassets).
         WearableModel(
             id: id, displayName: name, brand: brand, family: .colmiR02,
             tint: PulseColors.hrv, blurb: "HR · SpO₂ · HRV · Stress · Temp · Sleep",
-            advertisedNamePatterns: [pattern], imageName: hasImage ? id : nil
+            advertisedNamePatterns: [pattern], imageName: imageName ?? id
         )
     }
 
