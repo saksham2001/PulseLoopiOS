@@ -38,8 +38,16 @@ struct TK5Encoder {
         seq.append(logical("01", "03", "aa40002b"))
         seq.append(logical("04", "0e", "00"))       // bond nudge
         seq.append(contentsOf: enableAllMonitoring())
+        seq.append(enableLiveStatus())
         return seq
     }
+
+    /// Enable the ring's **live status auto-push** (`03 09 01 00 02`). Once sent, the ring streams
+    /// `06 00` status frames (current step count / distance / calories) on be940003 continuously while
+    /// connected — verified in the captures, where the first `06 00` appears immediately after this
+    /// command and then repeats for the rest of the session. Without it the app only sees the one-time
+    /// history dump, so today's live step count never updates. (`03 09 00 00 02` disables it.)
+    func enableLiveStatus() -> [UInt8] { logical("03", "09", "010002") }
 
     /// Enable the ring's all-day background monitoring for the extra metrics. Each `05 <metric> 02`
     /// write turns one metric's auto-sampling on (`0x02` = enable, the Colmi-family pref-write

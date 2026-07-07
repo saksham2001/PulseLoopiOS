@@ -51,6 +51,7 @@ wall-clock time.
 | `02 24` | history dump start | payload `f0` header marker; records then stream on be940003 |
 | `02 26` | history page | pull next page |
 | `02 28` | history ack/finish | |
+| `03 09` | live status auto-push on/off | `01 00 02` enables, `00 00 02` disables. Once enabled the ring streams `06 00` (steps/distance/calories) continuously while connected — **required** for live step updates. |
 | `03 2f` | live measurement on/off | payload `[enable:1][mode:1]`; **mode picks the sensor**: `00`=HR (green LED)→`06 01`, `01`=BP→`06 03`, `02`=SpO₂ (red/IR LED)→`06 02`, `0a`=HRV→`06 03`; stop = `00 <mode>`. (`0c` seen, unidentified.) |
 
 ## Async stream (be940003)

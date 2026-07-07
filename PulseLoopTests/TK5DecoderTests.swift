@@ -185,6 +185,15 @@ final class TK5DecoderTests: XCTestCase {
         XCTAssertEqual(e.liveStreamStop(), [0x03, 0x2f, 0x00, 0x00])  // stop (mode-agnostic)
     }
 
+    // MARK: Startup
+
+    func testStartupEnablesLiveStatusStream() {
+        // Without `03 09 01 00 02` the ring never auto-pushes 06 00 status, so live steps freeze.
+        let seq = TK5Encoder().startupSequence()
+        XCTAssertTrue(seq.contains([0x03, 0x09, 0x01, 0x00, 0x02]),
+                      "startup must enable the live status auto-push")
+    }
+
     // MARK: Coordinator recognition
 
     @MainActor
