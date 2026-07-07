@@ -11,7 +11,9 @@ final class RouteDistanceEngineTests: XCTestCase {
     private let degPerMeter = 180.0 / (.pi * 6_371_000.0)
 
     /// `count` accepted points heading due north, `stepMeters` apart, `stepSeconds` apart.
-    private func track(count: Int, stepMeters: Double, stepSeconds: Double, from origin: (lat: Double, lon: Double) = (37.0, -122.0), startAt: Date? = nil, accepted: Bool = true) -> [ActivityGpsPoint] {
+    private func track(count: Int, stepMeters: Double, stepSeconds: Double,
+                       from origin: (lat: Double, lon: Double) = (37.0, -122.0),
+                       startAt: Date? = nil, accepted: Bool = true) -> [ActivityGpsPoint] {
         let t0 = startAt ?? start
         return (0..<count).map { i in
             ActivityGpsPoint(

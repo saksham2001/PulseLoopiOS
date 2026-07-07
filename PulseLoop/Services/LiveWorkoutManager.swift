@@ -11,6 +11,8 @@ import SwiftData
 @MainActor
 @Observable
 final class LiveWorkoutManager {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private let coordinator: RingSyncCoordinator
     let gps: GpsRouteRecorder
     private let polling: WorkoutSensorPollingService

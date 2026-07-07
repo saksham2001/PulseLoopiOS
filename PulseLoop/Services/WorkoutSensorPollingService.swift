@@ -16,6 +16,8 @@ import SwiftData
 /// recording-quality report. HR and SpO2 reads never overlap — there is only one ring.
 @MainActor
 final class WorkoutSensorPollingService: ObservableObject {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private enum SensorKind {
         case heartRate
         case spo2

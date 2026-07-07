@@ -15,6 +15,8 @@ import Observation
 @MainActor
 @Observable
 final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private(set) var authorization: CLAuthorizationStatus
     private(set) var isTracking = false
     private(set) var pointCount = 0

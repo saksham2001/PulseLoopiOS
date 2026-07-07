@@ -15,6 +15,8 @@ enum LiveHRSource: Sendable {
 @MainActor
 @Observable
 final class LiveWorkoutStats {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     let sessionId: UUID
     let startedAt: Date
     let useGps: Bool

@@ -8,6 +8,8 @@ import SwiftData
 @MainActor
 @Observable
 final class RingSyncCoordinator {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     enum MeasureState: Equatable {
         case idle
         case measuring
