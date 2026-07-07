@@ -41,11 +41,18 @@ struct TK5Decoder {
             return [.spo2Result(value: Int(spo2), timestamp: now)]
 
         case (TK5FrameType.stream, TK5Command.liveExtended):
-            // Live HRV appears at payload[3] on this frame (e.g. `00 00 00 4f` = 79 ms, matching the
-            // app's live reading); other sub-frames carry it as 0 and are ignored. hrvRange-gated.
+            // This live frame carries two different shapes depending on the active measurement mode:
+            //   BP  (mode 0x01): `[sys][dia][hr?]…`  — verified against the app (111/74, 112/75)
+            //   HRV (mode 0x0a): `[0 0 0][hrv]…`      — verified against the app (79, 177 ms)
+            // Distinguish by the leading bytes; both are range-gated downstream.
             let p = frame.payload
-            guard p.count >= 4, p[3] > 0 else { return [.commandAck(commandId: frame.cmd)] }
-            return [.hrvSample(value: Int(p[3]), timestamp: now)]
+            if p.count >= 2, (60...250).contains(p[0]), (30...160).contains(p[1]) {
+                return [.bloodPressureSample(systolic: Int(p[0]), diastolic: Int(p[1]), timestamp: now)]
+            }
+            if p.count >= 4, p[3] > 0 {
+                return [.hrvSample(value: Int(p[3]), timestamp: now)]
+            }
+            return [.commandAck(commandId: frame.cmd)]
 
         // MARK: History records (be940003, type 0x05)
 
@@ -72,6 +79,10 @@ struct TK5Decoder {
             var events: [RingDecodedEvent] = []
             for r in records(in: frame.payload, size: 20) {
                 let ts = TK5Bytes.date(TK5Bytes.u32(r, 0))
+                if (60...250).contains(r[7]), (30...160).contains(r[8]) {
+                    // Systolic @7 / diastolic @8 — verified against the app (106/70 @6:00).
+                    events.append(.bloodPressureSample(systolic: Int(r[7]), diastolic: Int(r[8]), timestamp: ts))
+                }
                 if (70...100).contains(r[9]) {
                     events.append(.historyMeasurement(kind: .spo2, value: Double(r[9]), timestamp: ts))
                 }

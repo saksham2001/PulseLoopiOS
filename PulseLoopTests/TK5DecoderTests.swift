@@ -101,6 +101,27 @@ final class TK5DecoderTests: XCTestCase {
         }
         XCTAssertEqual(spo2, [98, 97, 97, 96, 97, 96, 97, 95])
         XCTAssertEqual(hrv, [52, 43, 177, 95, 33, 33, 61, 128])
+        // Periodic BP at offsets 7/8 — last record (06:00) verified 106/70 against the app.
+        let bp = events.compactMap { e -> (Int, Int)? in
+            if case let .bloodPressureSample(s, d, _) = e { return (s, d) } else { return nil }
+        }
+        XCTAssertEqual(bp.map(\.0), [115, 112, 112, 109, 111, 111, 110, 106])   // systolic
+        XCTAssertEqual(bp.last?.1, 70)                                          // 06:00 diastolic
+    }
+
+    func testLiveExtendedDisambiguatesBPvsHRV() {
+        // 06 03 in BP mode: [sys][dia]… → 111/74 (verified against the app's 6:52 reading).
+        let bpFrame = TK5Frame(validating: bytes("060314006f4a44000000000000000000000074f1"))!
+        guard case let .bloodPressureSample(sys, dia, _) = decoder.decode(bpFrame).first else {
+            return XCTFail("expected bloodPressureSample")
+        }
+        XCTAssertEqual([sys, dia], [111, 74])
+        // 06 03 in HRV mode: [0,0,0,hrv]… → HRV, not misread as BP.
+        let hrvFrame = TK5Frame(validating: bytes("06031400000000b1000000000000000000001579"))!
+        guard case let .hrvSample(value, _) = decoder.decode(hrvFrame).first else {
+            return XCTFail("expected hrvSample")
+        }
+        XCTAssertEqual(value, 177)
     }
 
     func testHistoryRecordDecodesHRV() {

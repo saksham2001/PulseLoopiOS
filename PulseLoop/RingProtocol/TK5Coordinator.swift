@@ -36,7 +36,7 @@ final class TK5Coordinator: WearableCoordinator {
     /// `06 01` (HR) / `06 02` (SpO₂) / `06 03` (HRV) frames, then toggles it off. All three ride the
     /// one stream, so any of them can be measured on demand.
     let capabilities: Set<WearableCapability> = [
-        .heartRate, .spo2, .steps, .battery, .hrv,
+        .heartRate, .spo2, .steps, .battery, .hrv, .bloodPressure,
         .sleep, .remSleep,
         .manualHeartRate, .manualSpo2, .manualHrv,
         .realtimeHeartRate, .realtimeSteps,

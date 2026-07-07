@@ -51,7 +51,7 @@ wall-clock time.
 | `02 24` | history dump start | payload `f0` header marker; records then stream on be940003 |
 | `02 26` | history page | pull next page |
 | `02 28` | history ack/finish | |
-| `03 2f` | live measurement on/off | payload `[enable:1][mode:1]`; **mode picks the sensor**: `00`=HR (green LED)→`06 01`, `02`=SpO₂ (red/IR LED)→`06 02`, `0a`=HRV→`06 03`; stop = `00 00` |
+| `03 2f` | live measurement on/off | payload `[enable:1][mode:1]`; **mode picks the sensor**: `00`=HR (green LED)→`06 01`, `01`=BP→`06 03`, `02`=SpO₂ (red/IR LED)→`06 02`, `0a`=HRV→`06 03`; stop = `00 <mode>`. (`0c` seen, unidentified.) |
 
 ## Async stream (be940003)
 
@@ -133,5 +133,12 @@ window 22:33–06:27, awake 0): `0xf1`=deep, `0xf2`=light, `0xf3`=rem, `0xf4`=aw
 ## Not yet decoded
 
 - **Temperature** — enable is sent; no data captured yet.
-- **Blood pressure** — likely at `05 18` offsets 7/8 (systolic/diastolic; values look plausible) but
-  unverified against a displayed reading, so not emitted.
+## Blood pressure — VERIFIED
+
+Two sources, both emitted:
+- **Periodic** in `05 18` at offsets 7 (systolic) / 8 (diastolic) — verified 106/70 @6:00.
+- **Live** on `06 03` in BP mode (`03 2f 01 01`): `[sys][dia][hr?]…` — verified 111/74, 112/75.
+
+The `06 03` frame is shared between BP (mode 0x01) and HRV (mode 0x0a); the decoder distinguishes by
+whether the leading bytes fall in BP range. `.bloodPressure` capability declared; app-side calibration
+(offset on read) works even though there's no ring-side BP-calibration command.
