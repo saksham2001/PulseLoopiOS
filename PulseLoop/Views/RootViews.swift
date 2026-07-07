@@ -8,14 +8,26 @@ struct RootAppView: View {
     @Environment(LiveWorkoutManager.self) private var liveWorkout
     @Query private var profiles: [UserProfile]
     @State private var path = NavigationPath()
+    @State private var didFinishForcedOnboarding = false
+
+    private var forceOnboardingForTesting: Bool {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: "forceOnboarding")
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if profiles.first?.onboardingCompleted == true {
+                if (!forceOnboardingForTesting || didFinishForcedOnboarding),
+                   profiles.first?.onboardingCompleted == true {
                     MainTabView(path: $path)
                 } else {
-                    OnboardingFlowView()
+                    OnboardingFlowView {
+                        didFinishForcedOnboarding = true
+                    }
                 }
             }
             .background(PulseColors.background.ignoresSafeArea())
@@ -55,6 +67,10 @@ struct RootAppView: View {
                 switch route {
                 case let .activityDetail(id):
                     ActivityDetailView(sessionId: id)
+                case let .metricDetail(metric):
+                    MetricDetailView(metric: metric, path: $path)
+                case .activityTrends:
+                    ActivityTrendsView(path: $path)
                 case .recordSelect:
                     RecordSelectView(path: $path)
                 case let .recordLive(id):
@@ -65,6 +81,8 @@ struct RootAppView: View {
                     SettingsView(path: $path)
                 case .settingsProfile:
                     ProfileSettingsView()
+                case .settingsPhysiology:
+                    PhysiologySettingsView()
                 case .settingsNotifications:
                     NotificationsSettingsView()
                 case .settingsCoach:
@@ -79,12 +97,16 @@ struct RootAppView: View {
                     GoalsSettingsView()
                 case .settingsVitals:
                     VitalsSettingsView()
+                case .settingsToday:
+                    TodaySettingsView()
+                case .settingsCalibration:
+                    CalibrationSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
                 case .settingsHealth:
                     HealthSettingsDetailView()
                 case .settingsAbout:
-                    AboutSettingsView()
+                    AboutSettingsView(path: $path)
                 case .pairing:
                     PairingView(onConnected: { path.removeLast() })
                 case .debug:
@@ -110,6 +132,8 @@ struct RootAppView: View {
 
 struct MainTabView: View {
     @Binding var path: NavigationPath
+    @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.modelContext) private var modelContext
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
@@ -133,10 +157,16 @@ struct MainTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             AppHeader(path: $path)
+            // Thin sync-progress accent directly under the greeting; only present while the ring
+            // is actively syncing so the user knows wearable data is still streaming in.
+            if coordinator.isSyncing {
+                SyncProgressBar()
+                    .transition(.opacity)
+            }
             ZStack(alignment: .bottom) {
                 TabView(selection: $selected) {
-                    TodayView(path: $path, selectedTab: $selected).tag(MainTab.today)
-                    VitalsView().tag(MainTab.vitals)
+                    TodayView(path: $path, selectedTab: $selected, isActive: selected == .today).tag(MainTab.today)
+                    VitalsView(path: $path, isActive: selected == .vitals).tag(MainTab.vitals)
                     ActivityView(path: $path).tag(MainTab.activity)
                     SleepView().tag(MainTab.sleep)
                     if coachEnabled {
@@ -152,6 +182,7 @@ struct MainTabView: View {
             .ignoresSafeArea(.keyboard, edges: .bottom)
             .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
+        .animation(.easeInOut(duration: 0.25), value: coordinator.isSyncing)
         .onChange(of: nav.requestedConversationId) { _, id in
             if id != nil && coachEnabled { selected = .coach }  // CoachView opens the thread + resets the flag
         }
@@ -247,16 +278,20 @@ struct ConnectionStatusPill: View {
     }
 
     private var isPulsing: Bool {
-        state == .connecting || state == .reconnecting || state == .scanning
+        state == .connecting || state == .reconnecting
     }
 
     private var dotColor: Color {
         switch state {
         case .connected: return PulseColors.success
         case .connecting, .reconnecting: return PulseColors.accent
-        case .scanning: return PulseColors.textMuted
+        // No ring linked: the header's background auto-reconnect scan (which never
+        // resolves without a reachable ring) reads as "Disconnected" to the user,
+        // not an in-progress action. Show it in danger red like the other
+        // not-connected states. (Active pairing has its own UI in PairingView.)
+        case .scanning: return PulseColors.danger
         case .failed: return PulseColors.danger
-        case .idle, .disconnected: return PulseColors.textMuted
+        case .idle, .disconnected: return PulseColors.danger
         }
     }
 
@@ -266,7 +301,7 @@ struct ConnectionStatusPill: View {
             if let battery = batteryPercent, battery > 0 { return "Connected · \(battery)%" }
             return "Connected"
         case .connecting, .reconnecting: return "Connecting…"
-        case .scanning: return "Searching…"
+        case .scanning: return "Disconnected"
         case .failed: return "Sync failed"
         case .idle, .disconnected: return "Disconnected"
         }
@@ -314,134 +349,6 @@ struct BottomNavBar: View {
         .overlay(alignment: .top) {
             Rectangle().fill(PulseColors.borderSubtle).frame(height: 1)
         }
-    }
-}
-
-struct OnboardingFlowView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var profiles: [UserProfile]
-    @State private var step = 0
-    private let titles = ["Welcome", "Profile", "Baseline", "Goals", "Pair"]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                ForEach(titles.indices, id: \.self) { index in
-                    Capsule()
-                        .fill(index <= step ? PulseColors.accent : PulseColors.cardSoft)
-                        .frame(height: 4)
-                }
-            }
-            .padding()
-
-            TabView(selection: $step) {
-                OnboardingWelcomeView(next: next).tag(0)
-                OnboardingProfileView(next: next).tag(1)
-                OnboardingBaselineView(next: next).tag(2)
-                OnboardingGoalsView(next: next).tag(3)
-                OnboardingPairView(finish: finish).tag(4)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-        }
-        .background(PulseColors.background.ignoresSafeArea())
-        .navigationBarBackButtonHidden()
-    }
-
-    private func next() {
-        withAnimation(.snappy) {
-            step = min(step + 1, 4)
-        }
-    }
-
-    private func finish() {
-        let profile = profiles.first ?? UserProfile()
-        profile.onboardingCompleted = true
-        profile.baselineCompleted = true
-        profile.updatedAt = Date()
-        modelContext.insert(profile)
-        try? modelContext.save()
-    }
-}
-
-struct OnboardingWelcomeView: View {
-    let next: () -> Void
-    var body: some View {
-        OnboardingPage(
-            title: "PulseLoop",
-            subtitle: "Your ring data, activity, sleep, and coach in one native app.",
-            systemImage: "circle.hexagongrid.circle.fill",
-            actionTitle: "Get started",
-            action: next
-        )
-    }
-}
-
-struct OnboardingProfileView: View {
-    let next: () -> Void
-    var body: some View {
-        OnboardingPage(
-            title: "Set profile",
-            subtitle: "Age, body metrics, and preferences help PulseLoop tune goals and summaries.",
-            systemImage: "person.crop.circle",
-            actionTitle: "Save profile",
-            action: next
-        )
-    }
-}
-
-struct OnboardingBaselineView: View {
-    let next: () -> Void
-    var body: some View {
-        OnboardingPage(
-            title: "Learning your baseline",
-            subtitle: "Wear the ring through the day and sync after sleep so trends become personal.",
-            systemImage: "chart.line.uptrend.xyaxis",
-            actionTitle: "Continue",
-            action: next
-        )
-    }
-}
-
-struct OnboardingGoalsView: View {
-    let next: () -> Void
-    var body: some View {
-        VStack(spacing: 18) {
-            OnboardingHeader(title: "Goals", subtitle: "Start with PulseLoop's default daily targets.")
-            MetricTile(title: "Steps", value: "10,000", color: PulseColors.steps, trend: [6, 8, 9, 7, 10])
-            MetricTile(title: "Sleep", value: "8h", color: PulseColors.sleep, trend: [6.5, 7.2, 8, 7.8])
-            PrimaryButton(title: "Save goals", systemImage: "checkmark", action: next)
-        }
-        .padding(24)
-    }
-}
-
-struct OnboardingPairView: View {
-    let finish: () -> Void
-    var body: some View {
-        // The real pairing experience: swipe a model, scan, connect — or skip. Connecting OR skipping
-        // completes onboarding.
-        PairingView(onConnected: finish, onSkip: finish)
-    }
-}
-
-struct OnboardingPage: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let actionTitle: String
-    let action: () -> Void
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: systemImage)
-                .font(.system(size: 82))
-                .foregroundStyle(PulseColors.accent)
-            OnboardingHeader(title: title, subtitle: subtitle)
-            Spacer()
-            PrimaryButton(title: actionTitle, action: action)
-        }
-        .padding(24)
     }
 }
 

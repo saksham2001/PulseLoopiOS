@@ -19,7 +19,12 @@ struct CoachFeatureFlags {
         switch settings.providerMode {
         case .offlineStub:
             return false
-        case .userOpenAIKey:
+        case .appleOnDevice:
+            // On-device only — ready when the local model is usable on this
+            // device. Otherwise the coach degrades to scripted and on-device
+            // failures surface as an error in chat.
+            return AppleOnDeviceAvailability.current.isAvailable
+        case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey:
             return hasAPIKey
         case .backendProxy:
             return false  // not implemented in v1
@@ -29,6 +34,7 @@ struct CoachFeatureFlags {
     var webSearchEnabled: Bool { settings.enableWebSearch }
     var writeToolsEnabled: Bool { settings.enableWriteTools }
     var liveMeasurementsEnabled: Bool { settings.enableLiveMeasurements }
+    var imageInputEnabled: Bool { settings.enableImageInput }
 
     var maxToolCalls: Int { max(1, settings.maxToolCalls) }
     var maxRounds: Int { max(1, settings.maxRounds) }
@@ -40,8 +46,14 @@ struct CoachFeatureFlags {
         switch settings.providerMode {
         case .offlineStub:
             return "Offline — scripted replies only."
+        case .appleOnDevice:
+            return AppleOnDeviceAvailability.current.statusMessage
         case .userOpenAIKey:
             return hasAPIKey ? "Ready · \(settings.model)" : "Add an OpenAI key to enable."
+        case .userGeminiKey:
+            return hasAPIKey ? "Ready · \(settings.model)" : "Add a Gemini key to enable."
+        case .userOpenRouterKey:
+            return hasAPIKey ? "Ready · \(settings.openRouterModel)" : "Add an OpenRouter key to enable."
         case .backendProxy:
             return "Backend proxy not available yet."
         }

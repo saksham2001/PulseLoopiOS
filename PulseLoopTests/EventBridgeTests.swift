@@ -31,6 +31,41 @@ final class EventBridgeTests: XCTestCase {
         XCTAssertTrue(RingEventBridge.events(for: .unknown(commandId: 0x52, raw: Data())).isEmpty)
     }
 
+    // MARK: - 0x24 combined-sensor metric gates
+
+    func testBloodPressureMapsThroughWhenPlausible() {
+        let events = RingEventBridge.events(for: .bloodPressureSample(systolic: 120, diastolic: 80, timestamp: Date()))
+        guard case .bloodPressureSample(120, 80, _) = events.first else {
+            return XCTFail("expected bloodPressureSample")
+        }
+    }
+
+    func testImplausibleBloodPressureDropped() {
+        // Systolic 300 is out of the 60…250 range.
+        XCTAssertTrue(RingEventBridge.events(for: .bloodPressureSample(systolic: 300, diastolic: 80, timestamp: Date())).isEmpty)
+    }
+
+    func testFatigueGate() {
+        XCTAssertEqual(RingEventBridge.events(for: .fatigueSample(value: 50, timestamp: Date())).count, 1)
+        XCTAssertTrue(RingEventBridge.events(for: .fatigueSample(value: 0, timestamp: Date())).isEmpty)
+    }
+
+    func testBloodSugarGate() {
+        XCTAssertEqual(RingEventBridge.events(for: .bloodSugarSample(mgdl: 95, timestamp: Date())).count, 1)
+        // 10 mg/dL is below the 40…600 plausible range.
+        XCTAssertTrue(RingEventBridge.events(for: .bloodSugarSample(mgdl: 10, timestamp: Date())).isEmpty)
+    }
+
+    func testFirmwareMapsThrough() {
+        guard case .firmwareVersion("003A002AV138") = RingEventBridge.events(for: .firmware(version: "003A002AV138")).first else {
+            return XCTFail("expected firmwareVersion")
+        }
+    }
+
+    func testBindProducesNoTypedEvents() {
+        XCTAssertTrue(RingEventBridge.events(for: .bind(action: 0, state: 0)).isEmpty)
+    }
+
     func testCommandAckProducesNoTypedEvents() {
         XCTAssertTrue(RingEventBridge.events(for: .commandAck(commandId: 0x02)).isEmpty)
     }

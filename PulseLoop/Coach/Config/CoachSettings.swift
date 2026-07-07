@@ -5,7 +5,10 @@ import Foundation
 /// and is treated as disabled until implemented.
 enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     case offlineStub
+    case appleOnDevice
     case userOpenAIKey
+    case userGeminiKey
+    case userOpenRouterKey
     case backendProxy
 
     var id: String { rawValue }
@@ -13,10 +16,67 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .offlineStub: return "Offline"
+        case .appleOnDevice: return "On-device (Apple)"
         case .userOpenAIKey: return "OpenAI (your key)"
+        case .userGeminiKey: return "Gemini (your key)"
+        case .userOpenRouterKey: return "OpenRouter (your key)"
         case .backendProxy: return "Backend proxy"
         }
     }
+}
+
+/// Preset Gemini model choices surfaced in Settings.
+enum GeminiModel: String, CaseIterable, Identifiable {
+    case flash25 = "gemini-2.5-flash"
+    case flash20 = "gemini-2.0-flash"
+    case pro25   = "gemini-2.5-pro"
+
+    var id: String { rawValue }
+
+    var label: String { rawValue }
+
+    var blurb: String {
+        switch self {
+        case .flash25: return "Fast & capable (default)"
+        case .flash20: return "Previous generation"
+        case .pro25:   return "Best reasoning"
+        }
+    }
+}
+
+/// Preset OpenRouter model slugs surfaced in Settings. OpenRouter routes a
+/// `vendor/model` slug to the underlying provider, and its catalog is large and
+/// changes often — so the stored `CoachSettings.model` stays a free string and
+/// Settings also exposes a "Custom…" text field where the user can type any
+/// current slug from openrouter.ai/models. These are just the curated picks.
+enum OpenRouterModel: String, CaseIterable, Identifiable {
+    case claudeSonnet = "anthropic/claude-sonnet-4.6"
+    case claudeOpus   = "anthropic/claude-opus-4.7"
+    case gpt55        = "openai/gpt-5.5"
+    case gpt54mini    = "openai/gpt-5.4-mini"
+    case geminiFlash  = "google/gemini-2.5-flash"
+    case geminiPro    = "google/gemini-2.5-pro"
+    case deepseekV4   = "deepseek/deepseek-v4-flash"
+
+    var id: String { rawValue }
+
+    var label: String { rawValue }
+
+    var blurb: String {
+        switch self {
+        case .claudeSonnet: return "Balanced, great for coaching (default)"
+        case .claudeOpus:   return "Most capable Claude"
+        case .gpt55:        return "OpenAI flagship"
+        case .gpt54mini:    return "Lower cost & latency"
+        case .geminiFlash:  return "Fast & capable"
+        case .geminiPro:    return "Deep reasoning"
+        case .deepseekV4:   return "Strong open reasoning, low cost"
+        }
+    }
+
+    /// Sensible default when switching to OpenRouter (strong instruction-following
+    /// and structured-output support via OpenRouter).
+    static let `default` = OpenRouterModel.claudeSonnet
 }
 
 /// Preset OpenAI model choices. The stored `CoachSettings.model` is a free
@@ -57,16 +117,38 @@ struct CoachSettings: Codable, Equatable {
     /// Optional reasoning effort hint ("low"/"medium"/"high") when the model supports it.
     var reasoningEffort: String? = nil
     var enableWebSearch: Bool = false
+    /// OpenRouter-only: when true, route only through providers that don't log or
+    /// train on prompts (sends `provider.data_collection = "deny"`). Ignored by
+    /// the native OpenAI/Gemini clients.
+    var orEnablePrivacyRouting: Bool = false
+    /// OpenRouter-only: provider selection bias ("price" | "throughput" |
+    /// "latency"). nil = OpenRouter's default routing. Ignored by other providers.
+    var orProviderSort: String? = nil
     /// Milestone A is read-only: write/action and live-measurement tools stay off
     /// until Milestone B wires confirmation gates.
     var enableWriteTools: Bool = false
     var enableLiveMeasurements: Bool = false
+    /// When true, the coach composer shows a camera/photo button so the user can
+    /// attach an image to a message (multimodal input). Off by default.
+    var enableImageInput: Bool = false
     var maxToolCalls: Int = 8
     var maxRounds: Int = 4
     // Milestone D — automated daily check-in notifications.
     var notificationsEnabled: Bool = false
     var morningHour: Int = 8
+    var middayHour: Int = 13
     var eveningHour: Int = 19
+    /// Proactive, event-driven anomaly alerts (resting-HR drift, low SpO₂, poor
+    /// sleep). On-device only — free/unlimited local inference makes "watch the
+    /// stream and speak up when something looks off" practical. Off by default.
+    var proactiveAlertsEnabled: Bool = false
+
+    /// The OpenRouter model slug to use. Free-form (the user may type any slug);
+    /// falls back to the default only when the stored `model` is blank.
+    var openRouterModel: String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? OpenRouterModel.default.rawValue : trimmed
+    }
 
     static let `default` = CoachSettings()
 
@@ -82,13 +164,18 @@ struct CoachSettings: Codable, Equatable {
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort)
         enableWebSearch = try c.decodeIfPresent(Bool.self, forKey: .enableWebSearch) ?? d.enableWebSearch
+        orEnablePrivacyRouting = try c.decodeIfPresent(Bool.self, forKey: .orEnablePrivacyRouting) ?? d.orEnablePrivacyRouting
+        orProviderSort = try c.decodeIfPresent(String.self, forKey: .orProviderSort)
         enableWriteTools = try c.decodeIfPresent(Bool.self, forKey: .enableWriteTools) ?? d.enableWriteTools
         enableLiveMeasurements = try c.decodeIfPresent(Bool.self, forKey: .enableLiveMeasurements) ?? d.enableLiveMeasurements
+        enableImageInput = try c.decodeIfPresent(Bool.self, forKey: .enableImageInput) ?? d.enableImageInput
         maxToolCalls = try c.decodeIfPresent(Int.self, forKey: .maxToolCalls) ?? d.maxToolCalls
         maxRounds = try c.decodeIfPresent(Int.self, forKey: .maxRounds) ?? d.maxRounds
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         morningHour = try c.decodeIfPresent(Int.self, forKey: .morningHour) ?? d.morningHour
+        middayHour = try c.decodeIfPresent(Int.self, forKey: .middayHour) ?? d.middayHour
         eveningHour = try c.decodeIfPresent(Int.self, forKey: .eveningHour) ?? d.eveningHour
+        proactiveAlertsEnabled = try c.decodeIfPresent(Bool.self, forKey: .proactiveAlertsEnabled) ?? d.proactiveAlertsEnabled
     }
 }
 

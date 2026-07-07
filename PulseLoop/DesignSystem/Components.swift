@@ -542,7 +542,7 @@ struct ActivityKind: Identifiable {
 
 enum ActivityMeta {
     /// Canonical types in display order (matches web `ACTIVITY_ORDER`).
-    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "hike", "other"]
+    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "dance", "hike", "other"]
 
     private static let table: [String: ActivityKind] = [
         "walk":   ActivityKind(type: "walk",   label: "Walk",   helper: "Outdoor or indoor walk",     symbol: "figure.walk",          gpsCapable: true),
@@ -552,6 +552,7 @@ enum ActivityMeta {
         "squash": ActivityKind(type: "squash", label: "Squash", helper: "Court session",              symbol: "figure.tennis",        gpsCapable: false),
         "sport":  ActivityKind(type: "sport",  label: "Sport",  helper: "General sport",              symbol: "figure.soccer",        gpsCapable: true),
         "yoga":   ActivityKind(type: "yoga",   label: "Yoga",   helper: "Mobility or stretching",     symbol: "figure.yoga",          gpsCapable: false),
+        "dance":  ActivityKind(type: "dance",  label: "Dance",  helper: "Studio, cardio, or freestyle", symbol: "figure.dance",       gpsCapable: false),
         "hike":   ActivityKind(type: "hike",   label: "Hike",   helper: "Trail or long walk",         symbol: "figure.hiking",        gpsCapable: true),
         "other":  ActivityKind(type: "other",  label: "Other",  helper: "Custom activity",            symbol: "sparkles",             gpsCapable: false)
     ]
@@ -592,8 +593,11 @@ enum ActivityMeta {
         guard let distanceMeters, let durationSeconds, distanceMeters >= 50 else { return nil }
         let paceSecPerKm = Double(durationSeconds) / (distanceMeters / 1000)
         let paceSec = UnitsFormatter.paceSeconds(perKmSeconds: paceSecPerKm, units: units)
-        let m = Int(paceSec) / 60
-        let s = Int(paceSec.rounded()) % 60
+        // Round to whole seconds first, then split — otherwise a value like 299.85 renders
+        // "4:00" (minute truncated, seconds rounded up to 60) instead of "5:00".
+        let total = Int(paceSec.rounded())
+        let m = total / 60
+        let s = total % 60
         return String(format: "%d:%02d %@", m, s, UnitsFormatter.paceUnit(units))
     }
 }
@@ -655,5 +659,59 @@ struct ActivityWorkoutRow: View {
         let m = seconds / 60
         if m >= 60 { return "\(m / 60)h \(m % 60)m" }
         return "\(m)m"
+    }
+}
+
+// MARK: - Sync progress bar
+
+/// A thin, full-width indeterminate progress bar shown under the app header while the ring is
+/// syncing. We only have stage labels (not a percentage), so this is indeterminate: an accent
+/// segment sweeps left→right over a recessed track. Under Reduce Motion it degrades to a steady
+/// pulsing full-width fill (no horizontal travel). Visuals use the existing `PulseColors` tokens
+/// and the `ConnectionStatusPill` animation idiom.
+struct SyncProgressBar: View {
+    /// Bar thickness in points — deliberately thin so it reads as a status accent, not a control.
+    var height: CGFloat = 3
+    /// Fraction of the track width the moving segment occupies.
+    private let segmentFraction: CGFloat = 0.4
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var animate = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let trackWidth = geo.size.width
+            let segmentWidth = trackWidth * segmentFraction
+
+            ZStack(alignment: .leading) {
+                Rectangle().fill(PulseColors.elevated)
+
+                if reduceMotion {
+                    // No travel — a gentle opacity pulse on a full-width fill.
+                    Rectangle()
+                        .fill(PulseColors.accent)
+                        .opacity(animate ? 0.55 : 1.0)
+                } else {
+                    Capsule()
+                        .fill(PulseColors.accent)
+                        .frame(width: segmentWidth)
+                        // Sweep from just off the left edge to just off the right edge.
+                        .offset(x: animate ? (trackWidth - segmentWidth) : 0)
+                }
+            }
+            .frame(height: height)
+            .clipped()
+        }
+        .frame(height: height)
+        .onAppear {
+            if reduceMotion {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { animate = true }
+            } else {
+                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { animate = true }
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Syncing")
+        .accessibilityAddTraits(.updatesFrequently)
     }
 }

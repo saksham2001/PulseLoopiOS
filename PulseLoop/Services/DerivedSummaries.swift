@@ -13,6 +13,11 @@ enum MetricKey: String, CaseIterable {
     case stress
     case hrv
     case temperature = "temp"
+    // jring/56ff metrics (capability-gated in the UI).
+    case bloodPressureSystolic = "bp_sys"
+    case bloodPressureDiastolic = "bp_dia"
+    case fatigue
+    case bloodSugar = "glucose"
 
     /// The wearable capability that must be present for this metric to be shown.
     var requiredCapability: WearableCapability? {
@@ -22,6 +27,9 @@ enum MetricKey: String, CaseIterable {
         case .stress: return .stress
         case .hrv: return .hrv
         case .temperature: return .temperature
+        case .bloodPressureSystolic, .bloodPressureDiastolic: return .bloodPressure
+        case .fatigue: return .fatigue
+        case .bloodSugar: return .bloodSugar
         case .steps, .calories, .distance, .activeMinutes: return .steps
         case .sleep: return .sleep
         case .battery: return .battery
@@ -29,12 +37,7 @@ enum MetricKey: String, CaseIterable {
     }
 }
 
-enum MetricRange: String, CaseIterable {
-    case twentyFourHours = "24h"
-    case sevenDays = "7d"
-    case thirtyDays = "30d"
-    case twelveMonths = "12mo"
-}
+// `MetricRange` lives in ChartSample.swift (shared with the widget extension).
 
 enum SleepRangeKey: String, CaseIterable {
     case day
@@ -97,6 +100,8 @@ struct GoalsSummary {
     let activeMinutesDaily: Int
     let sleepHours: Double
     let exerciseDaysWeekly: Int
+    let distanceMetersDaily: Double
+    let caloriesDaily: Int
 }
 
 struct TrendsSummary {
@@ -105,14 +110,6 @@ struct TrendsSummary {
     let distance7d: [DailyMetricPoint]
     let hrSamples24h: [MetricSample]
     let spo2Samples24h: [MetricSample]
-}
-
-struct TimelineEvent: Identifiable {
-    let id = UUID()
-    let title: String
-    let detail: String
-    let timestamp: Date
-    let metric: String?
 }
 
 struct SleepSummary {
@@ -185,6 +182,30 @@ struct ActivityDailyUpdate {
     }
 }
 
+/// A flattened snapshot of one "latest" measurement reading. Holds plain values (no live
+/// SwiftData object) so a `TodaySummary` can be cached and passed around safely.
+struct LatestReading: Equatable {
+    var value: Double
+    var timestamp: Date
+    var sourceRaw: String
+    var confidenceRaw: String
+
+    init(value: Double, timestamp: Date, sourceRaw: String, confidenceRaw: String) {
+        self.value = value
+        self.timestamp = timestamp
+        self.sourceRaw = sourceRaw
+        self.confidenceRaw = confidenceRaw
+    }
+
+    init?(_ measurement: Measurement?) {
+        guard let m = measurement else { return nil }
+        self.value = m.value
+        self.timestamp = m.timestamp
+        self.sourceRaw = m.sourceRaw
+        self.confidenceRaw = m.confidenceRaw
+    }
+}
+
 struct TodaySummary {
     var date: Date
     var steps: Int?
@@ -192,15 +213,14 @@ struct TodaySummary {
     var distanceMeters: Double?
     var activeMinutes: Int?
     var activeMinutesSource: String
-    var latestHeartRate: Measurement?
-    var latestSpO2: Measurement?
+    var latestHeartRate: LatestReading?
+    var latestSpO2: LatestReading?
     var restingHeartRateEstimate: Double?
     var peakHeartRateToday: Double?
     var sleep: SleepSummary?
     var batteryPercent: Int?
     var deviceState: RingConnectionState
     var trends: TrendsSummary
-    var timeline: [TimelineEvent]
     var metricStates: [MetricKey: MetricState]
     var calibration: CalibrationState
     var goals: GoalsSummary

@@ -14,6 +14,11 @@ import os.log
 
 private let liveActivityLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "LiveActivity")
 
+struct WorkoutLiveActivityDisplayOptions {
+    let usesGps: Bool
+    let useImperial: Bool
+}
+
 @MainActor
 final class WorkoutLiveActivityService: ObservableObject {
 
@@ -25,7 +30,7 @@ final class WorkoutLiveActivityService: ObservableObject {
     /// nil if Live Activities are unavailable / the request failed.
     @discardableResult
     func start(sessionID: String, activityName: String, activityType: String,
-               startDate: Date, usesGps: Bool) -> String? {
+               startDate: Date, displayOptions: WorkoutLiveActivityDisplayOptions) -> String? {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             liveActivityLog.error("Live Activities not enabled (toggle off in Settings → PulseLoop → Live Activities, or unsupported). Skipping start.")
             return nil
@@ -38,13 +43,14 @@ final class WorkoutLiveActivityService: ObservableObject {
             elapsedSeconds: 0,
             startDate: startDate,
             pausedAt: nil,
-            usesGps: usesGps,
+            usesGps: displayOptions.usesGps,
             distanceMeters: 0,
             paceSecondsPerKm: nil,
             lastHeartRate: nil,
             lastSpO2: nil,
             activityType: activityType,
-            lastUpdated: Date()
+            lastUpdated: Date(),
+            useImperial: displayOptions.useImperial
         )
 
         do {

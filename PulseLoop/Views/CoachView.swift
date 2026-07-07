@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import PhotosUI
 
 private let coldStartPrompts = [
     "How am I doing today?",
@@ -21,7 +22,24 @@ struct CoachView: View {
     @State private var showHistory = false
     @State private var keyboardHeight: CGFloat = 0
     @State private var nav = CoachNavigation.shared
+    @State private var settingsStore = CoachSettingsStore.shared
     @FocusState private var composerFocused: Bool
+
+    // Image attachment (multimodal input). One staged image per message.
+    @State private var stagedImage: UIImage?
+    @State private var stagedAttachment: CoachAttachmentRef?
+    @State private var showPhotosPicker = false
+    @State private var showCamera = false
+    @State private var photosPickerItem: PhotosPickerItem?
+
+    /// Image attach is offered only when enabled *and* the provider supports it.
+    /// The on-device model has no image-input API in the shipping SDK, so the
+    /// composer hides the attach button there even if the stored flag is on (e.g.
+    /// left over from another provider).
+    private var imageInputEnabled: Bool {
+        settingsStore.settings.enableImageInput
+            && settingsStore.settings.providerMode != .appleOnDevice
+    }
 
     /// Bottom inset for the composer: clears the overlaid nav bar (~60) when the
     /// keyboard is hidden, and sits just above the keyboard when shown. Computed
@@ -156,49 +174,125 @@ struct CoachView: View {
     }
 
     private var composer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus")
-                .font(.system(size: 18)).foregroundStyle(PulseColors.textMuted)
-                .frame(width: 36, height: 36).background(PulseColors.card, in: Circle()).opacity(0.6)
-            TextField("Ask the coach...", text: $draft)
-                .focused($composerFocused)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .padding(.horizontal, 16).padding(.vertical, 10)
-                .background(PulseColors.card, in: Capsule())
-                .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
-                .onSubmit { send(draft) }
-            Button { send(draft) } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(canSend ? .white : PulseColors.textMuted)
-                    .frame(width: 36, height: 36)
-                    .background(canSend ? PulseColors.accent : PulseColors.card, in: Circle())
+        VStack(spacing: 8) {
+            if let stagedImage { stagedThumbnail(stagedImage) }
+
+            HStack(spacing: 8) {
+                // Camera button — only shown when image input is enabled in
+                // Settings. Nothing is shown when off. Opens the camera directly;
+                // falls back to the photo library where no camera exists (simulator).
+                if imageInputEnabled {
+                    Button {
+                        composerFocused = false
+                        if UIImagePickerController.cameraAvailable { showCamera = true }
+                        else { showPhotosPicker = true }
+                    } label: {
+                        Image(systemName: "camera")
+                            .font(.system(size: 17)).foregroundStyle(PulseColors.textSecondary)
+                            .frame(width: 36, height: 36).background(PulseColors.card, in: Circle())
+                            .overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+                TextField("Ask the coach...", text: $draft)
+                    .focused($composerFocused)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(PulseColors.card, in: Capsule())
+                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .onSubmit { send(draft) }
+                Button { send(draft) } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(canSend ? .white : PulseColors.textMuted)
+                        .frame(width: 36, height: 36)
+                        .background(canSend ? PulseColors.accent : PulseColors.card, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
             }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+        .photosPicker(isPresented: $showPhotosPicker, selection: $photosPickerItem, matching: .images)
+        .onChange(of: photosPickerItem) { _, item in
+            guard let item else { return }
+            Task { await loadPickedPhoto(item) }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { image in stage(image) }
+                .ignoresSafeArea()
+        }
+    }
+
+    /// Small preview chip for the staged image, with a remove button.
+    private func stagedThumbnail(_ image: UIImage) -> some View {
+        HStack {
+            ZStack(alignment: .topTrailing) {
+                Image(uiImage: image)
+                    .resizable().scaledToFill()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                Button { clearStagedImage() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.white, Color.black.opacity(0.55))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 6, y: -6)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespaces).isEmpty && !viewModel.isSending
+        guard !viewModel.isSending else { return false }
+        return !draft.trimmingCharacters(in: .whitespaces).isEmpty || stagedAttachment != nil
+    }
+
+    /// Compresses + persists the picked image and stages it for the next send.
+    private func stage(_ image: UIImage) {
+        guard let ref = CoachAttachmentStore.save(image) else { return }
+        stagedImage = image
+        stagedAttachment = ref
+    }
+
+    private func loadPickedPhoto(_ item: PhotosPickerItem) async {
+        if let data = try? await item.loadTransferable(type: Data.self),
+           let image = UIImage(data: data) {
+            stage(image)
+        }
+        photosPickerItem = nil
+    }
+
+    /// Removes the staged image and deletes its on-disk file (it was never sent).
+    private func clearStagedImage() {
+        if let ref = stagedAttachment { CoachAttachmentStore.delete(ref) }
+        stagedImage = nil
+        stagedAttachment = nil
     }
 
     private func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !viewModel.isSending else { return }
+        let attachment = stagedAttachment
+        // Allow image-only sends: require either text or a staged image.
+        guard !(trimmed.isEmpty && attachment == nil), !viewModel.isSending else { return }
         let conversationId = resolveConversationId()
         // Title a fresh conversation from its opening message.
         if let convo = conversations.first(where: { $0.id == conversationId }),
            isDefaultTitle(convo.title),
            !allMessages.contains(where: { $0.conversationId == conversationId }) {
-            convo.title = String(trimmed.prefix(40))
+            let seed = trimmed.isEmpty ? "Photo" : String(trimmed.prefix(40))
+            convo.title = seed
             try? modelContext.save()
         }
         draft = ""
+        stagedImage = nil
+        stagedAttachment = nil
         composerFocused = false
-        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext, coordinator: coordinator) }
+        let attachments = attachment.map { [$0] } ?? []
+        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext, attachments: attachments, coordinator: coordinator) }
     }
 
     /// The active conversation, creating one on first use.
@@ -337,10 +431,19 @@ struct CoachBubble: View {
         message.role == "assistant" ? PendingAction.decode(fromJSON: message.pendingActionJSON) : nil
     }
 
+    private var turnError: CoachTurnError? {
+        message.role == "error" ? CoachTurnError.decode(fromJSON: message.cardsJSON) : nil
+    }
+
+    private var attachments: [CoachAttachmentRef] {
+        CoachAttachmentRef.decode(fromJSON: message.attachmentsJSON)
+    }
+
     var body: some View {
         HStack {
             if message.role == "user" { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
+                ForEach(attachments, id: \.file) { ref in attachmentImage(ref) }
                 content
                 if let pendingAction {
                     CoachActionCardView(
@@ -355,12 +458,17 @@ struct CoachBubble: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let structured {
+        if let turnError {
+            CoachErrorBubble(error: turnError)
+        } else if let structured {
             CoachResponseView(response: structured, onChipTap: onChipTap)
                 .padding(14)
                 .background(PulseColors.card)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        } else if message.role == "user" && message.body.isEmpty && !attachments.isEmpty {
+            // Image-only message: the image is the bubble, no empty text bubble below.
+            EmptyView()
         } else {
             (message.role == "user" ? Text(message.body) : Text(coachMarkdown: message.body))
                 .font(.system(size: 14))
@@ -373,6 +481,60 @@ struct CoachBubble: View {
                         .stroke(message.role == "user" ? Color.clear : PulseColors.borderSubtle, lineWidth: 1)
                 )
         }
+    }
+
+    /// Renders an attached image (loaded from `CoachAttachmentStore`) as part of
+    /// the message bubble. Falls back to a placeholder if the file is missing.
+    @ViewBuilder private func attachmentImage(_ ref: CoachAttachmentRef) -> some View {
+        if let image = CoachAttachmentStore.loadImage(ref) {
+            Image(uiImage: image)
+                .resizable().scaledToFill()
+                .frame(maxWidth: 240, maxHeight: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(PulseColors.card)
+                .frame(width: 120, height: 90)
+                .overlay(Image(systemName: "photo").foregroundStyle(PulseColors.textMuted))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        }
+    }
+}
+
+/// Red-bordered error bubble shown when a coach turn fails. Displays the error
+/// code (e.g. "HTTP 401") and the full reason so failures are explicit in chat,
+/// across all providers. Matches the chat design system (card background, 18pt
+/// radius, 14pt padding) with a `PulseColors.danger` accent.
+struct CoachErrorBubble: View {
+    let error: CoachTurnError
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Coach error")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("·").foregroundStyle(PulseColors.textMuted)
+                Text(error.code)
+                    .font(.system(size: 12, weight: .semibold).monospaced())
+            }
+            .foregroundStyle(PulseColors.danger)
+
+            Text(error.reason)
+                .font(.system(size: 14))
+                .foregroundStyle(PulseColors.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(14)
+        .background(PulseColors.danger.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(PulseColors.danger, lineWidth: 1.5)
+        )
     }
 }
 

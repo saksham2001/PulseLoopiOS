@@ -30,6 +30,53 @@ enum CoachNotificationGenerator {
         }
     }
 
+    /// Proactive anomaly alert. Same shape as a check-in, but framed as a calm,
+    /// non-alarming heads-up. Falls back to the grounded `anomaly.facts` copy if
+    /// the model is disabled or fails.
+    static func generateAnomaly(
+        anomaly: CoachAnomaly,
+        packet: NotificationContextPacket,
+        flags: CoachFeatureFlags,
+        client: ResponsesClient
+    ) async -> CoachNotification {
+        guard flags.coachEnabled else { return scriptedAnomaly(anomaly) }
+        do {
+            let input: [[String: Any]] = [
+                OpenAIRequestBuilder.message(role: "system", content: NotificationPromptBuilder.anomalySystemPrompt()),
+                OpenAIRequestBuilder.message(role: "developer", content: NotificationPromptBuilder.anomalyDeveloperMessage(packet: packet, anomaly: anomaly)),
+            ]
+            let body = try OpenAIRequestBuilder.data(
+                model: flags.model, input: input, tools: [],
+                textFormat: CoachNotificationSchema.textFormat,
+                previousResponseId: nil, reasoningEffort: flags.settings.reasoningEffort
+            )
+            let response = try await client.send(requestBody: body)
+            // An anomaly alert always sends — ignore a stray skip from the model.
+            var n = CoachNotification.decode(fromJSON: response.outputText) ?? scriptedAnomaly(anomaly)
+            n.skip = false
+            return n
+        } catch {
+            return scriptedAnomaly(anomaly)
+        }
+    }
+
+    static func scriptedAnomaly(_ anomaly: CoachAnomaly) -> CoachNotification {
+        switch anomaly.kind {
+        case .lowSpO2:
+            return CoachNotification(title: "A quick heads-up",
+                                     body: anomaly.facts,
+                                     tip: "Rest a moment and re-measure when you're settled.",
+                                     followUp: "Want to talk through what might affect your readings?")
+        case .poorSleep:
+            return CoachNotification(title: "Short night",
+                                     body: anomaly.facts,
+                                     tip: "Go easy today and aim for an earlier wind-down.",
+                                     followUp: "Want tips for a better night tonight?")
+        case .restingHRDrift:
+            return CoachNotification(title: "A quick heads-up", body: anomaly.facts)
+        }
+    }
+
     /// Grounded, deterministic fallback.
     static func scripted(slot: CoachNotificationSlot, packet: NotificationContextPacket) -> CoachNotification {
         let name = packet.profileName.map { ", \($0)" } ?? ""
@@ -42,6 +89,13 @@ enum CoachNotificationGenerator {
             }
             return CoachNotification(title: "Good morning\(name)",
                                      body: "Ready to start the day? Take a measurement and I'll help you plan it.")
+        case .midday:
+            if let steps = packet.today.steps {
+                return CoachNotification(title: "Midday check-in",
+                                         body: "\(steps) steps so far. A short walk now keeps the momentum going.")
+            }
+            return CoachNotification(title: "Midday check-in",
+                                     body: "How's the day going? A quick movement break is a great reset.")
         case .evening:
             if let steps = packet.today.steps {
                 let goal = packet.goals.stepsDaily

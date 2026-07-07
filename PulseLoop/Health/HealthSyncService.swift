@@ -616,8 +616,12 @@ final class HealthSyncService {
             guard let t = HKQuantityType.quantityType(forIdentifier: .bodyTemperature) else { return nil }
             return QuantityMapping(type: t, unit: .degreeCelsius(),
                                    convert: { $0 }, isPlausible: { $0 > 25 && $0 < 45 })
-        case .stress:
+        case .stress, .fatigue:
             return nil   // No native HealthKit equivalent.
+        case .bloodPressureSystolic, .bloodPressureDiastolic, .bloodSugar:
+            // Not synced yet: BP needs HKCorrelation pairing (unpaired samples don't surface as a
+            // reading in Health) and both need new share-authorization types. Follow-up work.
+            return nil
         }
     }
 

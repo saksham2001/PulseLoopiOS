@@ -78,9 +78,17 @@ struct OpenAIResponse: Sendable {
 /// it. Kept dictionary-based because tool specs and the strict output schema are
 /// naturally arbitrary JSON.
 enum OpenAIRequestBuilder {
-    /// One input message item.
-    static func message(role: String, content: String) -> [String: Any] {
-        ["role": role, "content": content]
+    /// One input message item. The text path keeps `content` a plain String so the
+    /// adapter clients' `content as? String` branches are untouched; images are
+    /// purely additive — only when `images` is non-empty does `content` become the
+    /// Responses-API content-part array (`input_text` + `input_image`).
+    static func message(role: String, content: String, images: [CoachImagePayload] = []) -> [String: Any] {
+        guard !images.isEmpty else { return ["role": role, "content": content] }
+        var parts: [[String: Any]] = [["type": "input_text", "text": content]]
+        for img in images {
+            parts.append(["type": "input_image", "image_url": img.dataURL])
+        }
+        return ["role": role, "content": parts]
     }
 
     /// A function-call result item to feed back into the next turn.

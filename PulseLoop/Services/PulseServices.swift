@@ -6,27 +6,35 @@ enum MetricsService {
     private static let calibrationDays = 7
     private static let minimumTrendDays = 3
     
-    static func buildTodaySummary(context: ModelContext) -> TodaySummary {
+    static func buildTodaySummary(context: ModelContext, scope: MetricScope = .vitals) -> TodaySummary {
         let calendar = Calendar.current
         let activityRows = MetricsRepository.activityRows(context: context)
-        let measurements = MetricsRepository.measurements(context: context)
         let device = DeviceRepository.current(context: context)
-        let isDemo = activityRows.contains { $0.source == "mock" } || measurements.contains { $0.sourceRaw == MeasurementSource.mock.rawValue }
+        // Demo detection via cheap predicated probes (no full-table scan). Matches the previous
+        // "any mock activity OR any mock measurement" semantics.
+        let isDemo = activityRows.contains { $0.source == "mock" } || MetricsRepository.hasMockMeasurement(context: context)
         let today = activityRows.sorted { $0.date < $1.date }.last
         let anchorDate = today?.date ?? calendar.startOfDay(for: Date())
         let alignedRows = alignedWeekActivity(rows: activityRows, anchor: isDemo ? anchorDate : Date())
-        let hrRows = measurements.filter { $0.kind == .heartRate }
-        let spo2Rows = measurements.filter { $0.kind == .spo2 }
-        let hrSamples = samplesSinceCutoff(rows: hrRows, range: .twentyFourHours, includeAll: isDemo)
-        let spo2Samples = samplesSinceCutoff(rows: spo2Rows, range: .twentyFourHours, includeAll: isDemo)
-        // Display copies for the Today sparklines respect the user's graph-resolution setting (the raw
-        // copies above stay untouched for stats/timeline below). Full resolution → identity.
-        let buckets24h = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: .twentyFourHours)
-        let hrSamplesDisplay = MetricDownsampler.bucketAverage(hrSamples, targetBuckets: buckets24h)
-        let spo2SamplesDisplay = MetricDownsampler.bucketAverage(spo2Samples, targetBuckets: buckets24h)
-        let latestHR = hrRows.last
-        let latestSpO2 = spo2Rows.last
-        let calibration = calibrationState(device: device, activityRows: activityRows, measurements: measurements, isDemo: isDemo)
+        // 24h HR/SpO₂ samples come through the SAME `rangeSamples` path Vitals uses — including its
+        // per-kind demo detection and 24h windowing — so Today and Vitals never disagree on the range,
+        // resting/peak, or graph. (Global `isDemo` above is per-summary; HR/SpO₂ windowing must be
+        // per-kind to match Vitals when a database mixes real + mock across different metrics.) This is
+        // one fetch per kind — same fetch count as the previous inline query.
+        let hrSamples = rangeSamples(kind: .heartRate, range: .twentyFourHours, context: context)
+        let spo2Samples = rangeSamples(kind: .spo2, range: .twentyFourHours, context: context)
+        // Display copies go through the same `displaySamples` transform Vitals applies (resolution
+        // downsampling). Byte-identical to `metricRange`'s output, so the sparkline shape matches too.
+        let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours, scope: scope)
+        let spo2SamplesDisplay = displaySamples(spo2Samples, range: .twentyFourHours, scope: scope)
+        // Latest values are the newest reading of each kind regardless of age (the old code took
+        // `.last` of the FULL kind history, not the 24h window) — fetch them independently so a
+        // last reading older than 24h still surfaces.
+        // Flatten the latest live readings to value snapshots immediately so nothing downstream
+        // (or the cached TodaySummary) holds a live SwiftData object.
+        let latestHR = LatestReading(MetricsRepository.latestMeasurement(kind: .heartRate, context: context))
+        let latestSpO2 = LatestReading(MetricsRepository.latestMeasurement(kind: .spo2, context: context))
+        let calibration = calibrationState(device: device, activityRows: activityRows, isDemo: isDemo, context: context)
         let hrFreshness = freshness(lastUpdatedAt: latestHR?.timestamp, isDemo: isDemo)
         let spo2Freshness = freshness(lastUpdatedAt: latestSpO2?.timestamp, isDemo: isDemo)
         let sleep = SleepService.latestSleep(context: context)
@@ -68,14 +76,6 @@ enum MetricsService {
             batteryPercent: device?.batteryPercent ?? 0,
             deviceState: device?.state ?? .idle,
             trends: trends,
-            timeline: buildTimeline(
-                device: device,
-                today: today,
-                hrSamples: hrSamples,
-                spo2Samples: spo2Samples,
-                sleep: sleep,
-                context: context
-            ),
             metricStates: metricStates,
             calibration: calibration,
             goals: goals,
@@ -83,7 +83,8 @@ enum MetricsService {
         )
     }
     
-    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
+    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext,
+                            scope: MetricScope = .vitals) -> [MetricSample] {
         let raw: [MetricSample]
         switch metric {
         case .heartRate:
@@ -96,17 +97,53 @@ enum MetricsService {
             raw = rangeSamples(kind: .hrv, range: range, context: context)
         case .temperature:
             raw = rangeSamples(kind: .temperature, range: range, context: context)
+        case .bloodPressureSystolic:
+            raw = calibrated(rangeSamples(kind: .bloodPressureSystolic, range: range, context: context), kind: .bloodPressureSystolic)
+        case .bloodPressureDiastolic:
+            raw = calibrated(rangeSamples(kind: .bloodPressureDiastolic, range: range, context: context), kind: .bloodPressureDiastolic)
+        case .fatigue:
+            raw = rangeSamples(kind: .fatigue, range: range, context: context)
+        case .bloodSugar:
+            raw = calibrated(rangeSamples(kind: .bloodSugar, range: range, context: context), kind: .bloodSugar)
         case .steps, .calories, .distance, .activeMinutes:
             raw = activitySamples(metric: metric, range: range, context: context)
         default:
             return []
         }
-        // Display-only smoothing: bucket-average dense series per the user's resolution preference.
-        // `.full` (targetBuckets 0) is identity; raw stored rows are never modified.
-        let targetBuckets = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: range)
+        return displaySamples(raw, range: range, scope: scope)
+    }
+
+    /// The display transform applied to already-fetched, windowed samples: bucket-average per the
+    /// user's graph-resolution preference (`.full`/targetBuckets 0 is identity). This is the SINGLE
+    /// source of truth for the vitals sparkline/chart shape, so any caller that runs it over the same
+    /// samples gets a byte-identical result — used by both `metricRange` (Vitals) and
+    /// `buildTodaySummary` (Today) so the two pages never disagree on a metric's range/graph.
+    static func displaySamples(_ raw: [MetricSample], range: MetricRange,
+                               scope: MetricScope = .vitals) -> [MetricSample] {
+        let targetBuckets = MetricPrefsStore.shared.resolution(for: scope).targetBuckets(for: range)
         return MetricDownsampler.bucketAverage(raw, targetBuckets: targetBuckets)
     }
     
+    /// Apply the user's calibration display offset to a series before it reaches the UI. Raw stored
+    /// rows are never modified — the offset lives only on the display read path (mirrors the Android
+    /// "offsets applied in ViewModels before UI" pipeline).
+    private static func calibrated(_ samples: [MetricSample], kind: MeasurementKind) -> [MetricSample] {
+        let cal = CalibrationStore.shared.settings
+        guard cal.adjusted(0, kind: kind) != 0 else { return samples }   // no offset ⇒ identity
+        return samples.map { MetricSample(timestamp: $0.timestamp, value: cal.adjusted($0.value, kind: kind)) }
+    }
+
+    /// The latest reading for a kind, with calibration offset applied (for "latest value" display).
+    static func calibratedLatest(kind: MeasurementKind, context: ModelContext) -> Double? {
+        guard let raw = MetricsRepository.latestMeasurement(kind: kind, context: context)?.value else { return nil }
+        return CalibrationStore.shared.settings.adjusted(raw, kind: kind)
+    }
+
+    /// The latest *raw* (uncalibrated) reading for a kind — used to derive a calibration offset.
+    static func latestRaw(kind: MeasurementKind, context: ModelContext) -> Double? {
+        MetricsRepository.latestMeasurement(kind: kind, context: context)?.value
+    }
+
     static func fetchMeasurements(_ context: ModelContext) -> [Measurement] {
         MetricsRepository.measurements(context: context).sorted { $0.timestamp > $1.timestamp }
     }
@@ -145,9 +182,9 @@ enum MetricsService {
     /// Whether a metric should be rendered right now: the device must support it (capability gate
     /// **first**, so a hidden-but-unsupported vital can never be force-shown) AND the user must not have
     /// hidden it. Every vitals call site funnels through this so visibility stays consistent app-wide.
-    static func isVisible(_ metric: MetricKey, context: ModelContext) -> Bool {
+    static func isVisible(_ metric: MetricKey, context: ModelContext, scope: MetricScope = .vitals) -> Bool {
         guard supports(metric, context: context) else { return false }
-        return !MetricPrefsStore.shared.isHidden(metric)
+        return !MetricPrefsStore.shared.isHidden(metric, scope: scope)
     }
     
     static func fetchDevices(_ context: ModelContext) -> [Device] {
@@ -167,6 +204,14 @@ enum MetricsService {
             value = Double(Int.random(in: 30...90))
         case .temperature:
             value = Double.random(in: 33...36)
+        case .bloodPressureSystolic:
+            value = Double(Int.random(in: 110...130))
+        case .bloodPressureDiastolic:
+            value = Double(Int.random(in: 70...85))
+        case .fatigue:
+            value = Double(Int.random(in: 20...70))
+        case .bloodSugar:
+            value = Double(Int.random(in: 85...110))
         }
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,
@@ -182,9 +227,29 @@ enum MetricsService {
     }
     
     private static func rangeSamples(kind: MeasurementKind, range: MetricRange, context: ModelContext) -> [MetricSample] {
-        let rows = MetricsRepository.measurements(kind: kind, context: context)
-        let isDemo = rows.contains { $0.sourceRaw == MeasurementSource.mock.rawValue }
+        // Demo mode keeps full history (the old `includeAll`); otherwise fetch only the range window
+        // from the DB. Per-kind demo detection mirrors the old `rows.contains { mock }` (which only
+        // saw this kind's rows) so mixed real+demo databases behave identically.
+        let isDemo = MetricsRepository.hasMockMeasurement(kind: kind, context: context)
+        let rows: [Measurement]
+        if isDemo {
+            rows = MetricsRepository.measurementsAll(kind: kind, context: context)
+        } else {
+            rows = MetricsRepository.measurements(kind: kind, start: cutoff(for: range), end: Date(), limit: 5000, context: context)
+        }
         return samplesSinceCutoff(rows: rows, range: range, includeAll: isDemo)
+    }
+
+    /// Start date for a metric range window (mirrors `samplesSinceCutoff`'s non-demo cutoff so the
+    /// windowed fetch returns exactly the rows that filter would have kept).
+    private static func cutoff(for range: MetricRange) -> Date {
+        let cal = Calendar.current
+        switch range {
+        case .twentyFourHours: return cal.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
+        case .sevenDays:       return cal.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        case .thirtyDays:      return cal.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        case .twelveMonths:    return cal.date(byAdding: .day, value: -365, to: Date()) ?? Date()
+        }
     }
     
     private static func activitySamples(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
@@ -268,7 +333,7 @@ enum MetricsService {
         }
     }
     
-    private static func calibrationState(device: Device?, activityRows: [ActivityDaily], measurements: [Measurement], isDemo: Bool) -> CalibrationState {
+    private static func calibrationState(device: Device?, activityRows: [ActivityDaily], isDemo: Bool, context: ModelContext) -> CalibrationState {
         if isDemo {
             return CalibrationState(isCalibrating: false, day: calibrationDays, totalDays: calibrationDays, startedAt: nil, reason: "Demo data active")
         }
@@ -276,7 +341,11 @@ enum MetricsService {
         if let lastConnected = device?.lastConnectedAt { candidates.append(lastConnected) }
         if let lastSync = device?.lastSyncAt { candidates.append(lastSync) }
         candidates.append(contentsOf: activityRows.compactMap(\.syncedAt))
-        candidates.append(contentsOf: measurements.map(\.timestamp))
+        // The earliest measurement timestamp anchors "day 1" — fetched as a single oldest row
+        // instead of mapping the whole table (semantics: still the global min measurement timestamp).
+        if let oldestMeasurement = MetricsRepository.oldestMeasurementTimestamp(context: context) {
+            candidates.append(oldestMeasurement)
+        }
         let started = candidates.min()
         let day: Int
         if let started {
@@ -313,8 +382,8 @@ enum MetricsService {
     private struct MetricStateInputs {
         let today: ActivityDaily?
         let sleep: SleepSummary?
-        let latestHR: Measurement?
-        let latestSpO2: Measurement?
+        let latestHR: LatestReading?
+        let latestSpO2: LatestReading?
         let hrFreshness: DataFreshness
         let spo2Freshness: DataFreshness
         let activityRows: [ActivityDaily]
@@ -428,7 +497,7 @@ enum MetricsService {
         )
     }
     
-    private static func confidence(from measurement: Measurement?) -> MetricConfidence {
+    private static func confidence(from measurement: LatestReading?) -> MetricConfidence {
         switch measurement?.confidenceRaw {
         case DecodeConfidence.known.rawValue:
             return .high
@@ -460,42 +529,30 @@ enum MetricsService {
                 stepsDaily: goal.steps,
                 activeMinutesDaily: goal.activeMinutes,
                 sleepHours: Double(goal.sleepMinutes) / 60,
-                exerciseDaysWeekly: goal.workoutsPerWeek
+                exerciseDaysWeekly: goal.workoutsPerWeek,
+                distanceMetersDaily: goal.distanceMeters,
+                caloriesDaily: goal.calories
             )
         }
-        return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4)
+        return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4, distanceMetersDaily: 8000, caloriesDaily: 500)
     }
     
-    private static func buildTimeline(
-        device: Device?,
-        today: ActivityDaily?,
-        hrSamples: [MetricSample],
-        spo2Samples: [MetricSample],
-        sleep: SleepSummary?,
-        context: ModelContext
-    ) -> [TimelineEvent] {
-        var events: [TimelineEvent] = []
-        if let lastSyncAt = device?.lastSyncAt {
-            events.append(TimelineEvent(title: "Sync complete", detail: "Ring data updated", timestamp: lastSyncAt, metric: "sync"))
-        }
-        if let last = hrSamples.last {
-            events.append(TimelineEvent(title: "Heart rate", detail: "\(Int(last.value)) bpm", timestamp: last.timestamp, metric: "hr"))
-        }
-        if let last = spo2Samples.last {
-            events.append(TimelineEvent(title: "SpO2", detail: "\(Int(last.value)) %", timestamp: last.timestamp, metric: "spo2"))
-        }
-        if let today, today.activeMinutes > 0 {
-            let timestamp = today.syncedAt ?? Calendar.current.date(bySettingHour: 14, minute: 25, second: 0, of: today.date) ?? today.date
-            events.append(TimelineEvent(title: "Activity sync", detail: "\(min(today.activeMinutes, 22)) min active", timestamp: timestamp, metric: "activity"))
-        }
-        if let sleep {
-            events.append(TimelineEvent(title: "Sleep synced", detail: "\(sleep.session.totalMinutes / 60)h \(sleep.session.totalMinutes % 60)m", timestamp: sleep.session.endAt, metric: "sleep"))
-        }
-        let selfies = DebugRepository.queryPackets(filter: DebugPacketFilter(commandId: 0x06), context: context).prefix(3)
-        for packet in selfies {
-            events.append(TimelineEvent(title: "Gesture event", detail: "Decoded packet", timestamp: packet.timestamp, metric: "debug"))
-        }
-        return events.sorted { $0.timestamp > $1.timestamp }.prefix(8).map { $0 }
+}
+
+extension Calendar {
+    /// Hour-of-day boundary between "belongs to last night" and "belongs to the coming night."
+    /// Sleep starting at or after this hour rolls onto the *next* morning's waking day; anything
+    /// earlier (including small-hours and daytime naps) stays on the current day.
+    static let sleepEveningBoundaryHour = 19  // 7 PM
+
+    /// The waking-morning day key for a sleep session starting at `date`. Sleep that begins at or
+    /// after 7 PM belongs to the *next* day's waking morning (you fall asleep tonight, wake tomorrow),
+    /// so a night that crosses midnight groups onto the single morning it ends on. Sleep before 7 PM
+    /// — early-morning hours or a daytime nap — stays on the current day / last night's session.
+    func wakingDay(forSleepStart date: Date) -> Date {
+        let base = startOfDay(for: date)
+        guard component(.hour, from: date) >= Self.sleepEveningBoundaryHour else { return base }
+        return self.date(byAdding: .day, value: 1, to: base) ?? base
     }
 }
 
@@ -583,6 +640,60 @@ enum SleepService {
             return Calendar.current.startOfDay(for: latest.date)
         }
         return Calendar.current.startOfDay(for: Date())
+    }
+
+    /// One-time repair of sleep sessions that were split across midnight (or duplicated) by the old
+    /// start-of-day grouping. `persistSleepTimeline` now keys packets by the noon-to-noon waking day
+    /// at write time, so no *new* splits occur — this only fixes rows persisted before that fix.
+    /// Idempotent + `UserDefaults`-gated so it runs once, off the render path. Mirrors
+    /// `ActivityService.migrateInflatedActivityIfNeeded`.
+    static func migrateSplitSleepSessionsIfNeeded(context: ModelContext) {
+        let key = "sleepMidnightMerge.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        realignAndDedupeSleepSessions(context: context)
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    private static func realignAndDedupeSleepSessions(context: ModelContext) {
+        let calendar = Calendar.current
+
+        // 1. Re-align every session's date onto its noon-to-noon waking day.
+        guard let allSessions = try? context.fetch(FetchDescriptor<SleepSession>()) else { return }
+        for session in allSessions {
+            let targetDate = calendar.wakingDay(forSleepStart: session.startAt)
+            if calendar.startOfDay(for: session.date) != targetDate {
+                session.date = targetDate
+                session.updatedAt = Date()
+            }
+        }
+
+        // 2. Merge duplicates sharing a waking day. Fetch all blocks ONCE and group by session so we
+        // can both tie-break on block count and cascade-delete without re-scanning per session.
+        let allBlocks = (try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []
+        let blocksBySession = Dictionary(grouping: allBlocks) { $0.sessionId }
+
+        let grouped = Dictionary(grouping: allSessions) { calendar.startOfDay(for: $0.date) }
+        for (_, sessionsForDate) in grouped where sessionsForDate.count > 1 {
+            // Keep the richest session: most sleep, then most blocks, then most recently updated;
+            // `id` only as a final deterministic fallback.
+            let sorted = sessionsForDate.sorted { a, b in
+                if a.totalMinutes != b.totalMinutes { return a.totalMinutes > b.totalMinutes }
+                let aBlocks = blocksBySession[a.id]?.count ?? 0
+                let bBlocks = blocksBySession[b.id]?.count ?? 0
+                if aBlocks != bBlocks { return aBlocks > bBlocks }
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+                return a.id.uuidString < b.id.uuidString
+            }
+
+            for session in sorted.dropFirst() {
+                for block in blocksBySession[session.id] ?? [] {
+                    context.delete(block)
+                }
+                context.delete(session)
+            }
+        }
+
+        try? context.save()
     }
 }
 
@@ -820,12 +931,10 @@ enum ActivityService {
     
     private static func backfillSamples(for session: ActivitySession, endedAt: Date, context: ModelContext) {
         let linked = Set(ActivityRepository.samples(sessionId: session.id, context: context).compactMap(\.measurementId))
-        let rows = MetricsRepository.measurements(context: context).filter { row in
-            (row.kind == .heartRate || row.kind == .spo2)
-            && row.timestamp >= session.startedAt
-            && row.timestamp <= endedAt
-            && !linked.contains(row.id)
-        }
+        // Windowed per-kind queries over the session's time span instead of scanning the whole table.
+        let hr = MetricsRepository.measurements(kind: .heartRate, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let spo2 = MetricsRepository.measurements(kind: .spo2, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let rows = (hr + spo2).filter { !linked.contains($0.id) }
         for row in rows {
             context.insert(ActivitySample(
                 sessionId: session.id,

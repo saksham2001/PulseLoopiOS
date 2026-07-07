@@ -11,6 +11,17 @@ enum DeviceRepository {
     static func current(context: ModelContext) -> Device? {
         devices(context: context).first
     }
+
+    /// Stale-state guard: a persisted "connected"/"connecting" must not survive a process restart —
+    /// the live BLE link is gone, so the UI would otherwise show a false "Connected" until a real
+    /// connection re-confirms it. Reset such rows on launch. (Android stale-state-guard parity.)
+    @MainActor
+    static func resetStaleConnectionState(context: ModelContext) {
+        for device in devices(context: context) where device.state == .connected || device.state == .connecting {
+            device.state = .disconnected
+        }
+        try? context.save()
+    }
 }
 
 enum MetricsRepository {
@@ -61,7 +72,66 @@ enum MetricsRepository {
     
     @MainActor
     static func latestMeasurement(kind: MeasurementKind, context: ModelContext) -> Measurement? {
-        measurements(kind: kind, context: context).last
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    /// Measurements of one kind within `[start, end]`, newest-first, capped at `limit`. Database
+    /// predicate + sort + limit — no full-table scan. Used for the 24h Today/Vitals windows.
+    @MainActor
+    static func measurements(kind: MeasurementKind, start: Date, end: Date, limit: Int = 500, context: ModelContext) -> [Measurement] {
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw && $0.timestamp >= start && $0.timestamp <= end },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// All measurements of one kind, newest-first (demo mode keeps full history, no time window).
+    @MainActor
+    static func measurementsAll(kind: MeasurementKind, context: ModelContext) -> [Measurement] {
+        let raw = kind.rawValue
+        let descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// Oldest measurement timestamp across all kinds (for the calibration "Day X of N" counter).
+    /// `fetchLimit: 1` ascending — one row, not the whole table.
+    @MainActor
+    static func oldestMeasurementTimestamp(context: ModelContext) -> Date? {
+        var descriptor = FetchDescriptor<Measurement>(sortBy: [SortDescriptor(\.timestamp, order: .forward)])
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first?.timestamp
+    }
+
+    /// Whether any mock measurement exists (demo-mode detection). `fetchLimit: 1` predicated probe.
+    @MainActor
+    static func hasMockMeasurement(context: ModelContext) -> Bool {
+        let mockRaw = MeasurementSource.mock.rawValue
+        var descriptor = FetchDescriptor<Measurement>(predicate: #Predicate { $0.sourceRaw == mockRaw })
+        descriptor.fetchLimit = 1
+        return ((try? context.fetch(descriptor))?.isEmpty == false)
+    }
+
+    /// Whether any mock measurement of a specific kind exists. `fetchLimit: 1` predicated probe —
+    /// matches the old per-kind `rows.contains { sourceRaw == mock }` demo detection in rangeSamples.
+    @MainActor
+    static func hasMockMeasurement(kind: MeasurementKind, context: ModelContext) -> Bool {
+        let mockRaw = MeasurementSource.mock.rawValue
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<Measurement>(predicate: #Predicate { $0.sourceRaw == mockRaw && $0.kindRaw == raw })
+        descriptor.fetchLimit = 1
+        return ((try? context.fetch(descriptor))?.isEmpty == false)
     }
     
     @MainActor
@@ -255,5 +325,18 @@ enum DebugRepository {
     @MainActor
     static func queryPackets(context: ModelContext) -> [RawPacketRow] {
         queryPackets(filter: DebugPacketFilter(), context: context)
+    }
+
+    /// Cap the raw-packet debug table to its most recent `maxRows` rows, deleting older ones.
+    /// `RawPacketRow` is a DEBUG-only byte trace that otherwise grows without bound (one row per
+    /// BLE packet); this keeps it a rolling window so it can't bloat the store or slow the Debug
+    /// feed. Does NOT save — the caller batches the save with its own writes.
+    @MainActor
+    static func pruneRawPackets(maxRows: Int, context: ModelContext) {
+        var descriptor = FetchDescriptor<RawPacketRow>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
+        descriptor.fetchOffset = maxRows          // skip the rows we want to keep…
+        let stale = (try? context.fetch(descriptor)) ?? []   // …delete everything older
+        guard !stale.isEmpty else { return }
+        for row in stale { context.delete(row) }
     }
 }

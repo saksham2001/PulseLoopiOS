@@ -15,17 +15,22 @@ final class CoachNotificationSlotTests: XCTestCase {
     }
 
     func testSlotWindows() {
-        XCTAssertEqual(CoachNotificationSlot.current(for: at(8), morningHour: 8, eveningHour: 19), .morning)
-        XCTAssertEqual(CoachNotificationSlot.current(for: at(11), morningHour: 8, eveningHour: 19), .morning)
-        XCTAssertEqual(CoachNotificationSlot.current(for: at(19), morningHour: 8, eveningHour: 19), .evening)
-        XCTAssertEqual(CoachNotificationSlot.current(for: at(21), morningHour: 8, eveningHour: 19), .evening)
-        XCTAssertNil(CoachNotificationSlot.current(for: at(3), morningHour: 8, eveningHour: 19))   // too early
-        XCTAssertNil(CoachNotificationSlot.current(for: at(15), morningHour: 8, eveningHour: 19))  // between windows
+        func slot(_ h: Int) -> CoachNotificationSlot? {
+            CoachNotificationSlot.current(for: at(h), morningHour: 8, middayHour: 13, eveningHour: 19)
+        }
+        XCTAssertEqual(slot(8), .morning)
+        XCTAssertEqual(slot(11), .morning)
+        XCTAssertEqual(slot(13), .midday)
+        XCTAssertEqual(slot(15), .midday)
+        XCTAssertEqual(slot(19), .evening)
+        XCTAssertEqual(slot(21), .evening)
+        XCTAssertNil(slot(3))    // too early
+        XCTAssertNil(slot(18))   // between midday and evening windows
     }
 
     func testNextWindowStartIsInFuture() {
-        let now = at(15)  // between windows → evening today
-        let next = CoachNotificationSlot.nextWindowStart(after: now, morningHour: 8, eveningHour: 19)
+        let now = at(15)  // inside midday window → next start is evening today
+        let next = CoachNotificationSlot.nextWindowStart(after: now, morningHour: 8, middayHour: 13, eveningHour: 19)
         XCTAssertGreaterThan(next, now)
         XCTAssertEqual(Calendar.current.component(.hour, from: next), 19)
     }

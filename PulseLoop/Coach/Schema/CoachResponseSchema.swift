@@ -10,6 +10,32 @@ import Foundation
 enum CoachResponseSchema {
     static let name = "coach_response"
 
+    /// Plain-language description of the exact `coach_response` shape, for
+    /// providers that **can't enforce** the JSON schema out-of-band (OpenRouter
+    /// sends no `response_format` because several models in its catalog reject
+    /// this app's schema). Native OpenAI/Gemini enforce `jsonSchema` directly and
+    /// don't need this. Keep in sync with `jsonSchema` / `CoachResponse`.
+    static let promptInstruction = """
+    Your final answer MUST be a single JSON object (no Markdown, no code fences, \
+    no prose before or after) matching this exact `coach_response` schema. Use \
+    these exact snake_case keys — all are required:
+    {
+      "response_type": one of "insight" | "insight_with_chart" | "question" | "action_confirmation" | "data_missing" | "safety_guidance" | "error_recovery",
+      "title": string (≤ 90 chars),
+      "summary": string (≤ 900 chars) — put the main answer here, not in a "message" field,
+      "bullets": array of strings (≤ 5 items, each ≤ 220 chars),
+      "chart": null, or a chart object (only when response_type is "insight_with_chart"),
+      "safety_note": string or null,
+      "data_quality_note": string or null,
+      "sources": array of { "title": string, "url": string, "publisher": string } (use [] if none),
+      "follow_up_chips": array of strings (≤ 4 items, each ≤ 60 chars),
+      "actions_taken": array of strings (use [] if none),
+      "confidence": one of "low" | "medium" | "high"
+    }
+    Do NOT use a "message" key. Do NOT wrap the JSON in ``` fences. Put your \
+    formatted text inside "summary" and "bullets".
+    """
+
     /// The `text.format` object for a Responses API request.
     static var textFormat: [String: Any] {
         [

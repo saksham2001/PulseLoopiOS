@@ -19,6 +19,13 @@ enum RingEventBridge {
     static let hrvRange: ClosedRange<Int> = 1...300
     /// Plausible skin/body temperature, in °C.
     static let temperatureRange: ClosedRange<Double> = 30...45
+    /// Plausible blood-pressure bounds (mmHg) — drops misframed 0x24 bytes.
+    static let systolicRange: ClosedRange<Int> = 60...250
+    static let diastolicRange: ClosedRange<Int> = 30...160
+    /// Plausible fatigue score (0–100 scale; 0 = no sample).
+    static let fatigueRange: ClosedRange<Int> = 1...100
+    /// Plausible blood sugar, in mg/dL.
+    static let bloodSugarRange: ClosedRange<Double> = 40...600
     /// Sanity ceilings for one intraday activity bucket (~15 min): well above any human cadence so
     /// only clearly-misframed packets are rejected.
     static let maxBucketSteps = 5000
@@ -86,8 +93,35 @@ enum RingEventBridge {
             // last-sync) by re-asserting the connected state with the address attached.
             return [.deviceStateChanged(state: .connected, address: address)]
 
-        case .timeSyncAck, .commandAck, .unknown:
-            // No typed measurement — the raw packet was already logged for the debug feed.
+        default:
+            // Everything else: events with no typed fan-out here (timeSyncAck/commandAck/unknown, and
+            // bind — advanced by the sync engine's `handle`), plus the jring/56ff 0x24 extras + firmware
+            // which are split into `extraMetricEvents` to keep this switch's complexity in check.
+            return extraMetricEvents(for: decoded)
+        }
+    }
+
+    /// Fan-out for the jring/56ff 0x24 extra metrics (BP, fatigue, blood sugar) and firmware, with the
+    /// same plausibility gating as the main vitals. Split from `events` so neither switch grows past
+    /// the project's cyclomatic-complexity limit.
+    private static func extraMetricEvents(for decoded: RingDecodedEvent) -> [PulseEvent] {
+        switch decoded {
+        case let .bloodPressureSample(systolic, diastolic, timestamp):
+            guard systolicRange.contains(systolic), diastolicRange.contains(diastolic) else { return [] }
+            return [.bloodPressureSample(systolic: systolic, diastolic: diastolic, timestamp: timestamp)]
+
+        case let .fatigueSample(value, timestamp):
+            guard fatigueRange.contains(value) else { return [] }
+            return [.fatigueSample(value: value, timestamp: timestamp)]
+
+        case let .bloodSugarSample(mgdl, timestamp):
+            guard bloodSugarRange.contains(mgdl) else { return [] }
+            return [.bloodSugarSample(mgdl: mgdl, timestamp: timestamp)]
+
+        case let .firmware(version):
+            return [.firmwareVersion(version)]
+
+        default:
             return []
         }
     }

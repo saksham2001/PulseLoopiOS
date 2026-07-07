@@ -11,13 +11,43 @@ enum UnitsFormatter {
 
     /// Skin/body temperature. Metric → "36.5", "°C"; imperial → "97.7", "°F".
     static func temperature(celsius: Double, units: UnitsPreference) -> (value: String, unit: String) {
-        switch units {
-        case .metric:
-            return (String(format: "%.1f", celsius), "°C")
-        case .imperial:
-            return (String(format: "%.1f", celsius * 9 / 5 + 32), "°F")
+        (String(format: "%.1f", temperatureValue(celsius: celsius, units: units)), temperatureUnit(units))
+    }
+
+    /// Numeric °C → display-unit conversion, for chart samples / y-domain / zone
+    /// bounds that need the raw number (not a formatted string). Absolute value.
+    static func temperatureValue(celsius: Double, units: UnitsPreference) -> Double {
+        units == .imperial ? celsius * 9 / 5 + 32 : celsius
+    }
+
+    /// Convert a temperature *delta* (e.g. chart padding) — scale only, no +32 offset.
+    static func temperatureDelta(celsius: Double, units: UnitsPreference) -> Double {
+        units == .imperial ? celsius * 9 / 5 : celsius
+    }
+
+    static func temperatureUnit(_ units: UnitsPreference) -> String {
+        units == .imperial ? "°F" : "°C"
+    }
+
+    // MARK: - Glucose (mg/dL canonical; mmol/L = mg/dL ÷ 18.0182)
+
+    private static let mgdlPerMmol = 18.0182
+
+    /// Blood glucose. mg/dL → integer "92"; mmol/L → "5.1".
+    static func glucose(mgdl: Double, unit: GlucoseUnit) -> (value: String, unit: String) {
+        switch unit {
+        case .mgdl: return ("\(Int(mgdl.rounded()))", "mg/dL")
+        case .mmol: return (String(format: "%.1f", mgdl / mgdlPerMmol), "mmol/L")
         }
     }
+
+    /// Numeric mg/dL → display value (for chart samples / domain / zone bounds).
+    /// Glucose conversion is purely multiplicative, so deltas scale the same way.
+    static func glucoseValue(mgdl: Double, unit: GlucoseUnit) -> Double {
+        unit == .mmol ? mgdl / mgdlPerMmol : mgdl
+    }
+
+    static func glucoseUnit(_ unit: GlucoseUnit) -> String { unit.label }
 
     /// Distance from canonical metres. Metric → km; imperial → mi (2 decimals).
     static func distance(meters: Double, units: UnitsPreference) -> (value: String, unit: String) {

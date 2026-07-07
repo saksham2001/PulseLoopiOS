@@ -11,7 +11,7 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     var displayName: String {
         switch self {
         case .jring: return "SMART_RING"
-        case .colmiR02: return "Colmi R02"
+        case .colmiR02: return "Colmi / Yawell ring"
         }
     }
 }

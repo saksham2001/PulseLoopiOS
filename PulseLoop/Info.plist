@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Attach a photo to ask the AI Coach about it.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -12,6 +16,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.pulseloop.coach.refresh</string>
+		<string>com.pulseloop.coach.process</string>
 	</array>
 </dict>
 </plist>

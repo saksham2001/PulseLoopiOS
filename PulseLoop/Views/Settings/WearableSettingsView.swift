@@ -13,12 +13,26 @@ struct WearableSettingsView: View {
     /// `Device` rather than `ble.batteryPercent`. Mirror the header's fallback so this never shows "--"
     /// when the header shows a value.
     private var batteryPercent: Int? { ble.batteryPercent ?? devices.first?.batteryPercent }
+    private var wearableDisplayName: String {
+        let storedModel = WearableModel.model(id: devices.first?.wearableModelID)
+        return ble.activeWearableModel?.displayName
+            ?? storedModel?.displayName
+            ?? ble.activeDeviceType?.displayName
+            ?? devices.first?.deviceType.displayName
+            ?? "Connected ring"
+    }
+
+    /// `RelativeDateTimeFormatter` is expensive to allocate; reuse one instance instead of building
+    /// a fresh formatter on every access.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
 
     private var lastSyncedLabel: String {
         guard let date = coordinator.lastSyncAt else { return "Not yet" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     var body: some View {
@@ -26,7 +40,7 @@ struct WearableSettingsView: View {
             VStack(spacing: 16) {
                 if ble.state == .connected {
                     SectionHeader(title: "Connected ring", action: nil)
-                    StatusCopy(title: "Device", body: ble.activeDeviceType?.displayName ?? "Connected ring")
+                    StatusCopy(title: "Device", body: wearableDisplayName)
                     StatusCopy(title: "Battery", body: batteryPercent.map { "\($0)%" } ?? "--")
                     StatusCopy(title: "Last synced", body: lastSyncedLabel)
                     SecondaryButton(title: "Sync now", systemImage: "clock.arrow.circlepath") { coordinator.syncNow() }

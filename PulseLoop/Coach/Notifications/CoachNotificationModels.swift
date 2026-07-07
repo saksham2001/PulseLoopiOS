@@ -4,18 +4,20 @@ import SwiftData
 /// Which daily check-in this is.
 enum CoachNotificationSlot: String, Codable, CaseIterable {
     case morning
+    case midday
     case evening
 
     var label: String { rawValue.capitalized }
 
     /// The active slot for `date` given the user's configured hours, or nil when
-    /// outside both windows. Morning window = [morningHour, morningHour+4];
-    /// evening = [eveningHour, eveningHour+4] (clamped to the same day).
+    /// outside all windows. Each window opens at its hour and stays open ~4h,
+    /// clamped to end before the next window opens so they never overlap.
     static func current(
-        for date: Date, morningHour: Int, eveningHour: Int, calendar: Calendar = .current
+        for date: Date, morningHour: Int, middayHour: Int, eveningHour: Int, calendar: Calendar = .current
     ) -> CoachNotificationSlot? {
         let hour = calendar.component(.hour, from: date)
-        if hour >= morningHour, hour <= min(morningHour + 4, eveningHour - 1) { return .morning }
+        if hour >= morningHour, hour <= min(morningHour + 4, middayHour - 1) { return .morning }
+        if hour >= middayHour, hour <= min(middayHour + 4, eveningHour - 1) { return .midday }
         if hour >= eveningHour, hour <= eveningHour + 4 { return .evening }
         return nil
     }
@@ -23,9 +25,9 @@ enum CoachNotificationSlot: String, Codable, CaseIterable {
     /// Next time a slot window opens at or after `date` — used to schedule the
     /// next background wake.
     static func nextWindowStart(
-        after date: Date, morningHour: Int, eveningHour: Int, calendar: Calendar = .current
+        after date: Date, morningHour: Int, middayHour: Int, eveningHour: Int, calendar: Calendar = .current
     ) -> Date {
-        let candidates = [morningHour, eveningHour].sorted()
+        let candidates = [morningHour, middayHour, eveningHour].sorted()
         for hour in candidates {
             if let d = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: date), d > date {
                 return d
@@ -48,9 +50,15 @@ final class CoachNotificationRecord {
     var body: String
     var createdAt: Date
 
-    init(id: UUID = UUID(), slot: CoachNotificationSlot, dateKey: String, title: String, body: String) {
+    convenience init(id: UUID = UUID(), slot: CoachNotificationSlot, dateKey: String, title: String, body: String) {
+        self.init(id: id, slotRaw: slot.rawValue, dateKey: dateKey, title: title, body: body)
+    }
+
+    /// Raw-slot init for non-slot records (e.g. proactive anomaly alerts, whose
+    /// `slotRaw` is an `anomaly:<kind>` dedupe key rather than a daily slot).
+    init(id: UUID = UUID(), slotRaw: String, dateKey: String, title: String, body: String) {
         self.id = id
-        self.slotRaw = slot.rawValue
+        self.slotRaw = slotRaw
         self.dateKey = dateKey
         self.title = title
         self.body = body

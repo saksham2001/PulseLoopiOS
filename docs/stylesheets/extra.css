@@ -1,0 +1,125 @@
+/* ===========================================================================
+   PulseLoop brand polish for MkDocs Material.
+   Palette pulled from icon-source.svg + the app's DesignSystem:
+     violet  #7C5CFF / #863bff / #7e14ff
+     lavender #EDE6FF / #D2CDFF / #8B7CFF
+     cyan    #47BFFF / #2DD4D8
+     slate   #0E1118 / #080A0F / #0F141F
+   =========================================================================== */
+
+:root {
+  --pl-violet: #7c5cff;
+  --pl-violet-deep: #5b3df0;
+  --pl-lavender: #d2cdff;
+  --pl-cyan: #47bfff;
+  --pl-cyan-deep: #2dd4d8;
+  --pl-ink: #0e1118;
+  --pl-ink-deep: #080a0f;
+}
+
+/* Brand the primary + accent across both schemes. */
+[data-md-color-primary="deep-purple"] {
+  --md-primary-fg-color: var(--pl-violet);
+  --md-primary-fg-color--light: #8b7cff;
+  --md-primary-fg-color--dark: var(--pl-violet-deep);
+}
+[data-md-color-accent="cyan"] {
+  --md-accent-fg-color: var(--pl-cyan);
+}
+
+/* A soft violet→cyan glow on the top header, on both schemes. */
+.md-header {
+  background-image: linear-gradient(
+    100deg,
+    var(--pl-violet-deep) 0%,
+    var(--pl-violet) 45%,
+    var(--pl-cyan) 130%
+  );
+}
+.md-tabs {
+  background: transparent;
+}
+
+/* Larger brand mark in the top navbar (Material defaults to 1.2rem). */
+.md-header__button.md-logo {
+  padding: 0.2rem;
+}
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 2.2rem;
+  width: 2.2rem;
+}
+
+/* ---- Dark scheme: lean into the "glow on slate" brand feel. ---- */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--pl-ink);
+  --md-default-bg-color--light: #11151f;
+  --md-typeset-a-color: var(--pl-lavender);
+  --md-footer-bg-color: var(--pl-ink-deep);
+}
+
+/* Radial violet glow behind the main content, top-center — echoes the icon. */
+[data-md-color-scheme="slate"] .md-main {
+  background:
+    radial-gradient(
+      900px 420px at 50% -8%,
+      rgba(124, 92, 255, 0.16),
+      transparent 70%
+    ),
+    var(--md-default-bg-color);
+}
+
+/* Links: lavender by default, cyan on hover. */
+.md-typeset a {
+  text-decoration-color: rgba(124, 92, 255, 0.4);
+}
+.md-typeset a:hover {
+  color: var(--pl-cyan);
+}
+
+/* ===========================================================================
+   Home page "choose your platform" grid cards (attr_list + md_in_html).
+   Usage in markdown:  wrap cards in <div class="grid cards"> ... </div>
+   Material already ships .grid.cards; this just adds PulseLoop flavor.
+   =========================================================================== */
+.md-typeset .grid.cards > :is(ul, ol) > li,
+.md-typeset .grid.cards > .card {
+  border: 1px solid rgba(124, 92, 255, 0.25);
+  border-radius: 0.6rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.md-typeset .grid.cards > :is(ul, ol) > li:hover,
+.md-typeset .grid.cards > .card:hover {
+  border-color: var(--pl-violet);
+  box-shadow: 0 8px 28px rgba(124, 92, 255, 0.22);
+  transform: translateY(-2px);
+}
+
+/* Hero block on the landing page. */
+.pl-hero {
+  text-align: center;
+  padding: 1.2rem 0 0.4rem;
+}
+.pl-hero h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: linear-gradient(92deg, var(--pl-lavender), var(--pl-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.pl-hero .pl-tagline {
+  font-size: 1.05rem;
+  opacity: 0.85;
+  max-width: 46rem;
+  margin: 0.2rem auto 1rem;
+}
+
+/* Buttons (Material .md-button) in a centered row for the hero CTAs. */
+.pl-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+  margin: 0.6rem 0 1.4rem;
+}

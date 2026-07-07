@@ -30,10 +30,6 @@ struct SleepView: View {
 
         ScrollView {
             VStack(spacing: 16) {
-                HStack {
-                    Text("Sleep").font(.system(size: 26, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-                    Spacer()
-                }
                 SleepRangeSelectorView(selection: $range)
 
                 if range == .day {
@@ -129,14 +125,14 @@ struct SleepView: View {
 
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[range] ?? "Sleep",
-            value: enough ? "\(SleepFormat.duration(avgMin)) avg" : noData.value,
+            value: enough ? SleepFormat.duration(avgMin) : noData.value,
             support: heroSupport,
             score: enough ? avgScore : nil,
             scoreLabel: enough ? avgScore.map { SleepScore.qualityLabel($0).rawValue } : nil,
             noData: !enough
         )
         VisualizationCard(eyebrow: "Duration", title: vizTitle, legend: false) {
-            SleepDurationHistogramChart(bars: bars, goalMin: goalMin, slim: range == .month)
+            SleepDurationHistogramChart(bars: bars, goalMin: goalMin, slim: range == .month, barWidth: range == .week ? 30 : nil, weekBars: range == .week)
         }
         SleepStageSummaryCardsView(
             prefix: "Avg ",
@@ -164,11 +160,13 @@ private struct VisualizationCard<Content: View>: View {
                 }
                 Spacer()
                 if legend {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         legendItem("Deep", SleepStageColors.deep)
                         legendItem("Light", SleepStageColors.light)
+                        legendItem("REM", SleepStageColors.rem)
                         legendItem("Awake", SleepStageColors.awake)
                     }
+                    .fixedSize()
                 }
             }
             content
@@ -183,7 +181,7 @@ private struct VisualizationCard<Content: View>: View {
     private func legendItem(_ label: String, _ color: Color) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).font(.system(size: 10)).foregroundStyle(PulseColors.textSecondary)
+            Text(label).font(.system(size: 9)).foregroundStyle(PulseColors.textSecondary)
         }
     }
 }

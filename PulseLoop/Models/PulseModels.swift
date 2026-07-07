@@ -18,6 +18,11 @@ enum MeasurementKind: String, Codable, CaseIterable {
     case stress
     case hrv
     case temperature = "temp"
+    // jring/56ff metrics from the 0x24 combined-sensor packet. Append only — raw values persisted.
+    case bloodPressureSystolic = "bp_sys"
+    case bloodPressureDiastolic = "bp_dia"
+    case fatigue
+    case bloodSugar = "glucose"
 
     /// Display unit for a measurement of this kind.
     var unit: String {
@@ -27,6 +32,9 @@ enum MeasurementKind: String, Codable, CaseIterable {
         case .stress: return ""
         case .hrv: return "ms"
         case .temperature: return WorkoutAppGroup.useImperialUnits ? "°F" : "°C"
+        case .bloodPressureSystolic, .bloodPressureDiastolic: return "mmHg"
+        case .fatigue: return ""
+        case .bloodSugar: return "mg/dL"
         }
     }
 }
@@ -88,6 +96,8 @@ final class Device {
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
     var firmwareVersion: String?
+    /// Exact catalog model (for example `colmi-r10`), separate from the protocol/driver family.
+    var wearableModelID: String?
     // Defaulted so SwiftData lightweight migration is additive (existing rows become jring with no
     // declared capabilities until the next connect stamps them).
     var deviceTypeRaw: String = RingDeviceType.jring.rawValue
@@ -104,6 +114,7 @@ final class Device {
         batteryPercent: Int? = nil,
         state: RingConnectionState = .idle,
         deviceType: RingDeviceType = .jring,
+        wearableModelID: String? = nil,
         capabilities: Set<WearableCapability> = []
     ) {
         self.id = id
@@ -114,6 +125,7 @@ final class Device {
         self.batteryPercent = batteryPercent
         self.stateRaw = state.rawValue
         self.deviceTypeRaw = deviceType.rawValue
+        self.wearableModelID = wearableModelID
         self.capabilitiesRaw = capabilities.csv
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -180,6 +192,9 @@ final class ActivityDaily {
 
 @Model
 final class Measurement {
+    // Indexes for the hot read paths: time-window scans (timestamp), per-kind windows + latest
+    // value (kindRaw, timestamp), and demo detection (sourceRaw). Additive, non-destructive.
+    #Index<Measurement>([\.timestamp], [\.kindRaw, \.timestamp], [\.sourceRaw])
     @Attribute(.unique) var id: UUID
     var kindRaw: String
     var value: Double
@@ -368,9 +383,28 @@ final class UserProfile {
     var createdAt: Date
     var updatedAt: Date
 
+    // Physiology inputs that shift vitals reference ranges (consumed by VitalsThresholdEngine via
+    // UserPhysiologyProfile). All optional/defaulted so existing stored profiles migrate via SwiftData
+    // lightweight migration with no schema version bump — same pattern as `unitsRaw`.
+    /// Lower resting-HR thresholds; treat a low resting HR as athletic rather than a concern.
+    var athleteMode: Bool = false
+    /// Home/typical altitude in metres; above ~2000 m shifts the expected SpO₂ range down.
+    var altitudeMeters: Double?
+    /// Beta-blocker use lowers resting HR; nil = not specified.
+    var usesBetaBlockers: Bool?
+    /// Known lung condition lowers expected SpO₂; nil = not specified.
+    var hasKnownLungCondition: Bool?
+    /// Preferred glucose display unit.
+    var preferredGlucoseUnitRaw: String = GlucoseUnit.mgdl.rawValue
+
     var units: UnitsPreference {
         get { UnitsPreference(rawValue: unitsRaw) ?? .metric }
         set { unitsRaw = newValue.rawValue }
+    }
+
+    var preferredGlucoseUnit: GlucoseUnit {
+        get { GlucoseUnit(rawValue: preferredGlucoseUnitRaw) ?? .mgdl }
+        set { preferredGlucoseUnitRaw = newValue.rawValue }
     }
 
     init(
@@ -382,7 +416,12 @@ final class UserProfile {
         weightKg: Double? = nil,
         units: UnitsPreference = .metric,
         onboardingCompleted: Bool = false,
-        baselineCompleted: Bool = false
+        baselineCompleted: Bool = false,
+        athleteMode: Bool = false,
+        altitudeMeters: Double? = nil,
+        usesBetaBlockers: Bool? = nil,
+        hasKnownLungCondition: Bool? = nil,
+        preferredGlucoseUnit: GlucoseUnit = .mgdl
     ) {
         self.id = id
         self.name = name
@@ -393,6 +432,11 @@ final class UserProfile {
         self.unitsRaw = units.rawValue
         self.onboardingCompleted = onboardingCompleted
         self.baselineCompleted = baselineCompleted
+        self.athleteMode = athleteMode
+        self.altitudeMeters = altitudeMeters
+        self.usesBetaBlockers = usesBetaBlockers
+        self.hasKnownLungCondition = hasKnownLungCondition
+        self.preferredGlucoseUnitRaw = preferredGlucoseUnit.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -405,14 +449,21 @@ final class UserGoal {
     var sleepMinutes: Int
     var activeMinutes: Int
     var workoutsPerWeek: Int
+    /// Daily distance goal in canonical metres (converted to km/mi for display, like all stored distance).
+    /// Defaulted so this is a safe additive SwiftData migration for existing rows.
+    var distanceMeters: Double = 8000
+    /// Daily active-energy goal in kcal. Defaulted for the same additive-migration reason.
+    var calories: Int = 500
     var updatedAt: Date
 
-    init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4) {
+    init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4, distanceMeters: Double = 8000, calories: Int = 500) {
         self.id = id
         self.steps = steps
         self.sleepMinutes = sleepMinutes
         self.activeMinutes = activeMinutes
         self.workoutsPerWeek = workoutsPerWeek
+        self.distanceMeters = distanceMeters
+        self.calories = calories
         self.updatedAt = Date()
     }
 }
@@ -703,15 +754,20 @@ final class CoachMessage {
     var cardsJSON: String?
     /// Encoded `PendingAction` awaiting a Confirm/Cancel tap (Milestone B).
     var pendingActionJSON: String? = nil
+    /// Encoded `[CoachAttachmentRef]` for images attached to this message. The
+    /// bytes live in `Documents/coach_attachments/`; this holds only the refs.
+    /// Optional with a default keeps the SwiftData migration lightweight.
+    var attachmentsJSON: String? = nil
     var createdAt: Date
 
-    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, attachmentsJSON: String? = nil, createdAt: Date = Date()) {
         self.id = id
         self.conversationId = conversationId
         self.role = role
         self.body = body
         self.cardsJSON = cardsJSON
         self.pendingActionJSON = pendingActionJSON
+        self.attachmentsJSON = attachmentsJSON
         self.createdAt = createdAt
     }
 }

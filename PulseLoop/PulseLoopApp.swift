@@ -21,8 +21,12 @@ struct PulseLoopApp: App {
     private let persistence: EventPersistenceSubscriber
     /// Retained so it keeps regenerating Today/Sleep coach summaries on new data.
     private let summaryCoordinator: CoachSummaryCoordinator
+    /// Retained so it keeps watching for on-device proactive anomaly alerts.
+    private let anomalyMonitor: CoachAnomalyMonitor
     /// Retained so it keeps recording the structured wearable diagnostics timeline.
     private let diagnostics: DiagnosticsSubscriber
+    /// Retained so it keeps projecting synced data into the home-screen-widget snapshot.
+    private let widgetPublisher: WidgetSnapshotPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
 
@@ -56,6 +60,15 @@ struct PulseLoopApp: App {
             WorkoutAppGroup.useImperialUnits = (profile.units == .imperial)
         }
 
+        // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
+        SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
+
+        // A persisted "connected" state can't survive a restart — the live link is gone. Reset it so
+        // the UI never shows a false "Connected" until a real connection re-confirms.
+        if !runningTests {
+            DeviceRepository.resetStaleConnectionState(context: container.mainContext)
+        }
+
         // Don't bring up CoreBluetooth under tests (see `isRunningUnitTests`).
         let client = RingBLEClient(startManager: !runningTests)
         let coordinator = RingSyncCoordinator(client: client, context: container.mainContext)
@@ -69,8 +82,11 @@ struct PulseLoopApp: App {
         let subscriber = EventPersistenceSubscriber(context: container.mainContext)
         self.persistence = subscriber
         self.summaryCoordinator = CoachSummaryCoordinator(context: container.mainContext)
+        self.anomalyMonitor = CoachAnomalyMonitor(context: container.mainContext)
         let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
         self.diagnostics = diagnostics
+        let widgetPublisher = WidgetSnapshotPublisher(context: container.mainContext)
+        self.widgetPublisher = widgetPublisher
 
         // Skip the live subsystems entirely under XCTest — the test target exercises these
         // components directly with their own fixtures; the app host just needs to launch cleanly.
@@ -81,7 +97,9 @@ struct PulseLoopApp: App {
         subscriber.start()
         coordinator.start()
         summaryCoordinator.start()
+        anomalyMonitor.start()
         diagnostics.start()
+        widgetPublisher.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate
@@ -101,7 +119,20 @@ struct PulseLoopApp: App {
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in
+            // Flush any batched-but-unsaved ring writes before the app suspends so a mid-sync
+            // batch isn't lost.
+            if phase != .active { persistence.flush() }
+            // Republish the widget snapshot at scene edges: leaving-active captures the freshest
+            // flushed data before suspension; becoming-active catches Settings edits (goals, units,
+            // visibility) that change tiles without bumping the sync token. No-ops when unchanged.
+            if !Self.isRunningUnitTests { widgetPublisher.publish(reason: .scenePhase) }
             guard phase == .active else { return }
+            // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
+            // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the
+            // last-known ring if it isn't actually connected. (Android foreground-reconnect parity.)
+            if bleClient.hasLastKnownRing, bleClient.state != .connected {
+                bleClient.connectLastKnown()
+            }
             // Both calls are no-ops when the AI Coach master switch is off — the
             // scheduler gates on `coachMasterEnabled`, and `runDueSlot` short
             // -circuits via the feature-flags gate.

@@ -18,24 +18,32 @@ struct CoachOrchestrator {
         let assistant: CoachResponse
         let trace: [CoachToolCallTrace]
         var pendingActions: [PendingAction] = []
+        /// Set when the turn failed; surfaced as a red error bubble instead of the
+        /// `assistant` fallback. `nil` on success.
+        var error: CoachTurnError? = nil
     }
 
-    struct PriorMessage { let role: String; let text: String }
+    struct PriorMessage { let role: String; let text: String; var images: [CoachImagePayload] = [] }
+
+    /// Substituted as the user prompt when an image is sent with no text, so the
+    /// schema/tool loop still has a non-empty user turn to anchor on.
+    private static let imageOnlyPrompt = "Please look at the attached image."
 
     func runTurn(
         userText: String,
         packet: CoachContextPacket,
         recentMessages: [PriorMessage],
+        userImages: [CoachImagePayload] = [],
         onTrace: @escaping (CoachTraceEvent) -> Void = { _ in }
     ) async -> TurnResult {
         guard flags.coachEnabled else {
             return TurnResult(assistant: CoachFallbacks.scripted(packet: packet), trace: [])
         }
         do {
-            return try await runOpenAI(userText: userText, packet: packet, recentMessages: recentMessages, onTrace: onTrace)
+            return try await runOpenAI(userText: userText, packet: packet, recentMessages: recentMessages, userImages: userImages, onTrace: onTrace)
         } catch {
             onTrace(CoachTraceEvent(label: "Something went wrong", status: .failedTool))
-            return TurnResult(assistant: CoachFallbacks.fallback(), trace: [])
+            return TurnResult(assistant: CoachFallbacks.fallback(), trace: [], error: CoachTurnError(error))
         }
     }
 
@@ -43,20 +51,27 @@ struct CoachOrchestrator {
         userText: String,
         packet: CoachContextPacket,
         recentMessages: [PriorMessage],
+        userImages: [CoachImagePayload],
         onTrace: @escaping (CoachTraceEvent) -> Void
     ) async throws -> TurnResult {
         let toolSpecs = registry.toolSpecs
         let textFormat = CoachResponseSchema.textFormat
 
         // Initial input: system + developer + recent turns + the new user message.
+        // Images only ever ride on user turns (system/developer/assistant stay text).
         var input: [[String: Any]] = [
             OpenAIRequestBuilder.message(role: "system", content: CoachPromptBuilder.systemPrompt),
             OpenAIRequestBuilder.message(role: "developer", content: CoachPromptBuilder.developerMessage(packet: packet)),
         ]
         for m in recentMessages {
-            input.append(OpenAIRequestBuilder.message(role: m.role == "user" ? "user" : "assistant", content: m.text))
+            let isUser = m.role == "user"
+            input.append(OpenAIRequestBuilder.message(
+                role: isUser ? "user" : "assistant",
+                content: m.text,
+                images: isUser ? m.images : []))
         }
-        input.append(OpenAIRequestBuilder.message(role: "user", content: userText))
+        let userContent = userText.isEmpty && !userImages.isEmpty ? Self.imageOnlyPrompt : userText
+        input.append(OpenAIRequestBuilder.message(role: "user", content: userContent, images: userImages))
 
         onTrace(CoachTraceEvent(label: "Thinking about your question…", status: .thinking))
 
@@ -112,10 +127,23 @@ struct CoachOrchestrator {
             noteWebSearch(response, onTrace: onTrace)
         }
 
-        let assistant = try await parseFinal(response, textFormat: textFormat)
-        onTrace(CoachTraceEvent(label: "", status: .done))
-        return TurnResult(assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions)
+        do {
+            let assistant = try await parseFinal(response, textFormat: textFormat)
+            onTrace(CoachTraceEvent(label: "", status: .done))
+            return TurnResult(assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions)
+        } catch let parseError as ParseExhausted {
+            // The model never produced valid coach_response JSON. Surface it as an
+            // error bubble, but keep the trace from the tools that did run.
+            onTrace(CoachTraceEvent(label: "Couldn't format the answer", status: .failedTool))
+            return TurnResult(
+                assistant: CoachFallbacks.fallback(), trace: trace,
+                error: CoachTurnError(code: "Bad response", reason: parseError.reason))
+        }
     }
+
+    /// Thrown by `parseFinal` when the model never returns valid coach_response
+    /// JSON after the repair attempts.
+    private struct ParseExhausted: Error { let reason: String }
 
     // MARK: - Final parse + repair
 
@@ -125,7 +153,11 @@ struct CoachOrchestrator {
         while true {
             if let parsed = CoachResponseParser.parse(current.outputText) { return parsed }
             attempts += 1
-            if attempts > maxFinalAttempts { return CoachFallbacks.fallback() }
+            if attempts > maxFinalAttempts {
+                let snippet = current.outputText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
+                throw ParseExhausted(reason: "The model didn't return a valid structured answer after \(maxFinalAttempts) attempts."
+                    + (snippet.isEmpty ? "" : " It replied: “\(snippet)…”"))
+            }
             let repair = OpenAIRequestBuilder.message(
                 role: "user",
                 content: "Your previous output did not match the required coach_response JSON schema. Return only valid JSON for that schema now.")

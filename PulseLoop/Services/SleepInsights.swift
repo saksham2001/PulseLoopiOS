@@ -137,9 +137,9 @@ struct SleepNoDataState {
 enum SleepInsights {
     static let rangeHeroLabel: [SleepRangeKey: String] = [
         .day: "Last Sleep",
-        .week: "Weekly Sleep",
-        .month: "Monthly Sleep",
-        .year: "Yearly Sleep"
+        .week: "AVG Weekly Sleep",
+        .month: "AVG Monthly Sleep",
+        .year: "AVG Yearly Sleep"
     ]
 
     private static let minAggNights = 2

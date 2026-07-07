@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 
-/// Notifications detail screen. Hosts the daily Coach check-in controls (enable, morning/evening
+/// Coach Check-Ins detail screen. Hosts the daily Coach check-in controls (enable, morning/evening
 /// windows, test send). These depend on the AI Coach being enabled, so when it's off the controls are
 /// shown disabled with a hint to turn the Coach on.
 struct NotificationsSettingsView: View {
@@ -32,7 +32,7 @@ struct NotificationsSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Notifications")
+        .navigationTitle("Coach Check-Ins")
     }
 
     @ViewBuilder private var notificationsControls: some View {
@@ -43,11 +43,26 @@ struct NotificationsSettingsView: View {
 
         if store.settings.notificationsEnabled {
             labeledRow("Morning") { hourPicker(hourBinding(\.morningHour)) }
+            labeledRow("Midday") { hourPicker(hourBinding(\.middayHour)) }
             labeledRow("Evening") { hourPicker(hourBinding(\.eveningHour)) }
             QuickActionButton(label: "Send a test check-in now") { sendTestCheckin() }
             if let testStatus {
                 Text(testStatus).font(.caption).foregroundStyle(PulseColors.textMuted)
             }
+
+            // Proactive anomaly alerts — on-device only (free/private local
+            // inference makes "watch the stream and speak up" practical).
+            SectionHeader(title: "Proactive alerts", action: nil)
+            toggleRow("Anomaly heads-ups (on-device)", isOn: Binding(
+                get: { store.settings.proactiveAlertsEnabled },
+                set: { store.settings.proactiveAlertsEnabled = $0 }
+            ))
+            Text(store.settings.providerMode == .appleOnDevice
+                 ? "When something looks off (low SpO₂, short sleep), I'll send a calm heads-up — generated privately on your iPhone."
+                 : "Requires the On-device (Apple) provider. Switch to it in AI Coach settings to enable.")
+                .font(.caption).foregroundStyle(PulseColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
         }
         if notifPermissionDenied {
             Text("Notifications are disabled for PulseLoop in iOS Settings.")
