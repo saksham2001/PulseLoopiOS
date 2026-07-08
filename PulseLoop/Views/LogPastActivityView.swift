@@ -65,8 +65,7 @@ struct LogPastActivityView: View {
             .padding(.bottom, 40)
         }
         .background(PulseColors.background.ignoresSafeArea())
-        .navigationTitle("Log Past Activity")
-        .navigationBarTitleDisplayMode(.inline)
+        .pageChrome("Log Past Activity")
     }
 
     private func save() {
@@ -164,11 +163,9 @@ private struct ActivityTypeButton: View, Equatable {
             }
             .padding(12)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? PulseColors.accentSoft : PulseColors.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isSelected ? PulseColors.accent : PulseColors.borderSubtle, lineWidth: 1)
-            }
+            // Selected = accent-tinted glass; others = plain glass.
+            .pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous),
+                        interactive: true, tint: isSelected ? PulseColors.accent : nil)
         }
         .buttonStyle(.plain)
     }
@@ -199,11 +196,7 @@ private struct PastActivityTimeCard: View {
                     .foregroundStyle(isValid ? PulseColors.textSecondary : PulseColors.warning)
             }
         }
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        }
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func row<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
@@ -262,11 +255,7 @@ private struct PastActivityDurationCard: View, Equatable {
             }
         }
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        }
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func durationButton(systemImage: String, action: @escaping () -> Void) -> some View {

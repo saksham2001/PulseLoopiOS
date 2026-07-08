@@ -45,9 +45,10 @@ struct ActivityView: View {
                             .font(PulseFont.headline)
                             .frame(maxWidth: .infinity)
                             .frame(height: 60)
-                            .foregroundStyle(.white)
-                            // Translucent accent glass CTA (matches PrimaryButton).
-                            .pulseGlass(Capsule(), interactive: true, tint: PulseColors.accent)
+                            .foregroundStyle(PulseColors.textPrimary)
+                            // Plain translucent Liquid Glass (no accent tint, so it reads as glass
+                            // rather than a solid fill) — matches the Connect button.
+                            .pulseGlass(Capsule(), interactive: true)
                     }
                     .buttonStyle(.plain)
 

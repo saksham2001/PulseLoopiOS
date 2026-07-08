@@ -23,9 +23,7 @@ struct WorkoutStat: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -51,9 +49,7 @@ private struct LiveStatTile: View {
         .padding(16)
         // Stretch to fill the grid cell so all tiles in a row are the same height.
         .frame(maxWidth: .infinity, minHeight: 92, maxHeight: .infinity, alignment: .topLeading)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -356,9 +352,7 @@ private struct EditWorkoutSheet: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .foregroundStyle(PulseColors.textPrimary)
-                    .background(PulseColors.cardSoft)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(Capsule(), interactive: true)
             }
         }
         .padding(20)
@@ -918,7 +912,7 @@ private struct WorkoutEndSheet: View {
                 }
             }
             .padding(.vertical, 14)
-            .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             Text(message)
                 .font(PulseFont.footnote.weight(.regular))
@@ -934,8 +928,7 @@ private struct WorkoutEndSheet: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
                     .foregroundStyle(.white)
-                    .background(destructive ? PulseColors.danger : PulseColors.accent)
-                    .clipShape(Capsule())
+                    .pulseGlass(Capsule(), interactive: true, tint: destructive ? PulseColors.danger : PulseColors.accent)
             }
 
             Button { dismiss() } label: {
@@ -944,9 +937,7 @@ private struct WorkoutEndSheet: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .foregroundStyle(PulseColors.textPrimary)
-                    .background(PulseColors.cardSoft)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(Capsule(), interactive: true)
             }
         }
         .padding(20)
