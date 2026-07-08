@@ -78,11 +78,12 @@ struct SettingsRow: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
-                    // Vivid tinted tile with a top sheen (iOS Settings look). Solid, not
-                    // glass — a glass tile inside the glass section card can't sample it.
+                    // Neutral "white glass" tile (iOS Settings look): a light translucent
+                    // fill with a top sheen — not glassEffect, which can't nest inside the
+                    // glass section card. White glyph, no colour tint.
                     .background(
                         LinearGradient(
-                            colors: [item.tint, item.tint.opacity(0.78)],
+                            colors: [Color.white.opacity(0.16), Color.white.opacity(0.07)],
                             startPoint: .top, endPoint: .bottom
                         ),
                         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
