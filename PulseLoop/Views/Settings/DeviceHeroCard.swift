@@ -178,13 +178,11 @@ struct DeviceHeroCard: View {
                 Button(action: { performAction(status.action) }) {
                     Text(status.actionTitle)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(status.actionEnabled ? PulseColors.accent : PulseColors.textMuted)
+                        .foregroundStyle(status.actionEnabled ? PulseColors.textPrimary : PulseColors.textMuted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(
-                            status.actionEnabled ? PulseColors.accent.opacity(0.12) : PulseColors.elevated,
-                            in: Capsule()
-                        )
+                        // Plain liquid glass (no accent tint); interactive when enabled.
+                        .pulseGlass(Capsule(), interactive: status.actionEnabled)
                 }
                 .buttonStyle(.plain)
                 .disabled(!status.actionEnabled)
@@ -196,9 +194,11 @@ struct DeviceHeroCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        // Liquid glass hero card. The container lets the card glass and the inner
+        // Connect-pill glass coexist as one managed group (glass can't sample glass,
+        // so a bare nested glass would render flat).
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlassContainer(spacing: 24)
     }
 
     private func cardAccessibilityLabel(_ status: DeviceHeroStatus) -> String {

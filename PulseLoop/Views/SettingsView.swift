@@ -50,15 +50,21 @@ struct SettingsView: View {
             VStack(spacing: 20) {
                 DeviceHeroCard(path: $path)
 
-                SettingsSection(title: "Device", rows: deviceRows(caps))
-                SettingsSection(title: "AI Coach", rows: aiCoachRows)
-                SettingsSection(title: "General", rows: generalRows)
-                SettingsSection(title: "Metrics", rows: metricsRows)
-                SettingsSection(title: "Resources", rows: resourcesRows(caps))
+                // Grouped glass sections share one container so their glass renders/
+                // blends consistently (iOS-Settings inset-grouped look).
+                VStack(spacing: 20) {
+                    SettingsSection(title: "Device", rows: deviceRows(caps))
+                    SettingsSection(title: "AI Coach", rows: aiCoachRows)
+                    SettingsSection(title: "General", rows: generalRows)
+                    SettingsSection(title: "Metrics", rows: metricsRows)
+                    SettingsSection(title: "Resources", rows: resourcesRows(caps))
+                }
+                .pulseGlassContainer(spacing: 20)
             }
             .padding()
         }
         .background(PulseColors.background)
+        .pulseScrollEdges(.top) // content frosts/dissolves under the top as it scrolls
         .navigationTitle("Settings")
     }
 

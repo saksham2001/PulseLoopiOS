@@ -46,8 +46,8 @@ struct ActivityView: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 60)
                             .foregroundStyle(.white)
-                            .background(PulseColors.accent)
-                            .clipShape(Capsule())
+                            // Translucent accent glass CTA (matches PrimaryButton).
+                            .pulseGlass(Capsule(), interactive: true, tint: PulseColors.accent)
                     }
                     .buttonStyle(.plain)
 
@@ -56,8 +56,8 @@ struct ActivityView: View {
                             .font(.system(size: 18))
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 60, height: 60)
-                            .background(PulseColors.card, in: Circle())
-                            .overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                            // Glass circle, matching the pushed-page back button.
+                            .pulseGlass(Circle(), interactive: true)
                     }
                     .buttonStyle(.plain)
                 }
