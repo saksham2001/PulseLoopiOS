@@ -46,6 +46,8 @@ final class CoachNotificationService {
     /// Whether a stale-data result should still send (with last-known data) or skip.
     private let staleDataPolicy: StaleDataPolicy
 
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     init(
         modelContext: ModelContext,
         coordinator: RingSyncGating? = nil,
