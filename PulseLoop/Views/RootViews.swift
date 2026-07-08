@@ -211,12 +211,14 @@ struct MainTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: coordinator.isSyncing)
+        .animation(PulseMotion.materialize, value: coachEnabled)   // FAB materializes in/out
         // Floating Coach chat bubble, bottom-right, hovering above the tab bar.
         .overlay(alignment: .bottomTrailing) {
             if coachEnabled {
                 CoachFAB { CoachNavigation.shared.openRoot() }
                     .padding(.trailing, 18)
                     .padding(.bottom, 72)   // sits just above the tab bar
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
         .onChange(of: coachEnabled) { _, enabled in
@@ -440,7 +442,7 @@ struct BottomNavBar: View {
             }
         }
         // Slide the selection lozenge smoothly whenever the tab changes.
-        .animation(.snappy(duration: 0.3), value: selected)
+        .animation(PulseMotion.spring, value: selected)
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
         // Single interactive glass surface — real Liquid Glass (touch illumination)

@@ -51,7 +51,7 @@ struct TodayView: View {
                             chips: coachSummary.chips
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else if coachEnabled {
                     // Coach on but no summary generated yet: offer the chat entry point.
                     Button { CoachNavigation.shared.openRoot() } label: {
@@ -63,7 +63,7 @@ struct TodayView: View {
                             chips: []
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else {
                     HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
                 }

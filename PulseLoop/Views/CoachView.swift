@@ -97,6 +97,7 @@ struct CoachView: View {
                 }
                 .scrollDismissesKeyboard(.immediately)
                 .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
+                .pulseScrollEdges(.top)
             }
 
             VStack(spacing: 0) {
