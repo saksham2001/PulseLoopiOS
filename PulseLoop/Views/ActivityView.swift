@@ -143,6 +143,7 @@ struct ActivityView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .sheet(isPresented: $goalsOpen) { GoalEditorSheet() }
         .sheet(isPresented: $historyOpen) {
             WorkoutHistorySheet(units: units) { id in

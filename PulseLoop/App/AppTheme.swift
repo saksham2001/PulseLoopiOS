@@ -34,9 +34,10 @@ enum MainTab: String, CaseIterable, Identifiable {
     case activity = "Activity"
     case sleep = "Sleep"
     case coach = "Coach"
-    
+    case settings = "Settings"
+
     var id: String { rawValue }
-    
+
     var symbol: String {
         switch self {
         case .today: return "circle.circle"
@@ -44,6 +45,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .activity: return "waveform.path.ecg"
         case .sleep: return "moon"
         case .coach: return "sparkles"
+        case .settings: return "gearshape"
         }
     }
 }

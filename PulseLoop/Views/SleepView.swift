@@ -43,6 +43,7 @@ struct SleepView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task(id: range) {
             guard coachEnabled else { return }
             if range == .day { await summaryService.refreshSleepDayIfNeeded() }

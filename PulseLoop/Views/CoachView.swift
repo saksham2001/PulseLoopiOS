@@ -41,11 +41,11 @@ struct CoachView: View {
             && settingsStore.settings.providerMode != .appleOnDevice
     }
 
-    /// Bottom inset for the composer: clears the overlaid nav bar (~60) when the
-    /// keyboard is hidden, and sits just above the keyboard when shown. Computed
-    /// manually because the tab layout pins the keyboard safe area (see RootViews).
+    /// Bottom inset for the composer. Coach is presented as a sheet now (no overlaid
+    /// nav bar), so the idle gap is small; when the keyboard is up the composer rises
+    /// just above it. Computed manually because we pin the keyboard safe area below.
     private var composerBottomInset: CGFloat {
-        guard keyboardHeight > 0 else { return 60 }
+        guard keyboardHeight > 0 else { return 8 }
         return max(8, keyboardHeight - bottomSafeInset + 8)
     }
 
@@ -125,6 +125,9 @@ struct CoachView: View {
             .background(PulseColors.secondaryBackground)
         }
         .background(PulseColors.background)
+        // Pin the keyboard safe area so only our manual lift moves the composer —
+        // otherwise the sheet's native avoidance double-lifts it.
+        .ignoresSafeArea(.keyboard)
         .animation(.easeOut(duration: 0.25), value: keyboardHeight)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
             guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }

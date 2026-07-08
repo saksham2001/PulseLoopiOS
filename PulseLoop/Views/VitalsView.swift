@@ -32,6 +32,7 @@ struct VitalsView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
         .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
         .onChange(of: isActive) { _, active in if active { store?.updateProfile(profile) } }

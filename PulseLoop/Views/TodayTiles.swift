@@ -106,7 +106,9 @@ struct ActivityTileView: View {
                                 .font(.system(size: 26, weight: .semibold))
                                 .monospacedDigit()
                                 .foregroundStyle(PulseColors.textPrimary)
-                                .minimumScaleFactor(0.75)
+                                // Let long values (e.g. "8,401") shrink to fit the
+                                // narrow legend column instead of truncating to "8,4…".
+                                .minimumScaleFactor(0.5)
                                 .lineLimit(1)
                         }
                     }

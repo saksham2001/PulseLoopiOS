@@ -54,7 +54,7 @@ struct TodayView: View {
                     .buttonStyle(.plain)
                 } else if coachEnabled {
                     // Coach on but no summary generated yet: offer the chat entry point.
-                    Button { selectedTab = .coach } label: {
+                    Button { CoachNavigation.shared.openRoot() } label: {
                         CoachMessageCard(
                             headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
                             body: summary.calibration.isCalibrating
@@ -77,6 +77,7 @@ struct TodayView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task {
             ensureStore()
             if isActive { store?.updateProfile(profile) }

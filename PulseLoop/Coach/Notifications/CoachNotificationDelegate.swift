@@ -9,8 +9,18 @@ import UserNotifications
 final class CoachNavigation {
     static let shared = CoachNavigation()
     var requestedConversationId: UUID?
+    /// Drives the Coach sheet. Coach is no longer a tab, so all entry points
+    /// (summary-card tap, notification deep-link, header button) set this true.
+    var showCoach = false
 
-    func open(_ conversationId: UUID) { requestedConversationId = conversationId }
+    /// Open the coach on a specific conversation (deep link).
+    func open(_ conversationId: UUID) {
+        requestedConversationId = conversationId
+        showCoach = true
+    }
+
+    /// Open the coach with no specific conversation (e.g. header button).
+    func openRoot() { showCoach = true }
 }
 
 /// UNUserNotificationCenter delegate: shows check-ins while foreground and
