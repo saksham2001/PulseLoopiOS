@@ -233,6 +233,7 @@ struct MainTabView: View {
         // crowds the tab bar. All entry points set `nav.showCoach`.
         .sheet(isPresented: $nav.showCoach) {
             CoachView()
+                .presentationDragIndicator(.visible) // grabber ("pull tab") at the top of the sheet
         }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
