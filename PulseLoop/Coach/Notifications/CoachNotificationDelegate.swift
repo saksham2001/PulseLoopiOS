@@ -19,8 +19,12 @@ final class CoachNavigation {
         showCoach = true
     }
 
-    /// Open the coach with no specific conversation (e.g. header button).
-    func openRoot() { showCoach = true }
+    /// Open the coach with no specific conversation (e.g. the floating bubble).
+    /// Clears any prior deep-link id so it doesn't reopen a stale thread.
+    func openRoot() {
+        requestedConversationId = nil
+        showCoach = true
+    }
 }
 
 /// UNUserNotificationCenter delegate: shows check-ins while foreground and
