@@ -105,11 +105,7 @@ struct WidgetActivityContent: View {
                                 .tracking(0.8)
                                 .foregroundStyle(value.color)
                             Text(value.text)
-                                .font(.system(size: 26, weight: .semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(PulseColors.textPrimary)
-                                .minimumScaleFactor(0.6)
-                                .lineLimit(1)
+                                .activityValueStyle(size: 26)
                         }
                     }
                 }
@@ -135,7 +131,7 @@ struct WidgetActivityFullContent: View {
         } else {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 0) {
+                    HStack(alignment: .top, spacing: 12) {
                         metric(label: "Steps", value: active?.stepsText ?? "—", unit: nil, color: PulseColors.steps)
                         metric(label: "Distance", value: active?.distanceText ?? "—",
                                unit: active?.distanceText == nil ? nil : active?.distanceUnitLabel.lowercased(),
@@ -166,10 +162,7 @@ struct WidgetActivityFullContent: View {
                 .minimumScaleFactor(0.7)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(.system(size: 32, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
+                    .activityValueStyle(size: 32)
                 if let unit {
                     Text(unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
                 }

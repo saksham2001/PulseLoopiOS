@@ -305,7 +305,13 @@ final class EventPersistenceSubscriber {
                     session.rejectedGpsPointCount += 1
                 }
             }
-        case .heartRateComplete, .spo2Progress, .spo2Complete, .syncProgress, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
+        case let .syncProgress(stage):
+            // Stamp the *completion* of a full history sync so the coach freshness gate can tell a
+            // finished sync from a bare CONNECT (`lastSyncAt`, re-stamped every connect).
+            if stage == "done", let device = DeviceRepository.current(context: context) {
+                device.lastFullSyncAt = Date()
+            }
+        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
         }
         // NB: no per-event save here — `scheduleFlush()` (called by `persist`) batches the save.

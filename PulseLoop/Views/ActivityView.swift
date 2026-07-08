@@ -205,7 +205,7 @@ struct DailyActivitySummaryCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 18) {
-                        HStack(alignment: .top, spacing: 0) {
+                        HStack(alignment: .top, spacing: 12) {
                             metric(label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
                             metric(label: "Distance", value: distanceValue ?? "—", unit: distanceValue == nil ? nil : distanceUnit, color: PulseColors.distance)
                         }
@@ -239,10 +239,7 @@ struct DailyActivitySummaryCard: View {
                 .minimumScaleFactor(0.7)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(.system(size: 32, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
+                    .activityValueStyle(size: 32)
                 if let unit {
                     Text(unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
                 }
@@ -342,16 +339,42 @@ struct WorkoutHistorySheet: View {
     var units: UnitsPreference = .metric
     let onSelect: (UUID) -> Void
 
+    private static let dayHeaderFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    /// Finished workouts bucketed by calendar day, day keys newest-first. Dictionary(grouping:)
+    /// preserves the query's newest-first order within each bucket.
+    private var groups: [(day: Date, sessions: [ActivitySession])] {
+        let finished = sessions.filter { $0.status == .finished }
+        let buckets = Dictionary(grouping: finished) { Calendar.current.startOfDay(for: $0.startedAt) }
+        return buckets.sorted { $0.key > $1.key }.map { (day: $0.key, sessions: $0.value) }
+    }
+
+    private func header(for day: Date) -> String {
+        if Calendar.current.isDateInToday(day) { return "TODAY" }
+        if Calendar.current.isDateInYesterday(day) { return "YESTERDAY" }
+        return Self.dayHeaderFormatter.string(from: day).uppercased()
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 10) {
-                    let finished = sessions.filter { $0.status == .finished }
-                    if finished.isEmpty {
+                    if groups.isEmpty {
                         EmptyStateView(title: "No workouts yet", body: "Recorded workouts will appear here.")
                     } else {
-                        ForEach(finished) { session in
-                            ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
+                        ForEach(Array(groups.enumerated()), id: \.element.day) { index, group in
+                            Text(header(for: group.day))
+                                .font(.system(size: 11, weight: .medium)).tracking(1.4)
+                                .foregroundStyle(PulseColors.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, index == 0 ? 0 : 8)
+                            ForEach(group.sessions) { session in
+                                ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
+                            }
                         }
                     }
                 }

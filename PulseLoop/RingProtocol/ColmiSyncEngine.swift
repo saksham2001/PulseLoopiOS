@@ -384,6 +384,12 @@ final class ColmiSyncEngine: RingSyncEngine {
         startVitalsBackfill()
     }
 
+    /// Re-request the ring's battery level (0x03), the same command `runStartup` sends on connect. The
+    /// reply is decoded to a `.batteryLevel` event by the driver like any other.
+    func requestBattery() {
+        writer?.enqueue(Data(encoder.battery()))
+    }
+
     // Colmi has no instant single-SpO2 reading; SpO2 is an all-day background metric. A "spot" SpO2
     // fetches the all-day history (enabled on connect) so the latest sample surfaces.
     func startSpO2() {

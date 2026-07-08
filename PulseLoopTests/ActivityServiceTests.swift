@@ -75,6 +75,58 @@ final class ActivityServiceTests: XCTestCase {
         XCTAssertEqual(result.minutes, 0)
     }
 
+    func testTodayBucketSumNeverRegressesLiveTotal() throws {
+        let context = try TestSupport.makeContext()
+        let now = Date()
+        // Seed today's row from a live cumulative update (source "live").
+        ActivityService.applyActivityUpdate(ActivityDailyUpdate(date: now, steps: 8000, source: "live"), context: context)
+
+        // A lagging mid-sync bucket (only 400 steps logged so far) must not lower the visible total,
+        // and must not clobber the live source.
+        ActivityService.applyActivityBucket(date: Calendar.current.startOfDay(for: now), steps: 400, distanceMeters: 300, context: context)
+        let afterLagging = MetricsRepository.activity(on: now, context: context)
+        XCTAssertEqual(afterLagging?.steps, 8000, "partial bucket sum must not regress today's live total")
+        XCTAssertEqual(afterLagging?.source, "live", "live source preserved while bucket sum is below it")
+    }
+
+    func testTodayBucketSumWinsWhenAboveLiveTotal() throws {
+        let context = try TestSupport.makeContext()
+        let day = Calendar.current.startOfDay(for: Date())
+        ActivityService.applyActivityUpdate(ActivityDailyUpdate(date: Date(), steps: 8000, source: "live"), context: context)
+
+        // Buckets summing above the live total take over and re-tag the row as ring history.
+        let buckets: [(min: Int, steps: Int, dist: Double)] = [(0, 5000, 3800), (30, 4000, 3000)]
+        for b in buckets {
+            let ts = Calendar.current.date(byAdding: .minute, value: b.min, to: day)!
+            ActivityService.applyActivityBucket(date: ts, steps: b.steps, distanceMeters: b.dist, context: context)
+        }
+        let row = MetricsRepository.activity(on: day, context: context)
+        XCTAssertEqual(row?.steps, 9000, "bucket sum above the live total wins")
+        XCTAssertEqual(row?.source, ActivityService.ringHistorySource, "source becomes ring_history once buckets win")
+    }
+
+    func testGarbageActivityMigrationRemovesPoisonedRows() throws {
+        let context = try TestSupport.makeContext()
+        let key = "activityGarbageCleanup.v1"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        // A garbage over-ceiling row, a future-dated row, and a sane row.
+        let today = Calendar.current.startOfDay(for: Date())
+        let future = Calendar.current.date(byAdding: .day, value: 3, to: today)!
+        context.insert(ActivityDaily(date: today.addingTimeInterval(-2 * 24 * 3600), steps: 2_000_000, source: "live"))
+        context.insert(ActivityDaily(date: future, steps: 5000, source: "live"))
+        let sane = ActivityDaily(date: today, steps: 8000, source: "live")
+        context.insert(sane)
+        try context.save()
+
+        ActivityService.migrateGarbageActivityIfNeeded(context: context)
+
+        let remaining = MetricsRepository.activityRows(context: context)
+        XCTAssertEqual(remaining.count, 1, "only the sane row survives")
+        XCTAssertEqual(remaining.first?.steps, 8000)
+    }
+
     func testWorkoutFinishSummary() throws {
         let context = try TestSupport.makeContext()
         let session = ActivityRecorderService.start(type: "outdoor_run", useGps: false, notes: nil, context: context)

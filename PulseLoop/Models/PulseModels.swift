@@ -95,6 +95,12 @@ final class Device {
     var lastConnectedAt: Date?
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
+    /// When the last *full history sync* actually completed (`.syncProgress("done")`), as distinct
+    /// from `lastSyncAt` — which is re-stamped on every CONNECT before any data streams. The coach
+    /// freshness gate reads this so a check-in doesn't fire on connect with pre-sync data. Optional +
+    /// defaulted to nil, so it's an additive SwiftData lightweight migration (same pattern as the
+    /// fields below).
+    var lastFullSyncAt: Date?
     var firmwareVersion: String?
     /// Exact catalog model (for example `colmi-r10`), separate from the protocol/driver family.
     var wearableModelID: String?

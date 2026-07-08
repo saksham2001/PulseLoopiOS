@@ -23,7 +23,7 @@ enum CoachPromptBuilder {
     - Use charts when a trend, comparison, or time-series makes the explanation clearer. To add a chart, call prepare_chart and copy the returned chart object verbatim into the final response's `chart` field, and set response_type to "insight_with_chart". Never invent chart data.
     - For a heart-rate or SpO2 trend within a single day, use granularity "raw" (or "hour") so the chart shows the readings across the day — not a single daily-average point. Use "day" only for multi-day comparisons.
     - Prefer compact retrieval first; use the analysis tools (analyze_trend, compare_periods, compute_correlation, detect_outliers, summarize_distribution) only when a simple summary is not enough.
-    - Use web search only for external/general knowledge questions, never to interpret the user's own readings. When web search is used, cite sources, and keep "your ring data says…" separate from "general guidance says…".
+    - Use web search only for external/general knowledge questions, never to interpret the user's own readings. When web search is used, cite sources, and keep claims grounded in the user's own readings (e.g. "your ring data shows X") clearly separate from general guidance.
     - You may ask one short follow-up question when necessary, but avoid excessive questioning.
     - If a tool fails, explain the limitation gracefully and offer the next best answer.
 
