@@ -806,17 +806,42 @@ enum ActivityService {
     
     @discardableResult
     static func finishSummary(for session: ActivitySession, endedAt: Date = Date(), context: ModelContext) -> ActivitySessionSummary {
-        backfillSamples(for: session, endedAt: endedAt, context: context)
-        let samples = ActivityRepository.samples(sessionId: session.id, context: context)
-        let hr = samples.filter { $0.kind == MeasurementKind.heartRate.rawValue && $0.value > 0 }.map(\.value)
-        let spo2Rows = samples.filter { $0.kind == MeasurementKind.spo2.rawValue && $0.value > 0 }.sorted { $0.timestamp < $1.timestamp }
-        let spo2 = spo2Rows.map(\.value)
-        let distance = gpsDistance(sessionId: session.id, context: context) ?? session.distanceMeters
-        let duration = max(0, Int(endedAt.timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
-        let calories = session.calories ?? max(0, Double(duration) / 60 * 8)
-        
         session.endedAt = endedAt
         session.status = .finished
+        // Preserve explicitly provided calories (coach-created sessions) at finish.
+        let summary = recomputeSummary(for: session, preserveProvidedCalories: true, context: context)
+        creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
+        return summary
+    }
+
+    /// Re-derive a finished session's aggregates from its (possibly newly backfilled) samples.
+    /// Idempotent — safe to call whenever late ring-log samples attach to the session. Does *not*
+    /// touch the daily rollup, which is credited exactly once at finish. Calories are re-estimated
+    /// here (the stored value came from this engine at finish; late HR improves the estimate).
+    @discardableResult
+    static func refreshSummary(for session: ActivitySession, context: ModelContext) -> ActivitySessionSummary {
+        recomputeSummary(for: session, preserveProvidedCalories: false, context: context)
+    }
+
+    private static func recomputeSummary(for session: ActivitySession, preserveProvidedCalories: Bool, context: ModelContext) -> ActivitySessionSummary {
+        let endedAt = session.endedAt ?? Date()
+        backfillSamples(for: session, endedAt: endedAt, context: context)
+        let samples = ActivityRepository.samples(sessionId: session.id, context: context)
+        let hrRows = samples.filter { $0.kind == MeasurementKind.heartRate.rawValue && $0.value > 0 }
+        let hr = hrRows.map(\.value)
+        let spo2Rows = samples.filter { $0.kind == MeasurementKind.spo2.rawValue && $0.value > 0 }.sorted { $0.timestamp < $1.timestamp }
+        let spo2 = spo2Rows.map(\.value)
+        let distance = gpsDistance(session: session, context: context) ?? session.distanceMeters
+        let duration = max(0, Int(endedAt.timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
+        let estimated = WorkoutMetricsEngine.calories(
+            type: session.type,
+            durationSeconds: duration,
+            distanceMeters: distance,
+            hrSamples: hrRows.map { (timestamp: $0.timestamp, bpm: $0.value) },
+            profile: MetricsProfileValues(profile: ProfileRepository.profile(context: context))
+        )
+        let calories = preserveProvidedCalories ? (session.calories ?? estimated) : estimated
+
         session.distanceMeters = distance
         session.calories = calories
         session.avgHeartRate = average(hr)
@@ -825,25 +850,7 @@ enum ActivityService {
         session.avgSpO2 = average(spo2)
         session.latestSpO2 = spo2Rows.last?.value
         session.updatedAt = Date()
-        
-        let workoutMinutes = duration / 60
-        if workoutMinutes > 0 {
-            let row: ActivityDaily
-            if let existing = MetricsRepository.activity(on: session.startedAt, context: context) {
-                row = existing
-            } else {
-                row = ActivityDaily(date: session.startedAt, source: "manual_recording")
-                context.insert(row)
-            }
-            row.activeMinutes += workoutMinutes
-            if let distance, session.useGps {
-                row.distanceMeters += distance
-            }
-            row.syncedAt = Date()
-            row.updatedAt = Date()
-            row.source = row.source == "manual_recording" ? "manual_recording" : "hr_and_manual"
-        }
-        
+
         return ActivitySessionSummary(
             session: session,
             durationSeconds: duration,
@@ -857,6 +864,96 @@ enum ActivityService {
             heartRateSampleCount: hr.count,
             spo2SampleCount: spo2.count
         )
+    }
+
+    /// Post-finish edit, deliberately limited to type + time window. Brings every derived value
+    /// back in line: the daily rollup moves (old day debited, new day credited), samples outside
+    /// the new window are pruned, and aggregates/calories/distance recompute for the new
+    /// type/window — `backfillSamples` inside `refreshSummary` pulls all-day ring data into an
+    /// expanded window. Returns false (no mutation) when the edit is invalid.
+    @discardableResult
+    static func applyEdit(
+        session: ActivitySession,
+        newType: String,
+        newStartedAt: Date,
+        newEndedAt: Date,
+        context: ModelContext
+    ) -> Bool {
+        guard session.status == .finished,
+              newEndedAt <= Date(),
+              newEndedAt.timeIntervalSince(newStartedAt) > session.totalPauseSeconds
+        else { return false }
+
+        let payload = editPayload(from: session, newType: newType, newStart: newStartedAt, newEnd: newEndedAt)
+        reverseDailyRollup(for: session, context: context)
+
+        session.type = newType
+        session.startedAt = newStartedAt
+        session.endedAt = newEndedAt
+        context.insert(ActivityEvent(sessionId: session.id, kind: "edited", payloadJSON: payload))
+
+        // Prune samples that fell outside the new window; backfill re-links them from the
+        // Measurement store if the window re-expands later. Save before recomputing — the
+        // refresh refetches samples, and pending deletes aren't reliably reflected (same
+        // SwiftData quirk `applyActivityBucket` works around for inserts).
+        for sample in ActivityRepository.samples(sessionId: session.id, context: context)
+        where sample.timestamp < newStartedAt || sample.timestamp > newEndedAt {
+            context.delete(sample)
+        }
+        try? context.save()
+
+        let summary = refreshSummary(for: session, context: context)
+        creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
+        try? context.save()
+        return true
+    }
+
+    /// Reverse a finished session's contribution to its day's rollup — used before an edit moves
+    /// the window and by `ActivityRecorderService.delete`.
+    static func reverseDailyRollup(for session: ActivitySession, context: ModelContext) {
+        guard let ended = session.endedAt else { return }
+        let minutes = max(0, Int(ended.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60
+        guard minutes > 0, let row = MetricsRepository.activity(on: session.startedAt, context: context) else { return }
+        row.activeMinutes = max(0, row.activeMinutes - minutes)
+        if session.useGps, let dist = session.distanceMeters {
+            row.distanceMeters = max(0, row.distanceMeters - dist)
+        }
+        row.updatedAt = Date()
+    }
+
+    private static func editPayload(from session: ActivitySession, newType: String, newStart: Date, newEnd: Date) -> String {
+        let f = ISO8601DateFormatter()
+        var dict: [String: String] = [
+            "old_type": session.type,
+            "new_type": newType,
+            "old_start": f.string(from: session.startedAt),
+            "new_start": f.string(from: newStart),
+            "new_end": f.string(from: newEnd)
+        ]
+        if let oldEnd = session.endedAt { dict["old_end"] = f.string(from: oldEnd) }
+        let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// Credit the workout's minutes/distance to the day's rollup — called exactly once, at finish
+    /// (a summary *refresh* must never double-count; deletion reverses this in `delete`).
+    private static func creditDailyRollup(for session: ActivitySession, durationSeconds: Int, context: ModelContext) {
+        let workoutMinutes = durationSeconds / 60
+        guard workoutMinutes > 0 else { return }
+        let row: ActivityDaily
+        if let existing = MetricsRepository.activity(on: session.startedAt, context: context) {
+            row = existing
+        } else {
+            row = ActivityDaily(date: session.startedAt, source: "manual_recording")
+            context.insert(row)
+        }
+        row.activeMinutes += workoutMinutes
+        if let distance = session.distanceMeters, session.useGps {
+            row.distanceMeters += distance
+        }
+        row.syncedAt = Date()
+        row.updatedAt = Date()
+        row.source = row.source == "manual_recording" ? "manual_recording" : "hr_and_manual"
     }
     
     private static func restingHeartRate(context: ModelContext) -> Double {
@@ -891,12 +988,22 @@ enum ActivityService {
     }
     
     private static func backfillSamples(for session: ActivitySession, endedAt: Date, context: ModelContext) {
-        let linked = Set(ActivityRepository.samples(sessionId: session.id, context: context).compactMap(\.measurementId))
+        let existing = ActivityRepository.samples(sessionId: session.id, context: context)
+        let linked = Set(existing.compactMap(\.measurementId))
         // Windowed per-kind queries over the session's time span instead of scanning the whole table.
         let hr = MetricsRepository.measurements(kind: .heartRate, start: session.startedAt, end: endedAt, limit: 10000, context: context)
         let spo2 = MetricsRepository.measurements(kind: .spo2, start: session.startedAt, end: endedAt, limit: 10000, context: context)
         let rows = (hr + spo2).filter { !linked.contains($0.id) }
         for row in rows {
+            // Same gap-fill rule as linkSample: a coarse ring-log sample next to an existing live
+            // sample of the same kind is overlap noise, not a gap.
+            if row.sourceRaw == MeasurementSource.history.rawValue, existing.contains(where: {
+                $0.kind == row.kind.rawValue
+                    && $0.source != MeasurementSource.history.rawValue
+                    && abs($0.timestamp.timeIntervalSince(row.timestamp)) <= ActivityRecorderService.historyDedupeSeconds
+            }) {
+                continue
+            }
             context.insert(ActivitySample(
                 sessionId: session.id,
                 measurementId: row.id,
@@ -910,28 +1017,72 @@ enum ActivityService {
         }
     }
     
-    private static func gpsDistance(sessionId: UUID, context: ModelContext) -> Double? {
-        let points = ActivityRepository.gpsPoints(sessionId: sessionId, context: context).filter { $0.accepted }
+    private static func gpsDistance(session: ActivitySession, context: ModelContext) -> Double? {
+        // Window to [startedAt, endedAt] so a post-finish time edit excludes out-of-window route
+        // segments (inert for unedited sessions — every point lies inside the recorded span).
+        let windowEnd = session.endedAt ?? Date()
+        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+            .filter { $0.accepted && $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
         guard points.count >= 2 else { return nil }
-        let sorted = points.sorted { $0.timestamp < $1.timestamp }
-        return zip(sorted, sorted.dropFirst()).reduce(0) { total, pair in
-            total + haversineMeters(pair.0.latitude, pair.0.longitude, pair.1.latitude, pair.1.longitude)
-        }
+        return RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
     }
-    
-    private static func haversineMeters(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
-        let radius = 6_371_000.0
-        let p1 = lat1 * .pi / 180
-        let p2 = lat2 * .pi / 180
-        let dPhi = (lat2 - lat1) * .pi / 180
-        let dLambda = (lon2 - lon1) * .pi / 180
-        let a = sin(dPhi / 2) * sin(dPhi / 2) + cos(p1) * cos(p2) * sin(dLambda / 2) * sin(dLambda / 2)
-        return 2 * radius * asin(sqrt(a))
-    }
-    
+
     private static func average(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
+    }
+}
+
+enum ManualActivityCreationError: LocalizedError, Equatable {
+    case invalidActivityType
+    case invalidDuration
+    case endsInFuture
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidActivityType: return "Choose a valid activity type."
+        case .invalidDuration: return "Duration must be greater than zero."
+        case .endsInFuture: return "The activity must end in the past."
+        }
+    }
+}
+
+/// Single creation path for completed workouts supplied manually by either the coach or the UI.
+@MainActor
+enum ManualActivityService {
+    @discardableResult
+    static func create(
+        type: String,
+        startedAt: Date,
+        durationMinutes: Double,
+        distanceMeters: Double? = nil,
+        notes: String? = nil,
+        now: Date = Date(),
+        context: ModelContext
+    ) throws -> ActivitySession {
+        let canonicalType = ActivityMeta.meta(type).type
+        guard ActivityMeta.allKinds.contains(where: { $0.type == canonicalType }) else {
+            throw ManualActivityCreationError.invalidActivityType
+        }
+        guard durationMinutes > 0, durationMinutes.isFinite else {
+            throw ManualActivityCreationError.invalidDuration
+        }
+        let endedAt = startedAt.addingTimeInterval(durationMinutes * 60)
+        guard endedAt <= now else { throw ManualActivityCreationError.endsInFuture }
+
+        let session = ActivitySession(
+            type: canonicalType,
+            status: .finished,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            distanceMeters: distanceMeters,
+            notes: notes?.isEmpty == true ? nil : notes,
+            useGps: false
+        )
+        context.insert(session)
+        _ = ActivityService.finishSummary(for: session, endedAt: endedAt, context: context)
+        try context.save()
+        return session
     }
 }
 
@@ -986,16 +1137,7 @@ enum ActivityRecorderService {
     /// day's activity rollup so the totals stay honest.
     @MainActor
     static func delete(_ session: ActivitySession, context: ModelContext) {
-        if let ended = session.endedAt {
-            let minutes = max(0, Int(ended.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60
-            if minutes > 0, let row = MetricsRepository.activity(on: session.startedAt, context: context) {
-                row.activeMinutes = max(0, row.activeMinutes - minutes)
-                if session.useGps, let dist = session.distanceMeters {
-                    row.distanceMeters = max(0, row.distanceMeters - dist)
-                }
-                row.updatedAt = Date()
-            }
-        }
+        ActivityService.reverseDailyRollup(for: session, context: context)
 
         let id = session.id
         ActivityRepository.samples(sessionId: id, context: context).forEach(context.delete)
@@ -1013,6 +1155,13 @@ enum ActivityRecorderService {
             .filter { ($0.status == .recording || $0.status == .paused) && $0.startedAt < cutoff }
     }
     
+    /// How long after a session finishes that ring-log samples may still attach to it. Covers the
+    /// post-workout backfill sync (and a reconnect shortly after finishing).
+    static let backfillLinkWindowSeconds: TimeInterval = 15 * 60
+    /// A coarse history sample this close to an existing live sample of the same kind is noise from
+    /// the ring's 5-min log overlapping the stream — skip it (half the 5-min log interval).
+    static let historyDedupeSeconds: TimeInterval = 150
+
     @discardableResult
     static func linkSample(
         kind: MeasurementKind,
@@ -1023,16 +1172,32 @@ enum ActivityRecorderService {
         confidence: DecodeConfidence,
         context: ModelContext
     ) -> ActivitySample? {
-        guard let active = ActivityRepository.sessions(context: context).first(where: { session in
+        let sessions = ActivityRepository.sessions(context: context)
+        let active = sessions.first { session in
             (session.status == .recording || session.status == .paused) && timestamp >= session.startedAt && timestamp <= Date()
-        }) else {
+        }
+        // Ring-log backfill: history samples arrive *after* finish (post-workout sync / reconnect),
+        // so also match a just-finished session whose window contains the sample.
+        let target = active ?? sessions.first { session in
+            guard session.status == .finished, let ended = session.endedAt else { return false }
+            return Date().timeIntervalSince(ended) < backfillLinkWindowSeconds
+                && timestamp >= session.startedAt && timestamp <= ended
+        }
+        guard let target else { return nil }
+        let existing = ActivityRepository.samples(sessionId: target.id, context: context)
+        if let measurementId, existing.contains(where: { $0.measurementId == measurementId }) {
             return nil
         }
-        if let measurementId, ActivityRepository.samples(sessionId: active.id, context: context).contains(where: { $0.measurementId == measurementId }) {
+        // Gap-fill rule: ring-log samples only fill stretches the live stream missed.
+        if source == .history, existing.contains(where: {
+            $0.kind == kind.rawValue
+                && $0.source != MeasurementSource.history.rawValue
+                && abs($0.timestamp.timeIntervalSince(timestamp)) <= historyDedupeSeconds
+        }) {
             return nil
         }
         let sample = ActivitySample(
-            sessionId: active.id,
+            sessionId: target.id,
             measurementId: measurementId,
             kind: kind.rawValue,
             value: value,
@@ -1042,7 +1207,7 @@ enum ActivityRecorderService {
             confidence: confidence
         )
         context.insert(sample)
-        context.insert(ActivityEvent(sessionId: active.id, kind: "sensor_sample_linked", timestamp: timestamp))
+        context.insert(ActivityEvent(sessionId: target.id, kind: "sensor_sample_linked", timestamp: timestamp))
         return sample
     }
 }

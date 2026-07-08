@@ -152,6 +152,12 @@ protocol RingSyncEngine: AnyObject {
     /// Release the ring on Forget: send the unbind command (jring 0x4B UNBOND) so the ring stops
     /// streaming to us and re-advertises for other apps. Devices without a bind protocol ignore it.
     func unbind()
+
+    /// Targeted post-workout history pull: re-read the ring's own HR/SpO2 logs so samples recorded
+    /// while the phone was away/suspended land in the just-finished session (Colmi: HR day 0 +
+    /// SpO2 big-data; jring: the 0x16 measurement history stream). Devices without a readable
+    /// vitals log do nothing (default no-op below).
+    func syncVitalsHistory()
 }
 
 extension RingSyncEngine {
@@ -173,4 +179,7 @@ extension RingSyncEngine {
 
     /// Default: devices without a bind protocol (e.g. Colmi) have nothing to release.
     func unbind() {}
+
+    /// Default: devices without a readable vitals log have nothing to backfill.
+    func syncVitalsHistory() {}
 }

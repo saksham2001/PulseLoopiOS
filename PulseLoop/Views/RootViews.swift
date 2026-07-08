@@ -72,6 +72,8 @@ struct RootAppView: View {
                     ActivityTrendsView(path: $path)
                 case .recordSelect:
                     RecordSelectView(path: $path)
+                case .logPastActivity:
+                    LogPastActivityView(path: $path)
                 case let .recordLive(id):
                     RecordLiveView(sessionId: id, path: $path)
                 case let .recordSummary(id):

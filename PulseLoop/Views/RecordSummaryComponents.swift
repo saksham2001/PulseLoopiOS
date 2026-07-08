@@ -3,6 +3,36 @@ import SwiftData
 
 // MARK: - Summary components
 
+/// Everything `WorkoutMetricsSections` derives from the store, computed once per data change
+/// (see `refreshKey`) instead of on every render — the fetches + O(n) walks here made the summary
+/// and edit screens crawl when they ran per body evaluation.
+struct WorkoutSummaryData {
+    var accepted: [ActivityGpsPoint] = []
+    var hr: [MetricSample] = []
+    var spo2: [MetricSample] = []
+    var durationSeconds: Int?
+    var elevation: (gain: Double, loss: Double)?
+    var altitudes: [Double] = []
+
+    /// Window everything to [startedAt, endedAt] so a post-finish time edit excludes
+    /// out-of-window data from the map, splits, and charts (inert for unedited sessions).
+    @MainActor
+    static func build(session: ActivitySession, context: ModelContext) -> WorkoutSummaryData {
+        var data = WorkoutSummaryData()
+        let windowEnd = session.endedAt ?? Date()
+        data.accepted = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+            .filter { $0.accepted && $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.hr = sessionHRSamples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.spo2 = sessionSpO2Samples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.durationSeconds = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
+        data.elevation = session.useGps ? routeElevation(data.accepted) : nil
+        data.altitudes = data.accepted.compactMap(\.altitude)
+        return data
+    }
+}
+
 /// The full rich body of a finished workout — header, hero band, stat grid, map, splits, HR chart
 /// + zones, SpO₂ chart, elevation profile, and the recording-quality card. Shared by the
 /// post-record summary (`RecordSummaryView`) and the activity detail screen (`ActivityDetailView`)
@@ -15,16 +45,31 @@ struct WorkoutMetricsSections: View {
     /// Shows the "WORKOUT SAVED" badge in the header (only meaningful right after recording).
     var savedBadge: Bool = false
 
+    /// Memoized derived data; rebuilt only when `refreshKey` changes (summary refresh / backfill).
+    @State private var cachedData: WorkoutSummaryData?
+
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
+    /// Changes when the summary recomputes (`updatedAt`) or late backfill links new samples
+    /// (cheap COUNT probe — no row materialization).
+    private var refreshKey: String {
+        let sessionId = session.id
+        let sampleCount = (try? modelContext.fetchCount(
+            FetchDescriptor<ActivitySample>(predicate: #Predicate { $0.sessionId == sessionId })
+        )) ?? 0
+        return "\(session.updatedAt.timeIntervalSince1970)-\(sampleCount)"
+    }
+
     var body: some View {
-        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
-        let accepted = points.filter { $0.accepted }.sorted { $0.timestamp < $1.timestamp }
-        let hr = sessionHRSamples(session.id, context: modelContext)
-        let spo2 = sessionSpO2Samples(session.id, context: modelContext)
-        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
-        let elevation = session.useGps ? routeElevation(accepted) : nil
-        let altitudes = accepted.compactMap(\.altitude)
+        // First render computes inline (no blank frame); after that the cache serves every render
+        // until refreshKey invalidates it.
+        let data = cachedData ?? WorkoutSummaryData.build(session: session, context: modelContext)
+        let accepted = data.accepted
+        let hr = data.hr
+        let spo2 = data.spo2
+        let duration = data.durationSeconds
+        let elevation = data.elevation
+        let altitudes = data.altitudes
 
         VStack(spacing: 16) {
             header
@@ -33,9 +78,13 @@ struct WorkoutMetricsSections: View {
 
             statsGrid(elevationGain: elevation?.gain)
 
-            if session.useGps {
-                WorkoutMapView(points: points)
-                SplitsTable(points: accepted, units: units)
+            // GPS-capable types always get the map slot — a session edited from an indoor type
+            // shows the honest "GPS route unavailable" placeholder instead of pretending.
+            if ActivityMeta.meta(session.type).gpsCapable {
+                WorkoutMapView(points: accepted, unavailable: !session.useGps || accepted.count < 2)
+                if session.useGps, ActivityMetricSet.set(for: session.type).showsSplits {
+                    SplitsTable(points: accepted, units: units, activityType: session.type)
+                }
             }
 
             if hr.count > 1 {
@@ -78,6 +127,9 @@ struct WorkoutMetricsSections: View {
             }
 
             RecordingQualityCard(session: session)
+        }
+        .task(id: refreshKey) {
+            cachedData = WorkoutSummaryData.build(session: session, context: modelContext)
         }
     }
 
@@ -164,18 +216,25 @@ struct WorkoutMetricsSections: View {
         // The hero band already shows the headline metrics (GPS: distance/duration/pace,
         // indoor: duration/active-min/calories), so the grid fills in the rest without repeating.
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-            if session.useGps {
+            if session.showsGpsHeadline {
                 WorkoutStat(label: "Calories", value: session.calories.map { "\(Int($0))" } ?? "—")
             }
             WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
-            if session.useGps, let elevationGain {
+            if session.showsGpsHeadline, ActivityMetricSet.set(for: session.type).showsElevation, let elevationGain {
                 WorkoutStat(label: "Elev gain", value: String(format: "%.0f m", elevationGain))
             }
         }
     }
+}
+
+private extension ActivitySession {
+    /// GPS-style headline metrics (distance/pace hero, calories in the grid) only when a route was
+    /// actually recorded AND the — possibly edited — type is GPS-capable. A gym session edited to
+    /// "run" keeps the indoor headline: it has no route, and faking one would lie.
+    var showsGpsHeadline: Bool { useGps && ActivityMeta.meta(type).gpsCapable }
 }
 
 /// Three large headline stats in one card. Adapts to whether the workout used GPS:
@@ -189,14 +248,12 @@ private struct SummaryHeroBand: View {
 
     private var metrics: [Metric] {
         let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
-        if session.useGps {
+        if session.showsGpsHeadline {
             let d = session.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units) }
-            let paceUnit = UnitsFormatter.paceUnit(units)
-            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
             return [
                 Metric(value: d?.value ?? "—", label: (d?.unit ?? "km").uppercased(), tint: PulseColors.distance),
                 Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
-                Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+                thirdGpsMetric
             ]
         } else {
             let cals = session.calories.map { "\(Int($0))" } ?? "—"
@@ -206,6 +263,25 @@ private struct SummaryHeroBand: View {
                 Metric(value: cals, label: "CALORIES", tint: PulseColors.calories)
             ]
         }
+    }
+
+    /// Pace for foot activities, average speed for cycling, calories otherwise (e.g. sport).
+    private var thirdGpsMetric: Metric {
+        let set = ActivityMetricSet.set(for: session.type)
+        if set.showsSpeed {
+            if let meters = session.distanceMeters, let seconds = durationSeconds, seconds > 0, meters >= 50 {
+                let mps = meters / Double(seconds)
+                let value = units == .imperial ? String(format: "%.1f", mps * 2.23694) : String(format: "%.1f", mps * 3.6)
+                return Metric(value: value, label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+            }
+            return Metric(value: "—", label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+        }
+        if set.showsPace {
+            let paceUnit = UnitsFormatter.paceUnit(units)
+            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
+            return Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+        }
+        return Metric(value: session.calories.map { "\(Int($0))" } ?? "—", label: "CALORIES", tint: PulseColors.calories)
     }
 
     var body: some View {
@@ -239,13 +315,14 @@ private struct SummaryHeroBand: View {
 private struct SplitsTable: View {
     let points: [ActivityGpsPoint]
     var units: UnitsPreference = .metric
+    var activityType: String = "run"
 
     private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
     private var splitLabel: String { units == .imperial ? "MI" : "KM" }
     private var paceUnit: String { units == .imperial ? "/mi" : "/km" }
 
     var body: some View {
-        let splits = kmSplitSeconds(points, splitMeters: splitMeters)
+        let splits = RouteDistanceEngine.splitSeconds(points, splitMeters: splitMeters, profile: .profile(for: activityType))
         if splits.count >= 1 {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1

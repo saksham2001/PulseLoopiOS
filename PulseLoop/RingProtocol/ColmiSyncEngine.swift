@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let syncLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "ColmiSyncEngine")
 
 /// Colmi R02 sync engine: the response-driven history state machine + realtime-HR keepalive +
 /// measurement actions. Unlike the fire-and-forget jring, Colmi history is a chain where each reply
@@ -51,6 +54,9 @@ final class ColmiSyncEngine: RingSyncEngine {
     private var daysAgo = 0
     /// The midnight of the day currently being synced (for HR/stress/HRV sample timestamps).
     private var syncDay = Calendar.current.startOfDay(for: Date())
+    /// A targeted post-workout run: today's HR log → SpO2 big-data → done, skipping the other five
+    /// stages. Set by `startVitalsBackfill()`, cleared whenever a run finishes or a full sync starts.
+    private var isVitalsBackfill = false
 
     static func isHistoryOpcode(_ op: UInt8) -> Bool {
         op == ColmiCommandID.syncActivity
@@ -129,9 +135,23 @@ final class ColmiSyncEngine: RingSyncEngine {
     private func startHistorySync() {
         daysAgo = 0
         stage = .activity
+        isVitalsBackfill = false
         // Zero the ring-history activity days we're about to re-sum, so re-syncs stay idempotent.
         Task { await PulseEventBus.shared.publish(.activitySyncReset(sinceDaysAgo: 7)) }
         requestActivity()
+        armWatchdog()
+    }
+
+    /// Targeted post-workout backfill: pull only today's HR log and the all-day SpO2 log so samples
+    /// the ring recorded while the phone was away land in the just-finished session (via the
+    /// finished-session window in `linkSample`). Reuses the normal stage machine + watchdogs. A full
+    /// sync already in flight covers the same data, so this is a no-op then.
+    func startVitalsBackfill() {
+        guard stage == .idle || stage == .done else { return }
+        isVitalsBackfill = true
+        daysAgo = 0
+        stage = .heartRate
+        requestHeartRate()
         armWatchdog()
     }
 
@@ -163,11 +183,13 @@ final class ColmiSyncEngine: RingSyncEngine {
         case .activity:
             daysAgo = 0; stage = .heartRate; requestHeartRate()
         case .heartRate:
-            stage = .stress; requestStress()
+            if isVitalsBackfill { stage = .spo2; requestSpo2() }
+            else { stage = .stress; requestStress() }
         case .stress:
             stage = .spo2; requestSpo2()
         case .spo2:
-            stage = .sleep; requestSleep()
+            if isVitalsBackfill { finishSync() }
+            else { stage = .sleep; requestSleep() }
         case .sleep:
             daysAgo = 0; stage = .hrv; requestHRV()
         case .hrv:
@@ -230,6 +252,7 @@ final class ColmiSyncEngine: RingSyncEngine {
     func handleBigDataComplete(type: UInt8) {
         switch type {
         case ColmiCommandID.bigDataSpo2:
+            if isVitalsBackfill { finishSync(); return }
             stage = .sleep
             requestSleep()
             armWatchdog()
@@ -245,13 +268,11 @@ final class ColmiSyncEngine: RingSyncEngine {
         }
     }
 
-    /// Observe a realtime-HR reply: maintain the keepalive cadence.
+    /// Observe a realtime-HR reply. The keepalive itself is wall-clock driven (see `startHeartRate`);
+    /// this only records frame arrival for diagnostics.
     func observedRealtimeHeartRate() {
         guard realtimeHRActive else { return }
-        realtimeHRPacketCount = (realtimeHRPacketCount + 1) % 30
-        if realtimeHRPacketCount == 0 {
-            writer?.enqueue(Data(encoder.realtimeHeartRateContinue()))
-        }
+        lastRealtimeFrameAt = Date()
     }
 
     /// Paged stages (activity/HR/stress/HRV) advance day-by-day, then to the next stage. We treat an
@@ -270,7 +291,8 @@ final class ColmiSyncEngine: RingSyncEngine {
             if daysAgo < 7 { daysAgo += 1; requestActivity() }
             else { daysAgo = 0; stage = .heartRate; requestHeartRate() }
         case .heartRate:
-            if daysAgo < 7 { daysAgo += 1; requestHeartRate() }
+            if isVitalsBackfill { stage = .spo2; requestSpo2() }
+            else if daysAgo < 7 { daysAgo += 1; requestHeartRate() }
             else { stage = .stress; requestStress() }
         case .stress:
             stage = .spo2; requestSpo2()
@@ -302,6 +324,7 @@ final class ColmiSyncEngine: RingSyncEngine {
 
     private func finishSync() {
         stage = .done
+        isVitalsBackfill = false
         watchdog?.cancel()
         watchdog = nil
         Task { await PulseEventBus.shared.publish(.syncProgress(stage: "done")) }
@@ -310,12 +333,27 @@ final class ColmiSyncEngine: RingSyncEngine {
     // MARK: Realtime HR keepalive
 
     private var realtimeHRActive = false
-    private var realtimeHRPacketCount = 0
+    /// When the last realtime `0x1e` frame arrived — diagnostics only (keepalive is wall-clock driven).
+    private(set) var lastRealtimeFrameAt: Date?
+    /// Wall-clock keepalive: the ring times out realtime HR ~60s after the last continue command,
+    /// so re-arm every 25s regardless of whether reply frames are arriving/parsing. (The previous
+    /// packet-count keepalive starved itself when frames failed to parse — the stream died at 60s.)
+    private var keepaliveTask: Task<Void, Never>?
 
     func startHeartRate() {
         realtimeHRActive = true
-        realtimeHRPacketCount = 0
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: true)))
+        syncLog.debug("realtime HR stream: start")
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(25))
+                guard let self, !Task.isCancelled, self.realtimeHRActive else { return }
+                self.writer?.enqueue(Data(self.encoder.realtimeHeartRateContinue()))
+                let last = self.lastRealtimeFrameAt.map { "\(Int(Date().timeIntervalSince($0)))s ago" } ?? "never"
+                syncLog.debug("realtime HR keepalive sent (last frame: \(last, privacy: .public))")
+            }
+        }
     }
 
     func stopHeartRate() {
@@ -324,9 +362,12 @@ final class ColmiSyncEngine: RingSyncEngine {
             manualHRActive = false
             writer?.enqueue(Data(encoder.manualHeartRate(enable: false)))
         }
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
         guard realtimeHRActive else { return }
         realtimeHRActive = false
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: false)))
+        syncLog.debug("realtime HR stream: stop")
     }
 
     /// Spot HR uses the ring's manual single measurement (0x69) — a *continuous* stream that warms up
@@ -337,6 +378,10 @@ final class ColmiSyncEngine: RingSyncEngine {
     func measureHeartRateSpot() {
         manualHRActive = true
         writer?.enqueue(Data(encoder.manualHeartRate(enable: true)))
+    }
+
+    func syncVitalsHistory() {
+        startVitalsBackfill()
     }
 
     // Colmi has no instant single-SpO2 reading; SpO2 is an all-day background metric. A "spot" SpO2

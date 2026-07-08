@@ -15,20 +15,25 @@ import Observation
 @MainActor
 @Observable
 final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private(set) var authorization: CLAuthorizationStatus
     private(set) var isTracking = false
     private(set) var pointCount = 0
 
     /// Surfaced to the view layer so SwiftUI never needs to import CoreLocation.
     var isPermissionDenied: Bool { authorization == .denied || authorization == .restricted }
+    /// Without Always, iOS silently stops delivering fixes when the screen locks — the live screen
+    /// warns so the user knows the route will have gaps.
+    var hasAlwaysAuthorization: Bool { authorization == .authorizedAlways }
 
     private let manager = CLLocationManager()
     private var sessionId: UUID?
     private var lastAccepted: CLLocation?
-    private var activityType = "run"
-    private var isCycling: Bool { activityType == "cycle" }
+    private var profile: ActivityTrackingProfile = .default
 
-    // Filtering thresholds.
+    // Filtering thresholds shared by all activity types; per-type speed/movement thresholds
+    // come from `ActivityTrackingProfile`.
     private let maxHorizontalAccuracy = 30.0   // metres; reject poorer/invalid fixes
     private let maxFixAge = 5.0                 // seconds; reject stale cached fixes
     private let maxCourseDelta = 25.0           // degrees; turn detection keeps cornering detail
@@ -41,7 +46,7 @@ final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
 
     func start(sessionId: UUID, activityType: String = "run") {
         self.sessionId = sessionId
-        self.activityType = activityType
+        self.profile = .profile(for: activityType)
         lastAccepted = nil
         pointCount = 0
         // Provisional When-In-Use still records in the foreground; also request Always so the
@@ -49,11 +54,14 @@ final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
         manager.requestWhenInUseAuthorization()
         manager.requestAlwaysAuthorization()
         manager.desiredAccuracy = WorkoutPrefsStore.shared.settings.gpsAccuracy.clValue
-        manager.distanceFilter = isCycling ? 8 : 5
+        manager.distanceFilter = profile.distanceFilterMeters
         manager.pausesLocationUpdatesAutomatically = false
         manager.activityType = .fitness
         if manager.authorizationStatus == .authorizedAlways {
             manager.allowsBackgroundLocationUpdates = true
+            // Blue indicator while recording in background — the honest, Strava-like signal that
+            // the route is still being tracked.
+            manager.showsBackgroundLocationIndicator = true
         }
         manager.startUpdatingLocation()
         isTracking = true
@@ -114,6 +122,7 @@ final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
             // suspends, and sensor polling freezes.
             if status == .authorizedAlways, isTracking {
                 manager.allowsBackgroundLocationUpdates = true
+                manager.showsBackgroundLocationIndicator = true
             }
         }
     }
@@ -130,18 +139,15 @@ final class GpsRouteRecorder: NSObject, CLLocationManagerDelegate {
         guard let last = lastAccepted else { return nil }
         let distance = location.distance(from: last)
         let dt = location.timestamp.timeIntervalSince(last.timestamp)
-        let maxSpeed = isCycling ? 25.0 : 8.0
-        if dt > 0, distance / dt > maxSpeed { return "speed" }
-        let minMove = isCycling ? 8.0 : 4.0
-        if distance >= minMove { return nil }
+        if dt > 0, distance / dt > profile.maxSpeedMps { return "speed" }
+        if distance >= profile.minMoveMeters { return nil }
         if last.course >= 0, location.course >= 0 {
             var courseDelta = location.course - last.course
             while courseDelta > 180 { courseDelta -= 360 }
             while courseDelta < -180 { courseDelta += 360 }
             if abs(courseDelta) > maxCourseDelta { return nil }
         }
-        let minInterval = isCycling ? 8.0 : 6.0
-        if location.timestamp.timeIntervalSince(last.timestamp) >= minInterval { return nil }
+        if dt >= profile.minIntervalSeconds { return nil }
         return "stationary"
     }
 }

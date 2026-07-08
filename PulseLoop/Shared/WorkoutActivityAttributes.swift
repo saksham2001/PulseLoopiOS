@@ -17,8 +17,8 @@ import SwiftUI
 
 struct WorkoutActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
-        var status: String            // "recording" | "paused"
-        var elapsedSeconds: Int       // non-live fallback only; the widget self-counts from startDate
+        var status: String            // "recording" | "paused" | "finished"
+        var elapsedSeconds: Int       // final duration when finished; otherwise the widget self-counts from startDate
         /// Effective timer origin = startedAt + totalPauseSeconds, so `now - startDate` is the
         /// elapsed time excluding pauses. Drives the widget's self-counting `Text(timerInterval:)`.
         var startDate: Date
@@ -36,6 +36,9 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         /// units preference; kept as a plain Bool because this shared type can't see
         /// the app-only `UnitsPreference`. Defaults to metric for older payloads.
         var useImperial: Bool = false
+        /// Session average HR, shown on the final "Workout complete" card. Nil while recording
+        /// (and for payloads from older app versions).
+        var avgHeartRate: Int? = nil
     }
 
     var sessionID: String
@@ -56,6 +59,7 @@ extension WorkoutActivityAttributes.ContentState {
         case activityType
         case lastUpdated
         case useImperial
+        case avgHeartRate
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +76,7 @@ extension WorkoutActivityAttributes.ContentState {
         activityType = try container.decode(String.self, forKey: .activityType)
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
         useImperial = try container.decodeIfPresent(Bool.self, forKey: .useImperial) ?? false
+        avgHeartRate = try container.decodeIfPresent(Int.self, forKey: .avgHeartRate)
     }
 }
 

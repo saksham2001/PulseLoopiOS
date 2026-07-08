@@ -7,8 +7,8 @@ import MapKit
 /// placeholder card when there's no usable route (non-GPS workout, denied permission, or fewer than
 /// two points).
 struct WorkoutMapView: View {
-    private let points: [ActivityGpsPoint]
     let coordinates: [CLLocationCoordinate2D]
+    private let latestAccuracy: Double?
     var unavailable: Bool
     var height: CGFloat
     var follow: Bool
@@ -19,8 +19,19 @@ struct WorkoutMapView: View {
 
     init(points: [ActivityGpsPoint], unavailable: Bool = false, height: CGFloat = 200, follow: Bool = false) {
         let sorted = points.sorted { $0.timestamp < $1.timestamp }
-        self.points = sorted
         self.coordinates = sorted.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+        self.latestAccuracy = sorted.last?.horizontalAccuracy
+        self.unavailable = unavailable
+        self.height = height
+        self.follow = follow
+    }
+
+    /// Live-recording init: the caller (LiveWorkoutStats) already maintains a time-ordered,
+    /// accepted-only coordinate array, so no per-render sort/rebuild happens here.
+    init(coordinates: [CLLocationCoordinate2D], latestAccuracy: Double? = nil,
+         unavailable: Bool = false, height: CGFloat = 200, follow: Bool = false) {
+        self.coordinates = coordinates
+        self.latestAccuracy = latestAccuracy
         self.unavailable = unavailable
         self.height = height
         self.follow = follow
@@ -52,7 +63,10 @@ struct WorkoutMapView: View {
             .overlay(alignment: .topTrailing) { if follow { followControls } }
             .onAppear { recenter() }
             .onChange(of: coordinates.count) { _, _ in
-                if follow && following { reframe() }
+                // Live (follow) mode tracks growth while auto-follow is engaged; static (summary)
+                // mode always refits — its points can arrive after first render, and without this
+                // the camera would stay frozen on the initial start/stop-only region.
+                if follow ? following : true { reframe() }
             }
         }
     }
@@ -74,8 +88,7 @@ struct WorkoutMapView: View {
     }
 
     private var infoOverlay: some View {
-        let accuracy = points.last?.horizontalAccuracy
-        let text = accuracy.map { "±\(Int($0))m · \(points.count) pts" } ?? "\(points.count) pts"
+        let text = latestAccuracy.map { "±\(Int($0))m · \(coordinates.count) pts" } ?? "\(coordinates.count) pts"
         return Text(text)
             .font(.system(size: 10, weight: .medium)).monospacedDigit()
             .foregroundStyle(PulseColors.textSecondary)

@@ -530,6 +530,9 @@ final class ActivitySession {
     var liveActivityID: String?
     var lastSensorPollAt: Date?
     var lastGpsPointAt: Date?
+    // How workout HR was captured: "stream" (continuous live HR stream) or "spot" (timer-driven
+    // one-shot reads). Defaulted so the migration stays additive.
+    var vitalsModeRaw: String = "spot"
 
     init(
         id: UUID = UUID(),

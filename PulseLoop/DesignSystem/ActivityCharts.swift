@@ -15,10 +15,6 @@ private struct MinuteSample: Identifiable {
 }
 
 struct ActivityZoneLineChart: View {
-    /// Absolute-timestamp samples for the session (HR or SpO₂).
-    let samples: [MetricSample]
-    /// Session start; each sample's x = minutes since this.
-    let startAt: Date
     let metric: MetricKind
     let yDomain: ClosedRange<Double>
     var referenceBands: [ReferenceBand] = []
@@ -30,14 +26,30 @@ struct ActivityZoneLineChart: View {
     /// Maps a value to its zone color (injected once from the threshold engine).
     let colorForValue: (Double) -> Color
 
-    private var minuteSamples: [MinuteSample] {
-        samples
+    // Sorted/reduced once at init — inputs are immutable per instantiation, so recomputing these
+    // as computed properties on every body evaluation was pure waste.
+    private let minuteSamples: [MinuteSample]
+    private let maxMinute: Double
+
+    /// - Parameters:
+    ///   - samples: Absolute-timestamp samples for the session (HR or SpO₂).
+    ///   - startAt: Session start; each sample's x = minutes since this.
+    init(samples: [MetricSample], startAt: Date, metric: MetricKind, yDomain: ClosedRange<Double>,
+         referenceBands: [ReferenceBand] = [], dashedRules: [Double] = [], showPoints: Bool = false,
+         thresholds: [Double] = [], height: CGFloat = 120,
+         colorForValue: @escaping (Double) -> Color) {
+        self.metric = metric
+        self.yDomain = yDomain
+        self.referenceBands = referenceBands
+        self.dashedRules = dashedRules
+        self.showPoints = showPoints
+        self.thresholds = thresholds
+        self.height = height
+        self.colorForValue = colorForValue
+        self.minuteSamples = samples
             .sorted { $0.timestamp < $1.timestamp }
             .map { MinuteSample(minute: $0.timestamp.timeIntervalSince(startAt) / 60, value: $0.value) }
-    }
-
-    private var maxMinute: Double {
-        max(minuteSamples.last?.minute ?? 1, 1)
+        self.maxMinute = max(minuteSamples.last?.minute ?? 1, 1)
     }
 
     /// The gap (in minutes) above which we break the line, adapted to THIS session's own sampling

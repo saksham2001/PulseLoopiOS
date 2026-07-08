@@ -148,15 +148,19 @@ enum ActionTools {
             let start: Date = args.startTime.flatMap(CoachDataAccess.parseLocalDate)
                 ?? CoachDataAccess.parseLocalDate(args.date).map { $0.addingTimeInterval(12 * 3600) }
                 ?? Date()
-            let end = start.addingTimeInterval(duration * 60)
-            let session = ActivitySession(
-                type: args.activityType, status: .finished, startedAt: start, endedAt: end,
-                distanceMeters: args.distanceKm.map { $0 * 1000 }, notes: args.notes.isEmpty ? nil : args.notes,
-                useGps: false
-            )
-            ctx.modelContext.insert(session)
-            _ = ActivityService.finishSummary(for: session, endedAt: end, context: ctx.modelContext)
-            try? ctx.modelContext.save()
+            let session: ActivitySession
+            do {
+                session = try ManualActivityService.create(
+                    type: args.activityType,
+                    startedAt: start,
+                    durationMinutes: duration,
+                    distanceMeters: args.distanceKm.map { $0 * 1000 },
+                    notes: args.notes,
+                    context: ctx.modelContext
+                )
+            } catch {
+                return .error(error.localizedDescription)
+            }
             return .object(["ok": true, "created": true, "activity_id": session.id.uuidString,
                             "type": args.activityType, "duration_min": duration])
         }

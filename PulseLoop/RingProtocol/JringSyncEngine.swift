@@ -120,6 +120,12 @@ final class JringSyncEngine: RingSyncEngine {
         writer?.enqueue(encoder.makeFindRingCommand())
     }
 
+    /// Post-workout backfill: re-request the 0x16 measurement history stream (1-min HR blocks) so
+    /// readings taken while the phone was away land in the just-finished session.
+    func syncVitalsHistory() {
+        writer?.enqueue(encoder.makeHistoryMeasurementQueryCommand())
+    }
+
     func setGoal(steps: Int) {
         writer?.enqueue(encoder.makeGoalCommand(steps: steps))
     }

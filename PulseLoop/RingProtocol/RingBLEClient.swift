@@ -133,7 +133,13 @@ final class RingBLEClient: NSObject {
     init(startManager: Bool) {
         super.init()
         if startManager {
-            central = CBCentralManager(delegate: self, queue: nil)
+            // State restoration: if iOS kills the app mid-workout, a BLE event (e.g. the ring's HR
+            // stream notifying) relaunches us and `willRestoreState` re-adopts the connection.
+            central = CBCentralManager(
+                delegate: self,
+                queue: nil,
+                options: [CBCentralManagerOptionRestoreIdentifierKey: "pulseloop.ring.central"]
+            )
         }
     }
 
@@ -418,12 +424,37 @@ extension RingBLEClient: RingCommandWriter {
 // MARK: - CBCentralManagerDelegate
 
 extension RingBLEClient: CBCentralManagerDelegate {
+    /// iOS relaunched us to service a preserved BLE session (e.g. the ring's HR stream notified
+    /// while we were dead). Re-adopt the peripheral and remembered driver here; the actual
+    /// connect/discovery is deferred to `centralManagerDidUpdateState` — restoration fires before
+    /// power-on completes, and issuing `connect` that early is API misuse.
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        MainActor.assumeIsolated {
+            let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
+            guard peripheral == nil, let target = restored.first else { return }
+            autoReconnect = true
+            peripheral = target
+            target.delegate = self
+            let coordinatorType = Self.coordinators.first { $0.deviceType == lastKnownDeviceType } ?? JringCoordinator.self
+            installDriver(coordinatorType)
+        }
+    }
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
             isBluetoothReady = (central.state == .poweredOn)
             switch central.state {
             case .poweredOn:
-                if autoReconnect, hasLastKnownRing, peripheral == nil {
+                if let restored = peripheral, state != .connected {
+                    // Adopted in willRestoreState — resume from wherever the link actually is.
+                    if restored.state == .connected {
+                        state = .connecting
+                        restored.discoverServices(nil)
+                    } else {
+                        state = .reconnecting
+                        central.connect(restored, options: nil)
+                    }
+                } else if autoReconnect, hasLastKnownRing, peripheral == nil {
                     connectLastKnown()
                 }
             case .poweredOff, .unauthorized, .unsupported:

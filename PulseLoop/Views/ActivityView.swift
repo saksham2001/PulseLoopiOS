@@ -62,6 +62,35 @@ struct ActivityView: View {
                     .buttonStyle(.plain)
                 }
 
+                Button { path.append(AppRoute.logPastActivity) } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(PulseColors.accent)
+                            .frame(width: 40, height: 40)
+                            .background(PulseColors.accentSoft, in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Log Past Activity")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(PulseColors.textPrimary)
+                            Text("Add a workout you forgot to record")
+                                .font(.system(size: 12))
+                                .foregroundStyle(PulseColors.textMuted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 68)
+                    .background(PulseColors.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+
                 // Today's workouts
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TODAY").font(.system(size: 11, weight: .medium)).tracking(1.4)

@@ -24,6 +24,25 @@ final class WorkoutLiveActivityService: ObservableObject {
 
     private var activities: [String: Activity<WorkoutActivityAttributes>] = [:]
 
+    // MARK: - Re-attach (app relaunch)
+
+    /// Rebuild the in-memory activity map from the system's live activities. The OS keeps a Live
+    /// Activity alive across app relaunches, but this dict is populated only by `start()` — without
+    /// re-attaching, every later `update`/`end` silently no-ops and the Lock Screen card freezes
+    /// (and its self-counting timer runs for up to 48 h). Activities whose session is no longer
+    /// active are orphans and are ended immediately.
+    func reattach(activeSessionIDs: Set<String>) {
+        for activity in Activity<WorkoutActivityAttributes>.activities {
+            let sid = activity.attributes.sessionID
+            if activeSessionIDs.contains(sid) {
+                activities[sid] = activity
+            } else {
+                liveActivityLog.info("Ending orphaned Live Activity for session \(sid, privacy: .public)")
+                Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            }
+        }
+    }
+
     // MARK: - Start
 
     /// Starts a Live Activity for the given session. Returns the activity id, or
@@ -80,11 +99,20 @@ final class WorkoutLiveActivityService: ObservableObject {
 
     // MARK: - End
 
-    /// Ends and dismisses the Live Activity for the session, then forgets it.
-    func end(sessionID: String) {
+    /// Ends the Live Activity for the session, then forgets it. With a `finalState` (finished
+    /// workout) the Lock Screen keeps a "Workout complete" card for ~10 minutes before
+    /// auto-dismissing; without one (discard/cancel) it disappears immediately.
+    func end(sessionID: String, finalState: WorkoutActivityAttributes.ContentState? = nil) {
         guard let activity = activities.removeValue(forKey: sessionID) else { return }
         Task {
-            await activity.end(nil, dismissalPolicy: .immediate)
+            if let finalState {
+                await activity.end(
+                    ActivityContent(state: finalState, staleDate: nil),
+                    dismissalPolicy: .after(.now + 10 * 60)
+                )
+            } else {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
         }
     }
 }

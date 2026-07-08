@@ -5,6 +5,7 @@ enum AppRoute: Hashable {
     case metricDetail(MetricKind)
     case activityTrends
     case recordSelect
+    case logPastActivity
     case recordLive(UUID)
     case recordSummary(UUID)
     case settings
