@@ -68,7 +68,7 @@ struct PhysiologySettingsView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(PulseColors.background)
-        .navigationTitle("Physiology")
+        .pageChrome("Physiology")
         .onAppear(perform: loadIfNeeded)
     }
 

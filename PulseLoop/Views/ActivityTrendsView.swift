@@ -35,8 +35,7 @@ struct ActivityTrendsView: View {
             .animation(.easeInOut(duration: 0.25), value: period)
         }
         .background(PulseColors.background)
-        .navigationTitle("Activity Trends")
-        .navigationBarTitleDisplayMode(.inline)
+        .pageChrome("Activity Trends")
     }
 
     // MARK: - Explainer

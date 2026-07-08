@@ -39,7 +39,7 @@ struct PrivacyDataSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Privacy & Data")
+        .pageChrome("Privacy & Data")
         .sheet(item: $diagnosticsURL) { url in
             DiagnosticsShareSheet(items: [url])
         }

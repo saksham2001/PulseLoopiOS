@@ -53,7 +53,7 @@ struct CalibrationSettingsView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(PulseColors.background)
-        .navigationTitle("Calibration")
+        .pageChrome("Calibration")
         .onAppear(perform: loadIfNeeded)
     }
 

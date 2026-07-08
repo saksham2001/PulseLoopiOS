@@ -42,7 +42,7 @@ struct MeasurementSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Measurement")
+        .pageChrome("Measurement")
         .onAppear(perform: loadIfNeeded)
     }
 

@@ -21,7 +21,7 @@ struct ProfileSettingsView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(PulseColors.background)
-        .navigationTitle("Profile")
+        .pageChrome("Profile")
         .onAppear(perform: loadIfNeeded)
     }
 

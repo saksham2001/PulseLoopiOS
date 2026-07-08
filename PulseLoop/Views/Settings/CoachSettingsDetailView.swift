@@ -11,6 +11,6 @@ struct CoachSettingsDetailView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("AI Coach")
+        .pageChrome("AI Coach")
     }
 }

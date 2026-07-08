@@ -32,7 +32,7 @@ struct NotificationsSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Coach Check-Ins")
+        .pageChrome("Coach Check-Ins")
     }
 
     @ViewBuilder private var notificationsControls: some View {

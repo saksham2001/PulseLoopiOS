@@ -64,7 +64,7 @@ struct WorkoutSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Activity Tracking")
+        .pageChrome("Activity Tracking")
     }
 
     private var accuracyCard: some View {

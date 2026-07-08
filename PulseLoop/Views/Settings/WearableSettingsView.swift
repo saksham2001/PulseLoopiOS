@@ -62,6 +62,6 @@ struct WearableSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Wearable")
+        .pageChrome("Wearable")
     }
 }

@@ -84,7 +84,7 @@ struct AboutSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("About")
+        .pageChrome("About")
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
