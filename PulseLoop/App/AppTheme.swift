@@ -224,17 +224,33 @@ struct PrimaryButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
-    
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var label: some View {
+        Label(title, systemImage: systemImage ?? "arrow.right")
+            .labelStyle(.titleAndIcon)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+    }
+
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage ?? "arrow.right")
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .foregroundStyle(.white)
-                .background(PulseColors.accent)
-                .clipShape(Capsule())
+        if #available(iOS 26, *), !reduceTransparency {
+            // Primary action = accent-tinted prominent Liquid Glass (interactive,
+            // lensing). Glass provides the surface; no manual fill.
+            Button(action: action) {
+                label.foregroundStyle(.white)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(PulseColors.accent)
+            .clipShape(Capsule())
+        } else {
+            Button(action: action) {
+                label
+                    .foregroundStyle(.white)
+                    .background(PulseColors.accent)
+                    .clipShape(Capsule())
+            }
         }
     }
 }
@@ -243,19 +259,33 @@ struct SecondaryButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
-    
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var label: some View {
+        Label(title, systemImage: systemImage ?? "circle")
+            .font(.system(size: 15, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+    }
+
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage ?? "circle")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .foregroundStyle(PulseColors.textPrimary)
-                .background(PulseColors.card)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1)
-                }
+        if #available(iOS 26, *), !reduceTransparency {
+            // Secondary action = neutral interactive Liquid Glass.
+            Button(action: action) {
+                label.foregroundStyle(PulseColors.textPrimary)
+            }
+            .buttonStyle(.glass)
+            .clipShape(Capsule())
+        } else {
+            Button(action: action) {
+                label
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .background(PulseColors.card)
+                    .clipShape(Capsule())
+                    .overlay {
+                        Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1)
+                    }
+            }
         }
     }
 }

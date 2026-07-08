@@ -474,19 +474,46 @@ struct QuickActionButton: View {
     var tone: ChipTone = .neutral
     var accent: Bool = false
     let action: () -> Void
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var text: some View {
+        Text(label)
+            .font(.system(size: 14, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+    }
 
     var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .foregroundStyle(accent ? .white : PulseColors.textPrimary)
-                .background(accent ? PulseColors.accent : PulseColors.card)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(accent ? Color.clear : PulseColors.borderSubtle, lineWidth: 1))
+        if #available(iOS 26, *), !reduceTransparency {
+            // Accent variant = tinted prominent glass; neutral = plain glass.
+            Button(action: action) {
+                text.foregroundStyle(accent ? .white : PulseColors.textPrimary)
+            }
+            .modifier(QuickActionGlass(accent: accent))
+            .clipShape(Capsule())
+        } else {
+            Button(action: action) {
+                text
+                    .foregroundStyle(accent ? .white : PulseColors.textPrimary)
+                    .background(accent ? PulseColors.accent : PulseColors.card)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(accent ? Color.clear : PulseColors.borderSubtle, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+    }
+}
+
+/// Picks prominent (accent-tinted) vs plain glass for QuickActionButton.
+@available(iOS 26, *)
+private struct QuickActionGlass: ViewModifier {
+    let accent: Bool
+    func body(content: Content) -> some View {
+        if accent {
+            content.buttonStyle(.glassProminent).tint(PulseColors.accent)
+        } else {
+            content.buttonStyle(.glass)
+        }
     }
 }
 
