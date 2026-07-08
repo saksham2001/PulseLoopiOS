@@ -85,9 +85,7 @@ struct ActivityView: View {
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity)
                     .frame(height: 68)
-                    .background(PulseColors.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
 
@@ -102,8 +100,7 @@ struct ActivityView: View {
                             Text("Start one manually when your ring misses an activity.").font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 20)
-                        .background(PulseColors.card).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     } else {
                         ForEach(todayWorkouts) { session in
                             ActivityWorkoutRow(session: session, units: units) { path.append(AppRoute.activityDetail(session.id)) }
@@ -132,9 +129,7 @@ struct ActivityView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(PulseColors.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -224,9 +219,7 @@ struct DailyActivitySummaryCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
     }

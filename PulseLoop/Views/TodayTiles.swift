@@ -40,12 +40,7 @@ struct TodayTile<Content: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(16)
             .frame(height: TodayTileMetrics.height)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: TodayTileMetrics.corner, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: TodayTileMetrics.corner, style: .continuous)
-                    .stroke(PulseColors.borderSubtle, lineWidth: 1)
-            )
+            .pulseGlass(RoundedRectangle(cornerRadius: TodayTileMetrics.corner, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

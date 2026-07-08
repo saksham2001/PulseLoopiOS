@@ -31,9 +31,7 @@ struct VitalCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, compact ? 16 : 22)
             .padding(.vertical, compact ? 16 : 20)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: compact ? 24 : 30, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: compact ? 24 : 30, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .pulseGlass(RoundedRectangle(cornerRadius: compact ? 24 : 30, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(onTap == nil)
