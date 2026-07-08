@@ -236,12 +236,12 @@ struct PrimaryButton: View {
 
     var body: some View {
         if #available(iOS 26, *), !reduceTransparency {
-            // Primary action = accent-tinted prominent Liquid Glass (interactive,
-            // lensing). Glass provides the surface; no manual fill.
+            // Primary action = translucent Liquid Glass with an accent tint (real
+            // lensing, not a flat fill). Glass provides the surface; no manual fill.
             Button(action: action) {
                 label.foregroundStyle(.white)
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.glass)
             .tint(PulseColors.accent)
             .clipShape(Capsule())
         } else {

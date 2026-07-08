@@ -12,19 +12,32 @@ import SwiftUI
 private struct PulseGlassModifier<S: Shape>: ViewModifier {
     let shape: S
     let interactive: Bool
+    let tint: Color?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         if reduceTransparency {
-            // Honor Reduce Transparency: no blur, a solid card surface + hairline.
+            // Honor Reduce Transparency: no blur, a solid surface + hairline. A tinted
+            // surface (selected control) reads as the accent fill it replaces.
             content
-                .background(PulseColors.card, in: shape)
-                .overlay(shape.stroke(PulseColors.borderSubtle, lineWidth: 1))
+                .background(tint ?? PulseColors.card, in: shape)
+                .overlay(shape.stroke(tint == nil ? PulseColors.borderSubtle : Color.clear, lineWidth: 1))
         } else if #available(iOS 26, *) {
-            content.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+            content.glassEffect(glass, in: shape)
         } else {
-            content.background(.ultraThinMaterial, in: shape)
+            // Pre-26: Material, plus a translucent tint hint for selected controls.
+            content
+                .background(.ultraThinMaterial, in: shape)
+                .background(tint?.opacity(0.55) ?? Color.clear, in: shape)
         }
+    }
+
+    @available(iOS 26, *)
+    private var glass: Glass {
+        var g: Glass = .regular
+        if let tint { g = g.tint(tint) }
+        if interactive { g = g.interactive() }
+        return g
     }
 }
 
@@ -34,8 +47,10 @@ extension View {
     /// - Parameters:
     ///   - shape: clip shape for the effect (default `Capsule`).
     ///   - interactive: opt into touch/pointer reactions (26+ only). Use on controls.
-    func pulseGlass(_ shape: some Shape = Capsule(), interactive: Bool = false) -> some View {
-        modifier(PulseGlassModifier(shape: shape, interactive: interactive))
+    ///   - tint: accent tint for prominent/selected controls (26+ real tint; a
+    ///     translucent hint pre-26; a solid fill under Reduce Transparency).
+    func pulseGlass(_ shape: some Shape = Capsule(), interactive: Bool = false, tint: Color? = nil) -> some View {
+        modifier(PulseGlassModifier(shape: shape, interactive: interactive, tint: tint))
     }
 
     /// Wraps sibling glass views in a `GlassEffectContainer` on iOS 26+ (enables

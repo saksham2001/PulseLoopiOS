@@ -509,8 +509,9 @@ struct QuickActionButton: View {
 private struct QuickActionGlass: ViewModifier {
     let accent: Bool
     func body(content: Content) -> some View {
+        // Both variants use translucent glass; accent adds a tint (no flat prominent fill).
         if accent {
-            content.buttonStyle(.glassProminent).tint(PulseColors.accent)
+            content.buttonStyle(.glass).tint(PulseColors.accent)
         } else {
             content.buttonStyle(.glass)
         }

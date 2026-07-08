@@ -1,4 +1,43 @@
 import SwiftUI
+import UIKit
+
+/// Re-enables the interactive edge-swipe-back gesture on screens that hide the system
+/// navigation bar. Hiding the bar (`toolbar(.hidden, for: .navigationBar)`) makes UIKit
+/// disable `interactivePopGestureRecognizer`, so swipe-to-go-back silently dies. This
+/// zero-size representative re-enables it and installs a delegate that permits the swipe
+/// whenever there's something to pop back to. Installed once via `pageChrome`.
+private struct SwipeBackEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.reenablePopGesture()
+    }
+
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            reenablePopGesture()
+        }
+
+        func reenablePopGesture() {
+            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
+            gesture.isEnabled = true
+            gesture.delegate = self
+        }
+
+        // Allow the edge swipe only when a pop target exists (not on the stack root).
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? 0) > 1
+        }
+    }
+}
+
+extension View {
+    /// Restores edge-swipe-back on a nav-bar-hidden screen. No-op cost: a 0×0 host.
+    /// Use on any screen that hides the system nav bar inside a `NavigationStack`.
+    func enablesBackSwipe() -> some View {
+        background(SwipeBackEnabler().frame(width: 0, height: 0).accessibilityHidden(true))
+    }
+}
 
 /// Standard page chrome for pushed screens: a glass circular back button on the
 /// left, a centered title with consistent typography, and an optional trailing
@@ -49,6 +88,7 @@ extension View {
             self
         }
         .toolbar(.hidden, for: .navigationBar)
+        .enablesBackSwipe()
     }
 
     /// Same, with a trailing control (e.g. an edit/delete button) in the header —
@@ -59,5 +99,6 @@ extension View {
             self
         }
         .toolbar(.hidden, for: .navigationBar)
+        .enablesBackSwipe()
     }
 }

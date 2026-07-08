@@ -463,17 +463,13 @@ struct OnboardingActionFooter<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
+        // Transparent footer: the glass button floats over the content (iOS 26 look),
+        // no silver glass bar behind it. Content dissolves under the button when scrolled.
         content
             .frame(maxWidth: 560)
             .padding(.horizontal, 24)
             .padding(.top, 12)
             .padding(.bottom, 8)
             .frame(maxWidth: .infinity)
-            .pulseGlass(Rectangle())
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(PulseColors.borderSubtle)
-                    .frame(height: 1)
-            }
     }
 }
