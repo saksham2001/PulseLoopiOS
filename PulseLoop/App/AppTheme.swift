@@ -146,12 +146,8 @@ struct PulseCard<Content: View>: View {
     var body: some View {
         content
             .padding(padding)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(PulseColors.borderSubtle, lineWidth: 1)
-            }
+            // Liquid Glass card surface (glass 26+, Material 18–25, solid on Reduce Transparency).
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 

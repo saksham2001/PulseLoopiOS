@@ -99,6 +99,7 @@
 			membershipExceptions = (
 				App/AppTheme.swift,
 				DesignSystem/ActivityRings.swift,
+				DesignSystem/GlassCompat.swift,
 				DesignSystem/PulseFont.swift,
 				DesignSystem/SleepStageBar.swift,
 				DesignSystem/VitalRingGauge.swift,
