@@ -23,6 +23,8 @@ struct PulseLoopApp: App {
     private let summaryCoordinator: CoachSummaryCoordinator
     /// Retained so it keeps watching for on-device proactive anomaly alerts.
     private let anomalyMonitor: CoachAnomalyMonitor
+    /// Retained so it keeps watching the ring's battery for low/critical alerts.
+    private let batteryAlertMonitor = BatteryAlertMonitor()
     /// Retained so it keeps recording the structured wearable diagnostics timeline.
     private let diagnostics: DiagnosticsSubscriber
     /// Retained so it keeps projecting synced data into the home-screen-widget snapshot.
@@ -53,6 +55,10 @@ struct PulseLoopApp: App {
 
         // One-time cleanup of activity totals inflated by the old accumulator bug.
         ActivityService.migrateInflatedActivityIfNeeded(context: container.mainContext)
+
+        // One-time cleanup of activity rows poisoned by unvalidated live updates (implausible totals or
+        // future-dated rows that would otherwise permanently become "today").
+        ActivityService.migrateGarbageActivityIfNeeded(context: container.mainContext)
 
         // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
         SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
@@ -92,6 +98,7 @@ struct PulseLoopApp: App {
         coordinator.start()
         summaryCoordinator.start()
         anomalyMonitor.start()
+        batteryAlertMonitor.start()
         diagnostics.start()
         widgetPublisher.start()
 

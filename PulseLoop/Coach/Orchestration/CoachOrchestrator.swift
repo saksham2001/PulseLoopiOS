@@ -154,9 +154,10 @@ struct CoachOrchestrator {
             if let parsed = CoachResponseParser.parse(current.outputText) { return parsed }
             attempts += 1
             if attempts > maxFinalAttempts {
-                let snippet = current.outputText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
+                let full = current.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let snippet = full.count > 400 ? full.prefix(400) + "…" : full
                 throw ParseExhausted(reason: "The model didn't return a valid structured answer after \(maxFinalAttempts) attempts."
-                    + (snippet.isEmpty ? "" : " It replied: “\(snippet)…”"))
+                    + (snippet.isEmpty ? "" : " It replied: “\(snippet)”"))
             }
             let repair = OpenAIRequestBuilder.message(
                 role: "user",

@@ -158,6 +158,10 @@ protocol RingSyncEngine: AnyObject {
     /// SpO2 big-data; jring: the 0x16 measurement history stream). Devices without a readable
     /// vitals log do nothing (default no-op below).
     func syncVitalsHistory()
+
+    /// Re-request the ring's current battery level over its own protocol (Colmi: 0x03). jring reports
+    /// battery via GATT (read separately by the client), so it has nothing to do here — default no-op.
+    func requestBattery()
 }
 
 extension RingSyncEngine {
@@ -182,4 +186,7 @@ extension RingSyncEngine {
 
     /// Default: devices without a readable vitals log have nothing to backfill.
     func syncVitalsHistory() {}
+
+    /// Default: devices that report battery over GATT (e.g. jring) have no in-band battery command.
+    func requestBattery() {}
 }

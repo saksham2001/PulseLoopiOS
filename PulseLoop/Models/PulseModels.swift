@@ -95,6 +95,12 @@ final class Device {
     var lastConnectedAt: Date?
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
+    /// When the last *full history sync* actually completed (`.syncProgress("done")`), as distinct
+    /// from `lastSyncAt` — which is re-stamped on every CONNECT before any data streams. The coach
+    /// freshness gate reads this so a check-in doesn't fire on connect with pre-sync data. Optional +
+    /// defaulted to nil, so it's an additive SwiftData lightweight migration (same pattern as the
+    /// fields below).
+    var lastFullSyncAt: Date?
     var firmwareVersion: String?
     /// Exact catalog model (for example `colmi-r10`), separate from the protocol/driver family.
     var wearableModelID: String?
@@ -230,6 +236,26 @@ final class Measurement {
     }
     
     var kind: MeasurementKind { MeasurementKind(rawValue: kindRaw) ?? .heartRate }
+}
+
+/// A single historical battery reading, kept so the Wearable screen can chart drainage over time.
+/// Battery is stored separately from `Measurement` (it isn't a health vital) but follows the same
+/// timestamped-sample shape. Writes are throttled (on-change or a 30-min floor) so the table stays
+/// tiny — at most a few dozen rows a day. Indexed on `timestamp` for the windowed chart query.
+@Model
+final class BatterySample {
+    #Index<BatterySample>([\.timestamp])
+    @Attribute(.unique) var id: UUID
+    var percent: Int
+    var timestamp: Date
+    var createdAt: Date
+
+    init(id: UUID = UUID(), percent: Int, timestamp: Date = Date()) {
+        self.id = id
+        self.percent = percent
+        self.timestamp = timestamp
+        self.createdAt = Date()
+    }
 }
 
 @Model

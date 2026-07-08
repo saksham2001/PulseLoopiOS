@@ -283,10 +283,14 @@ struct RingDecoder {
             return .sleepTimeline(timestamp: timestamp, stages: stages)
         case 0x14 where bytes.count >= 6:
             return .heartRateSample(bpm: Int(bytes[5]), timestamp: now)
+        case 0x16 where bytes.count >= 2 && bytes[1] == 0xff:
+            // End-of-stream marker for the measurement-history sync: surface it as "finished" so the
+            // coordinator's endSync path fires (via RingEventBridge → `.syncProgress("done")`).
+            return .historySyncFinished
         case 0x16:
-            // Header (0xF0) carries the total packet count; index (0xAA) / finished (0xFF) are
-            // sync-flow markers. Data blocks (0xA0) are handled in `decodeAll`. None decode to a
-            // measurement on their own, so they're plain acks here.
+            // Header (0xF0) carries the total packet count; index (0xAA) is a sync-flow marker. Data
+            // blocks (0xA0) are handled in `decodeAll`. None decode to a measurement on their own, so
+            // they're plain acks here.
             return .commandAck(commandId: packet.commandId)
         case 0x24:
             // Combined-sensor packet: `decodeAll` fans out every metric; a single-event caller just

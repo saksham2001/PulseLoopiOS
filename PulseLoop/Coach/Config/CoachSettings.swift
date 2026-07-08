@@ -231,6 +231,8 @@ struct CoachSettings: Codable, Equatable {
 final class CoachSettingsStore {
     static let shared = CoachSettingsStore()
 
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private static let storageKey = "pulseloop.coach.settings.v1"
     private let defaults: UserDefaults
 

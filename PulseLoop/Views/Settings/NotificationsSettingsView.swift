@@ -11,6 +11,9 @@ struct NotificationsSettingsView: View {
     @State private var store = CoachSettingsStore.shared
     @State private var testStatus: String?
     @State private var notifPermissionDenied = false
+    /// Mirrors the raw `pulseloop.batteryalerts.enabled` default (absent = ON). Held in @State so the
+    /// toggle refreshes reliably; seeded in `onAppear`.
+    @State private var batteryAlertsEnabled = true
 
     private var coachEnabled: Bool { store.settings.coachMasterEnabled }
 
@@ -28,11 +31,30 @@ struct NotificationsSettingsView: View {
                 notificationsControls
                     .disabled(!coachEnabled)
                     .opacity(coachEnabled ? 1 : 0.5)
+
+                // Ring battery alerts are independent of the AI Coach — no LLM involved — so this
+                // section sits outside the coach-gated block above.
+                batteryAlertControls
             }
             .padding()
         }
         .background(PulseColors.background)
         .navigationTitle("Coach Check-Ins")
+        .onAppear {
+            batteryAlertsEnabled = UserDefaults.standard.object(forKey: BatteryAlertMonitor.enabledKey) as? Bool ?? true
+        }
+    }
+
+    @ViewBuilder private var batteryAlertControls: some View {
+        SectionHeader(title: "Ring battery alerts", action: nil)
+        toggleRow("Low battery notifications", isOn: Binding(
+            get: { batteryAlertsEnabled },
+            set: { setBatteryAlerts($0) }
+        ))
+        Text("Get a heads-up when your ring drops below 20% and 10%.")
+            .font(.caption).foregroundStyle(PulseColors.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
     }
 
     @ViewBuilder private var notificationsControls: some View {
@@ -99,6 +121,23 @@ struct NotificationsSettingsView: View {
             store.settings.notificationsEnabled = granted
             notifPermissionDenied = !granted
             if granted { CoachNotificationScheduler.shared.scheduleNext() }
+        }
+    }
+
+    /// Toggle ring battery alerts. Turning ON mirrors `setNotifications`: request authorization and, if
+    /// refused, leave the toggle off + surface the denied hint. Turning OFF just writes false.
+    private func setBatteryAlerts(_ on: Bool) {
+        guard on else {
+            batteryAlertsEnabled = false
+            UserDefaults.standard.set(false, forKey: BatteryAlertMonitor.enabledKey)
+            return
+        }
+        Task {
+            let granted = (try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            batteryAlertsEnabled = granted
+            UserDefaults.standard.set(granted, forKey: BatteryAlertMonitor.enabledKey)
+            notifPermissionDenied = !granted
         }
     }
 

@@ -48,3 +48,20 @@ struct ActivityRingsView: View {
         .frame(width: size, height: size)
     }
 }
+
+// MARK: - Activity value text
+
+extension Text {
+    /// Big activity metric value (steps / distance / calories): always one line, never
+    /// truncates — scales down as far as needed instead. 0.35 is a floor, not a target:
+    /// text only shrinks when the string genuinely doesn't fit (six-digit steps in the
+    /// narrowest widget column).
+    func activityValueStyle(size: CGFloat) -> some View {
+        self.font(.system(size: size, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(PulseColors.textPrimary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.35)
+            .allowsTightening(true)
+    }
+}
