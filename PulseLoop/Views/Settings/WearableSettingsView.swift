@@ -42,6 +42,7 @@ struct WearableSettingsView: View {
                     SectionHeader(title: "Connected ring", action: nil)
                     StatusCopy(title: "Device", body: wearableDisplayName)
                     StatusCopy(title: "Battery", body: batteryPercent.map { "\($0)%" } ?? "--")
+                    BatteryHistorySection()
                     StatusCopy(title: "Last synced", body: lastSyncedLabel)
                     SecondaryButton(title: "Sync now", systemImage: "clock.arrow.circlepath") { coordinator.syncNow() }
                     SecondaryButton(title: "Find ring", systemImage: "bell.fill") { coordinator.findRing() }
@@ -63,5 +64,73 @@ struct WearableSettingsView: View {
         }
         .background(PulseColors.background)
         .navigationTitle("Wearable")
+    }
+}
+
+/// Battery-drainage chart for the connected ring. Reads the throttled `BatterySample` history (written
+/// by `EventPersistenceSubscriber`) for the selected window and draws it with the shared `ZoneLineChart`
+/// on a fixed 0–100 axis. The fetch is on-demand (only while this screen is visible) and re-runs when the
+/// window changes or new data is persisted — so it adds no ongoing cost.
+private struct BatteryHistorySection: View {
+    @Environment(\.modelContext) private var modelContext
+    @State private var dataChange = PulseDataChange.shared
+    @State private var range: MetricRange = .twentyFourHours
+    @State private var samples: [ChartSample] = []
+
+    /// Only the two windows that make sense for battery: a day of drainage, or a week of cycles.
+    private static let ranges: [MetricRange] = [.twentyFourHours, .sevenDays]
+
+    private func rangeLabel(_ r: MetricRange) -> String { r == .twentyFourHours ? "24h" : "7d" }
+
+    private func color(for percent: Double) -> Color {
+        percent <= 20 ? PulseColors.danger : (percent <= 50 ? PulseColors.warning : PulseColors.success)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionHeader(title: "Battery history", action: nil)
+                Spacer()
+                Picker("Range", selection: $range) {
+                    ForEach(Self.ranges, id: \.self) { Text(rangeLabel($0)).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+
+            PulseCard {
+                if samples.count >= 2 {
+                    ZoneLineChart(
+                        samples: samples,
+                        metric: .heartRate,          // axis styling only; battery uses its own domain + colors
+                        yDomain: 0...100,
+                        range: range,
+                        showAxes: true,
+                        height: 160,
+                        colorForValue: color(for:)
+                    )
+                } else {
+                    Text("Not enough data yet — battery history builds up as your ring reports its level.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(PulseColors.textMuted)
+                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+        .onAppear(perform: reload)
+        .onChange(of: range) { _, _ in reload() }
+        .onChange(of: dataChange.token) { _, _ in reload() }
+    }
+
+    private func reload() {
+        let end = Date()
+        let start: Date
+        switch range {
+        case .twentyFourHours: start = Calendar.current.date(byAdding: .hour, value: -24, to: end) ?? end
+        default:               start = Calendar.current.date(byAdding: .day, value: -7, to: end) ?? end
+        }
+        let rows = MetricsRepository.batterySamples(start: start, end: end, context: modelContext)
+        samples = rows.map { ChartSample(timestamp: $0.timestamp, value: Double($0.percent)) }
     }
 }

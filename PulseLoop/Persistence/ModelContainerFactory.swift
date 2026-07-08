@@ -6,6 +6,7 @@ enum ModelContainerFactory {
             Device.self,
             ActivityDaily.self,
             Measurement.self,
+            BatterySample.self,
             SleepSession.self,
             SleepStageBlock.self,
             RawPacketRow.self,

@@ -80,6 +80,19 @@ enum MetricsRepository {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    /// Battery-history readings within `[start, end]`, oldest-first for a left-to-right chart axis,
+    /// capped at `limit`. Database predicate + sort + limit against the `timestamp` index — no
+    /// full-table scan. Feeds the Wearable screen's drainage chart.
+    @MainActor
+    static func batterySamples(start: Date, end: Date, limit: Int = 1000, context: ModelContext) -> [BatterySample] {
+        var descriptor = FetchDescriptor<BatterySample>(
+            predicate: #Predicate { $0.timestamp >= start && $0.timestamp <= end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     /// All measurements of one kind, newest-first (demo mode keeps full history, no time window).
     @MainActor
     static func measurementsAll(kind: MeasurementKind, context: ModelContext) -> [Measurement] {

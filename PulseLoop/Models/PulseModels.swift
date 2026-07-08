@@ -238,6 +238,26 @@ final class Measurement {
     var kind: MeasurementKind { MeasurementKind(rawValue: kindRaw) ?? .heartRate }
 }
 
+/// A single historical battery reading, kept so the Wearable screen can chart drainage over time.
+/// Battery is stored separately from `Measurement` (it isn't a health vital) but follows the same
+/// timestamped-sample shape. Writes are throttled (on-change or a 30-min floor) so the table stays
+/// tiny — at most a few dozen rows a day. Indexed on `timestamp` for the windowed chart query.
+@Model
+final class BatterySample {
+    #Index<BatterySample>([\.timestamp])
+    @Attribute(.unique) var id: UUID
+    var percent: Int
+    var timestamp: Date
+    var createdAt: Date
+
+    init(id: UUID = UUID(), percent: Int, timestamp: Date = Date()) {
+        self.id = id
+        self.percent = percent
+        self.timestamp = timestamp
+        self.createdAt = Date()
+    }
+}
+
 @Model
 final class SleepSession {
     @Attribute(.unique) var id: UUID
