@@ -216,12 +216,16 @@ final class CoachViewModel {
     private func recentMessages(
         conversationId: UUID, excluding excludedId: UUID, context: ModelContext, limit: Int = 10
     ) -> [CoachOrchestrator.PriorMessage] {
+        // Fetch the NEWEST 40 (descending), then restore chronological order for replay. Sorting
+        // ascending with a fetchLimit caps at the OLDEST 40 rows, so a conversation past 40 messages
+        // would freeze the coach's replayed context at messages 31–40 and never see anything newer.
+        // historyTurns is 4/10, so 40 is an ample buffer after dropping the current turn + errors.
         var descriptor = FetchDescriptor<CoachMessage>(
             predicate: #Predicate { $0.conversationId == conversationId },
-            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         descriptor.fetchLimit = 40
-        let rows = (try? context.fetch(descriptor)) ?? []
+        let rows = Array(((try? context.fetch(descriptor)) ?? []).reversed())
         let recent = rows
             .filter { $0.id != excludedId && $0.role != "error" }  // never replay error bubbles to the model
             .suffix(limit)
