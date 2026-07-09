@@ -105,8 +105,6 @@ struct TodayView: View {
                     .accessibilityHidden(true)
             }
         }
-        // Scroll-begin-to-exit: SwiftUI's scroll phase change fires when the user starts scrolling.
-        .modifier(ScrollExitOnEdit(editing: editing, exit: exitEdit))
         .refreshable { await coordinator.pullToRefresh() }
         .overlay(alignment: .top) { if editing { editDoneBar } }
         .task {
@@ -163,7 +161,12 @@ struct TodayView: View {
 
     /// Visible Today tiles in the saved order (falling back to `defaultOrder`).
     private func orderedKeys(_ store: TodayStore) -> [MetricKey] {
-        let visible = store.visibleMetrics.intersection(Set(Self.defaultOrder))
+        // Live hide/restore: filter by `prefs.isHidden` directly, not just the store's cached
+        // `visibleMetrics` snapshot, so the "–" badge / Hidden-tray "+" drop or re-add a card
+        // immediately (the view observes `prefs`, so this re-renders on toggle).
+        let visible = store.visibleMetrics
+            .intersection(Set(Self.defaultOrder))
+            .filter { !prefs.isHidden($0, scope: .today) }
         let raws = prefs.resolvedOrder(
             visible: Set(visible.map(\.rawValue)),
             defaultOrder: Self.defaultOrder.map(\.rawValue),

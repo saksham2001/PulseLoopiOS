@@ -65,75 +65,58 @@ struct ReorderableForEach<Item: Hashable, Content: View>: View {
     var body: some View {
         ForEach(Array(items.enumerated()), id: \.element) { index, item in
             let isDragging = dragging == item && isEditing
-            ZStack(alignment: .topLeading) {
-                content(item)
-                    .disabled(isEditing)
-                    // The card visuals + wiggle are decorative for VoiceOver; the accessible label,
-                    // value, and actions live on the cell wrapper below.
-                    .accessibilityHidden(isEditing)
-
-                if isEditing {
-                    RemoveBadge { withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { hide(item) } }
-                        .offset(x: -6, y: -6)
-                        .transition(.scale.combined(with: .opacity))
-                        .accessibilityHidden(true)   // exposed instead as the "Hide" action below
+            content(item)
+                .disabled(isEditing)
+                // The card visuals + wiggle are decorative for VoiceOver; the accessible label,
+                // value, and actions live on the cell wrapper below.
+                .accessibilityHidden(isEditing)
+                .wiggling(active: isEditing, phase: Double(index % 4) * 0.03)
+                // Lift-on-pickup: the dragged card scales up with a shadow; the in-place copy dims and
+                // shrinks so the lift reads clearly. Scale is gated under Reduce Motion.
+                .scaleEffect(liftScale(isDragging: isDragging))
+                .opacity(isDragging ? 0.35 : 1)
+                .shadow(color: .black.opacity(isDragging && !reduceMotion ? 0.25 : 0),
+                        radius: isDragging && !reduceMotion ? 14 : 0, x: 0, y: 8)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragging)
+                .zIndex(isDragging ? 1 : 0)
+                .contentShape(Rectangle())   // full-cell drop target for the LazyVGrid case
+                .modifier(DragDropModifier(
+                    item: item, items: items, isEditing: isEditing,
+                    dragging: $dragging, move: move,
+                    preview: {
+                        // A picked-up preview: the card lifted with a subtle shadow.
+                        content(item)
+                            .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 8)
+                    }
+                ))
+                // "–" hide badge as an overlay applied AFTER the drag modifier, so it sits above the
+                // `.onDrag` layer and its Button wins the hit-test (otherwise the drag gesture swallows
+                // the tap and hide never fires).
+                .overlay(alignment: .topLeading) {
+                    if isEditing {
+                        RemoveBadge { withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { hide(item) } }
+                            .offset(x: -6, y: -6)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibilityHidden(true)   // exposed instead as the "Hide" action below
+                    }
                 }
-            }
-            .wiggling(active: isEditing, phase: Double(index % 4) * 0.03)
-            // Lift-on-pickup: the dragged card scales up with a shadow; the in-place copy dims and
-            // shrinks so the lift reads clearly. Scale is gated under Reduce Motion.
-            .scaleEffect(liftScale(isDragging: isDragging))
-            .opacity(isDragging ? 0.35 : 1)
-            .shadow(color: .black.opacity(isDragging && !reduceMotion ? 0.25 : 0),
-                    radius: isDragging && !reduceMotion ? 14 : 0, x: 0, y: 8)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragging)
-            .zIndex(isDragging ? 1 : 0)
-            .contentShape(Rectangle())   // full-cell drop target for the LazyVGrid case
-            .modifier(DragDropModifier(
-                item: item, items: items, isEditing: isEditing,
-                dragging: $dragging, move: move,
-                preview: {
-                    // A picked-up preview: the card lifted with a subtle shadow.
-                    content(item)
-                        .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 8)
-                }
-            ))
-            // VoiceOver: while editing, collapse the cell into one element carrying position +
-            // move/hide actions (drag is invisible to VO). Outside edit mode the card keeps its own
-            // native tap element untouched.
-            .modifier(ReorderAccessibility(
-                isEditing: isEditing,
-                label: displayName(item),
-                index: index,
-                count: items.count,
-                move: move,
-                hide: { hide(item) }
-            ))
+                // VoiceOver: while editing, collapse the cell into one element carrying position +
+                // move/hide actions (drag is invisible to VO). Outside edit mode the card keeps its own
+                // native tap element untouched.
+                .modifier(ReorderAccessibility(
+                    isEditing: isEditing,
+                    label: displayName(item),
+                    index: index,
+                    count: items.count,
+                    move: move,
+                    hide: { hide(item) }
+                ))
         }
     }
 
     private func liftScale(isDragging: Bool) -> CGFloat {
         guard isDragging else { return 1 }
         return reduceMotion ? 1 : 1.05
-    }
-}
-
-// MARK: - Exit affordances
-
-/// Exits edit mode when the user starts scrolling. Attaches `onScrollPhaseChange` (iOS 18+) to the
-/// scroll view so any interactive-drag phase (the moment a scroll begins) dismisses edit mode —
-/// mirroring the home-screen feel where scrolling ends a jiggle. Active only while editing.
-struct ScrollExitOnEdit: ViewModifier {
-    let editing: Bool
-    let exit: () -> Void
-
-    func body(content: Content) -> some View {
-        content.onScrollPhaseChange { _, newPhase in
-            guard editing else { return }
-            if newPhase == .interacting || newPhase == .decelerating {
-                exit()
-            }
-        }
     }
 }
 

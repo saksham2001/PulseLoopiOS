@@ -49,8 +49,6 @@ struct VitalsView: View {
                     .accessibilityHidden(true)
             }
         }
-        // Scroll-begin-to-exit.
-        .modifier(ScrollExitOnEdit(editing: editing, exit: exitEdit))
         .refreshable { await coordinator.pullToRefresh() }
         .overlay(alignment: .top) { if editing { editDoneBar } }
         .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
@@ -133,7 +131,11 @@ struct VitalsView: View {
 
     /// Visible Vitals cards in the saved order (falling back to `defaultOrder`).
     private func orderedKeys(_ store: VitalsStore) -> [MetricKey] {
-        let visible = store.visibleMetrics.intersection(Set(Self.defaultOrder))
+        // Live hide/restore: filter by `prefs.isHidden` directly (not just the store's cached
+        // snapshot) so the "–" badge / Hidden-tray "+" drop or re-add a card immediately.
+        let visible = store.visibleMetrics
+            .intersection(Set(Self.defaultOrder))
+            .filter { !prefs.isHidden($0, scope: .vitals) }
         let raws = prefs.resolvedOrder(
             visible: Set(visible.map(\.rawValue)),
             defaultOrder: Self.defaultOrder.map(\.rawValue),
