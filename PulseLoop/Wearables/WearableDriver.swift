@@ -156,6 +156,16 @@ protocol RingSyncEngine: AnyObject {
     /// Release the ring on Forget: send the unbind command (jring 0x4B UNBOND) so the ring stops
     /// streaming to us and re-advertises for other apps. Devices without a bind protocol ignore it.
     func unbind()
+
+    /// Targeted post-workout history pull: re-read the ring's own HR/SpO2 logs so samples recorded
+    /// while the phone was away/suspended land in the just-finished session (Colmi: HR day 0 +
+    /// SpO2 big-data; jring: the 0x16 measurement history stream). Devices without a readable
+    /// vitals log do nothing (default no-op below).
+    func syncVitalsHistory()
+
+    /// Re-request the ring's current battery level over its own protocol (Colmi: 0x03). jring reports
+    /// battery via GATT (read separately by the client), so it has nothing to do here — default no-op.
+    func requestBattery()
 }
 
 extension RingSyncEngine {
@@ -181,4 +191,10 @@ extension RingSyncEngine {
 
     /// Default: devices without a bind protocol (e.g. Colmi) have nothing to release.
     func unbind() {}
+
+    /// Default: devices without a readable vitals log have nothing to backfill.
+    func syncVitalsHistory() {}
+
+    /// Default: devices that report battery over GATT (e.g. jring) have no in-band battery command.
+    func requestBattery() {}
 }

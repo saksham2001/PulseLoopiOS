@@ -22,12 +22,14 @@ struct NotificationContextPacket: Encodable {
     var recentWorkouts: [CoachContextPacket.WorkoutContext]
     var memories: [CoachContextPacket.MemoryContext]
     var dataQualityWarnings: [String]
+    var environment: CoachContextPacket.EnvironmentContext?
 }
 
 @MainActor
 enum NotificationContextBuilder {
     static func build(
-        slot: CoachNotificationSlot, context: ModelContext, now: Date = Date()
+        slot: CoachNotificationSlot, context: ModelContext, now: Date = Date(),
+        environment: CoachContextPacket.EnvironmentContext? = nil
     ) -> NotificationContextPacket {
         let packet = CoachContextBuilder.build(context: context, now: now)
         let cutoff = now.addingTimeInterval(-12 * 3600)
@@ -51,7 +53,8 @@ enum NotificationContextBuilder {
             spo2Last12h: CoachDataAccess.stats(spo2),
             recentWorkouts: packet.recentWorkouts,
             memories: packet.memories,
-            dataQualityWarnings: packet.dataQualityWarnings
+            dataQualityWarnings: packet.dataQualityWarnings,
+            environment: environment
         )
     }
 }

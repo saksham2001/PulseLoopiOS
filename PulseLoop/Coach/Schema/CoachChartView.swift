@@ -27,12 +27,12 @@ struct CoachChartView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(chart.title)
-                .font(.system(size: 12, weight: .medium))
+                .font(PulseFont.caption)
                 .foregroundStyle(PulseColors.textSecondary)
 
             if chart.data.isEmpty {
                 Text("No data to plot for this range.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
             } else if chart.chartType == .sleepStage {
@@ -45,7 +45,7 @@ struct CoachChartView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(chart.annotations) { a in
                         Text("• \(a.label)")
-                            .font(.system(size: 11))
+                            .font(PulseFont.caption2.weight(.regular))
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
@@ -53,8 +53,7 @@ struct CoachChartView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#0F141F"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - Standard plot (line / dot / bar / sparkline)
@@ -111,7 +110,7 @@ struct CoachChartView: View {
             .chartYScale(domain: domain)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: min(6, chart.data.count))) { _ in
-                    AxisValueLabel().font(.system(size: 9)).foregroundStyle(PulseColors.textMuted)
+                    AxisValueLabel().font(PulseFont.nano.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                 }
             }
             .chartYAxis { axisMarks }
@@ -124,7 +123,7 @@ struct CoachChartView: View {
     private var axisMarks: some AxisContent {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
             AxisGridLine().foregroundStyle(PulseColors.borderSubtle)
-            AxisValueLabel().font(.system(size: 9)).foregroundStyle(PulseColors.textMuted)
+            AxisValueLabel().font(PulseFont.nano.weight(.regular)).foregroundStyle(PulseColors.textMuted)
         }
     }
 
@@ -171,7 +170,7 @@ struct CoachChartView: View {
         return Group {
             if blocks.isEmpty || total == 0 {
                 Text("No sleep stages to plot.")
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
             } else {
                 SleepHypnogramView(blocks: blocks, totalMin: total, startTs: nil, height: height + 30)

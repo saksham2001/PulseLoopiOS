@@ -11,11 +11,15 @@ enum CoachSummaryContextBuilder {
         let json: String
         let signature: String
         let fallback: CoachSummaryContent
+        /// The end of the night this summary describes (sleepDay only); nil for
+        /// today/sleepRange. Drives the sleep-sync gate in `CoachSummaryService`.
+        var sleepSessionEnd: Date? = nil
     }
 
     // MARK: Today
 
-    static func today(context: ModelContext, now: Date = Date()) -> Built {
+    static func today(context: ModelContext, now: Date = Date(),
+                      environment: CoachContextPacket.EnvironmentContext? = nil) -> Built {
         let summary = MetricsService.buildTodaySummary(context: context)
         let packet = CoachContextBuilder.build(context: context, now: now)
         let hero = TodayInsights.deriveHero(summary)
@@ -27,10 +31,11 @@ enum CoachSummaryContextBuilder {
             let latestSleep: CoachContextPacket.SleepContext?
             let memories: [CoachContextPacket.MemoryContext]
             let dataQualityWarnings: [String]
+            let environment: CoachContextPacket.EnvironmentContext?
         }
         let p = Packet(today: packet.today, goals: packet.goals, latestVitals: packet.latestVitals,
                        latestSleep: packet.latestSleep, memories: packet.memories,
-                       dataQualityWarnings: packet.dataQualityWarnings)
+                       dataQualityWarnings: packet.dataQualityWarnings, environment: environment)
 
         let sig = signature([
             packet.today.steps.map(String.init), packet.today.calories.map { String(Int($0)) },
@@ -48,7 +53,8 @@ enum CoachSummaryContextBuilder {
 
     // MARK: Sleep — nightly
 
-    static func sleepDay(context: ModelContext, now: Date = Date()) -> Built? {
+    static func sleepDay(context: ModelContext, now: Date = Date(),
+                         environment: CoachContextPacket.EnvironmentContext? = nil) -> Built? {
         let range = SleepService.sleepRange(.day, context: context, now: now)
         guard let night = SleepInsights.validSessions(range.sessions).last else { return nil }
         let score = SleepScore.calculate(night)
@@ -59,13 +65,15 @@ enum CoachSummaryContextBuilder {
             let date: String, totalMin: Int, deepMin: Int, lightMin: Int, awakeMin: Int
             let score: Int, scoreLabel: String, awakePct: Int?, deepPct: Int, activitySteps: Int?
             let memories: [CoachContextPacket.MemoryContext]
+            let environment: CoachContextPacket.EnvironmentContext?
         }
         let p = Packet(
             date: CoachDataAccess.localDateString(night.session.date),
             totalMin: night.session.totalMinutes, deepMin: night.deepMinutes,
             lightMin: night.lightMinutes, awakeMin: night.awakeMinutes,
             score: score.score, scoreLabel: score.label.rawValue, awakePct: score.awakePct,
-            deepPct: score.deepPct, activitySteps: activitySteps, memories: memories
+            deepPct: score.deepPct, activitySteps: activitySteps, memories: memories,
+            environment: environment
         )
         let sig = signature([
             String(night.session.totalMinutes), String(night.deepMinutes),
@@ -76,7 +84,8 @@ enum CoachSummaryContextBuilder {
         return Built(
             scopeKey: CoachDataAccess.localDateString(night.session.date),
             json: encode(p), signature: sig,
-            fallback: CoachSummaryContent(title: coach.headline, body: coach.body, chips: coach.chips)
+            fallback: CoachSummaryContent(title: coach.headline, body: coach.body, chips: coach.chips),
+            sleepSessionEnd: night.session.endAt
         )
     }
 

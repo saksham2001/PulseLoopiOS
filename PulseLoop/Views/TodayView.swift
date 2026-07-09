@@ -4,6 +4,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query(filter: #Predicate<CoachSummary> { $0.kind == "today" }, sort: \CoachSummary.updatedAt, order: .reverse)
     private var todaySummaries: [CoachSummary]
     @Query private var profiles: [UserProfile]
@@ -38,25 +39,38 @@ struct TodayView: View {
         let coachSummary = todaySummaries.first { $0.scopeKey == CoachDataAccess.localDateString(Date()) }
         return AnyView(ScrollView {
             VStack(spacing: 16) {
-                HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
+                // Top insight card. When the coach is on it owns this slot (tap → chat);
+                // otherwise the deterministic hero fills it. Only ever one card here, so the
+                // coach summary and the hero can't render the same content twice on one screen.
+                if coachEnabled, let coachSummary {
+                    Button {
+                        summaryService.openInChat(coachSummary)
+                    } label: {
+                        CoachMessageCard(
+                            headline: coachSummary.title,
+                            body: coachSummary.body,
+                            chips: coachSummary.chips
+                        )
+                    }
+                    .buttonStyle(.pulseTap)
+                } else if coachEnabled {
+                    // Coach on but no summary generated yet: offer the chat entry point.
+                    Button { CoachNavigation.shared.openRoot() } label: {
+                        CoachMessageCard(
+                            headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
+                            body: summary.calibration.isCalibrating
+                                ? "I can help explain what data is collected and what is still missing."
+                                : "Want a summary from the latest ring context? Tap to open the coach.",
+                            chips: []
+                        )
+                    }
+                    .buttonStyle(.pulseTap)
+                } else {
+                    HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
+                }
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     tiles(activeStore)
-                }
-
-                if coachEnabled {
-                    Button {
-                        if let coachSummary { summaryService.openInChat(coachSummary) } else { selectedTab = .coach }
-                    } label: {
-                        CoachMessageCard(
-                            headline: coachSummary?.title ?? (summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?"),
-                            body: coachSummary?.body ?? (summary.calibration.isCalibrating
-                                ? "I can help explain what data is collected and what is still missing."
-                                : "Want a summary from the latest ring context? Tap to open the coach."),
-                            chips: coachSummary?.chips ?? []
-                        )
-                    }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
@@ -64,6 +78,7 @@ struct TodayView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task {
             ensureStore()
             if isActive { store?.updateProfile(profile) }
@@ -121,6 +136,7 @@ struct TodayView: View {
             TodayChartTile(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) {
                 path.append(AppRoute.metricDetail(metric))
             }
+            .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -128,6 +144,7 @@ struct TodayView: View {
     private func gaugeTile(_ store: TodayStore, _ metric: MetricKind) -> some View {
         if let model = store.cards[metric] {
             TodayGaugeTile(model: model) { path.append(AppRoute.metricDetail(metric)) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -142,6 +159,7 @@ struct TodayView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { path.append(AppRoute.metricDetail(.bloodPressure)) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 }

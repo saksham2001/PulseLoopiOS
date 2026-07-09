@@ -166,7 +166,7 @@ struct VitalBloodPressureCard: View {
                 lineWidth: 11
             )
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold)).tracking(0.8)
+                .font(PulseFont.caption2.weight(.semibold)).tracking(0.8)
                 .foregroundStyle(PulseColors.textMuted)
         }
         .frame(maxWidth: .infinity)
@@ -192,7 +192,7 @@ struct VitalEmptyState: View {
                 .multilineTextAlignment(.center)
             if !compact {
                 Text(action)
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .multilineTextAlignment(.center)
             }

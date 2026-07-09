@@ -67,6 +67,45 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertTrue(decoder.decodeNormal(frame).isEmpty)
     }
 
+    // The realtime 0x1e reply layout is unverified on hardware, so the decoder accepts both
+    // plausible shapes. Documented (GadgetBridge/colmi) layout: 1e <errCode> <bpm>.
+    func testRealtimeHeartRateErrCodeLayout() {
+        let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 0x00, 75])
+        let events = decoder.decodeNormal(frame)
+        guard case let .heartRateSample(bpm, _) = events.first else {
+            return XCTFail("expected heartRateSample, got \(String(describing: events.first?.kind))")
+        }
+        XCTAssertEqual(bpm, 75)
+    }
+
+    func testRealtimeHeartRateErrorCodeIsCompletion() {
+        // errCode=1 (not worn), bpm slot empty → completion, no sample.
+        let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 0x01, 0x00])
+        let events = decoder.decodeNormal(frame)
+        guard case .heartRateComplete = events.first else {
+            return XCTFail("expected heartRateComplete, got \(String(describing: events.first?.kind))")
+        }
+    }
+
+    func testRealtimeHeartRateSentinelIsCompletion() {
+        // 0xee no-reading sentinel in the first slot, nothing plausible after it.
+        let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 0xee, 0x00])
+        let events = decoder.decodeNormal(frame)
+        guard case .heartRateComplete = events.first else {
+            return XCTFail("expected heartRateComplete, got \(String(describing: events.first?.kind))")
+        }
+    }
+
+    func testRealtimeHeartRateLegacyLayoutStillDecodes() {
+        // Legacy shape 1e <bpm> with trailing zeros (the layout this decoder originally assumed).
+        let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 68, 0x00])
+        let events = decoder.decodeNormal(frame)
+        guard case let .heartRateSample(bpm, _) = events.first else {
+            return XCTFail("expected heartRateSample, got \(String(describing: events.first?.kind))")
+        }
+        XCTAssertEqual(bpm, 68)
+    }
+
     func testManualHeartRateError() {
         // 69 <?> errorCode=1 bpm=80  → worn incorrectly → no sample, completion event
         let frame = ColmiPacket.frame([ColmiCommandID.manualHeartRate, 0, 1, 80])

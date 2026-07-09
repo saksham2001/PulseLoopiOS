@@ -9,7 +9,9 @@ enum CoachContextBuilder {
     static func build(
         context: ModelContext,
         conversationSummary: String? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        budget: CoachContextBudget = .full,
+        environment: CoachContextPacket.EnvironmentContext? = nil
     ) -> CoachContextPacket {
         let summary = MetricsService.buildTodaySummary(context: context)
         let profile = ProfileRepository.profile(context: context)
@@ -104,14 +106,22 @@ enum CoachContextBuilder {
             lastSevenDays: week,
             latestVitals: vitals,
             latestSleep: sleep,
-            recentWorkouts: recentWorkouts(context: context),
-            memories: memories(context: context),
-            conversationSummary: conversationSummary,
-            dataQualityWarnings: warnings
+            recentWorkouts: recentWorkouts(context: context, limit: budget.maxWorkouts),
+            memories: memories(context: context, limit: budget.maxMemories, valueCap: budget.memoryValueCap),
+            conversationSummary: cap(conversationSummary, to: budget.conversationSummaryCap),
+            dataQualityWarnings: Array(warnings.prefix(budget.maxWarnings)),
+            environment: environment
         )
     }
 
     // MARK: - Helpers
+
+    /// Truncates a string to `limit` characters (adding an ellipsis when cut).
+    /// `Int.max` (the full budget) is a no-op.
+    private static func cap(_ text: String?, to limit: Int) -> String? {
+        guard let text, limit != .max, text.count > limit else { return text }
+        return String(text.prefix(limit)) + "…"
+    }
 
     private static func recentWorkouts(context: ModelContext, limit: Int = 8) -> [CoachContextPacket.WorkoutContext] {
         ActivityRepository.sessions(context: context)
@@ -134,7 +144,7 @@ enum CoachContextBuilder {
             }
     }
 
-    private static func memories(context: ModelContext, limit: Int = 8, now: Date = Date()) -> [CoachContextPacket.MemoryContext] {
+    private static func memories(context: ModelContext, limit: Int = 8, valueCap: Int = .max, now: Date = Date()) -> [CoachContextPacket.MemoryContext] {
         let descriptor = FetchDescriptor<CoachMemory>(
             sortBy: [SortDescriptor(\.importance, order: .reverse), SortDescriptor(\.updatedAt, order: .reverse)]
         )
@@ -142,7 +152,7 @@ enum CoachContextBuilder {
         return rows
             .filter { $0.expiresAt == nil || $0.expiresAt! > now }  // drop expired
             .prefix(limit)
-            .map { .init(type: $0.memoryType, key: $0.key, value: $0.value, importance: $0.importance) }
+            .map { .init(type: $0.memoryType, key: $0.key, value: cap($0.value, to: valueCap) ?? $0.value, importance: $0.importance) }
     }
 
     private static func profileCompleteness(_ profile: UserProfile?) -> String {

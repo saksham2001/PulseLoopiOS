@@ -11,13 +11,15 @@ struct NotificationsSettingsView: View {
     @State private var store = CoachSettingsStore.shared
     @State private var testStatus: String?
     @State private var notifPermissionDenied = false
+    /// Mirrors the raw `pulseloop.batteryalerts.enabled` default (absent = ON). Held in @State so the
+    /// toggle refreshes reliably; seeded in `onAppear`.
+    @State private var batteryAlertsEnabled = true
 
     private var coachEnabled: Bool { store.settings.coachMasterEnabled }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Daily check-ins", action: nil)
+            VStack(alignment: .leading, spacing: 22) {
                 if !coachEnabled {
                     StatusCopy(
                         title: "AI Coach is off",
@@ -28,45 +30,70 @@ struct NotificationsSettingsView: View {
                 notificationsControls
                     .disabled(!coachEnabled)
                     .opacity(coachEnabled ? 1 : 0.5)
+
+                // Ring battery alerts are independent of the AI Coach — no LLM involved — so this
+                // section sits outside the coach-gated block above.
+                batteryAlertControls
             }
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Coach Check-Ins")
+        .pageChrome("Coach Check-Ins")
+        .onAppear {
+            batteryAlertsEnabled = UserDefaults.standard.object(forKey: BatteryAlertMonitor.enabledKey) as? Bool ?? true
+        }
+    }
+
+    @ViewBuilder private var batteryAlertControls: some View {
+        SettingsGroup(
+            header: "Ring battery alerts",
+            footer: "Get a heads-up when your ring drops below 20% and 10%."
+        ) {
+            FormToggleRow(title: "Low battery notifications", isOn: Binding(
+                get: { batteryAlertsEnabled },
+                set: { setBatteryAlerts($0) }
+            ))
+        }
     }
 
     @ViewBuilder private var notificationsControls: some View {
-        toggleRow("Daily check-in notifications", isOn: Binding(
-            get: { store.settings.notificationsEnabled },
-            set: { setNotifications($0) }
-        ))
+        SettingsGroup(header: "Daily check-ins") {
+            FormToggleRow(title: "Daily check-in notifications", isOn: Binding(
+                get: { store.settings.notificationsEnabled },
+                set: { setNotifications($0) }
+            ))
+            if store.settings.notificationsEnabled {
+                FormValueRow(title: "Morning") { hourPicker(hourBinding(\.morningHour)) }
+                FormValueRow(title: "Midday") { hourPicker(hourBinding(\.middayHour)) }
+                FormValueRow(title: "Evening") { hourPicker(hourBinding(\.eveningHour)) }
+            }
+        }
 
         if store.settings.notificationsEnabled {
-            labeledRow("Morning") { hourPicker(hourBinding(\.morningHour)) }
-            labeledRow("Midday") { hourPicker(hourBinding(\.middayHour)) }
-            labeledRow("Evening") { hourPicker(hourBinding(\.eveningHour)) }
             QuickActionButton(label: "Send a test check-in now") { sendTestCheckin() }
             if let testStatus {
                 Text(testStatus).font(.caption).foregroundStyle(PulseColors.textMuted)
+                    .padding(.horizontal, 4)
             }
 
             // Proactive anomaly alerts — on-device only (free/private local
             // inference makes "watch the stream and speak up" practical).
-            SectionHeader(title: "Proactive alerts", action: nil)
-            toggleRow("Anomaly heads-ups (on-device)", isOn: Binding(
-                get: { store.settings.proactiveAlertsEnabled },
-                set: { store.settings.proactiveAlertsEnabled = $0 }
-            ))
-            Text(store.settings.providerMode == .appleOnDevice
-                 ? "When something looks off (low SpO₂, short sleep), I'll send a calm heads-up — generated privately on your iPhone."
-                 : "Requires the On-device (Apple) provider. Switch to it in AI Coach settings to enable.")
-                .font(.caption).foregroundStyle(PulseColors.textMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
+            SettingsGroup(
+                header: "Proactive alerts",
+                footer: store.settings.providerMode == .appleOnDevice
+                    ? "When something looks off (low SpO₂, short sleep), I'll send a calm heads-up — generated privately on your iPhone."
+                    : "Requires the On-device (Apple) provider. Switch to it in AI Coach settings to enable."
+            ) {
+                FormToggleRow(title: "Anomaly heads-ups (on-device)", isOn: Binding(
+                    get: { store.settings.proactiveAlertsEnabled },
+                    set: { store.settings.proactiveAlertsEnabled = $0 }
+                ))
+            }
         }
         if notifPermissionDenied {
             Text("Notifications are disabled for PulseLoop in iOS Settings.")
                 .font(.caption).foregroundStyle(PulseColors.danger)
+                .padding(.horizontal, 4)
         }
     }
 
@@ -102,6 +129,23 @@ struct NotificationsSettingsView: View {
         }
     }
 
+    /// Toggle ring battery alerts. Turning ON mirrors `setNotifications`: request authorization and, if
+    /// refused, leave the toggle off + surface the denied hint. Turning OFF just writes false.
+    private func setBatteryAlerts(_ on: Bool) {
+        guard on else {
+            batteryAlertsEnabled = false
+            UserDefaults.standard.set(false, forKey: BatteryAlertMonitor.enabledKey)
+            return
+        }
+        Task {
+            let granted = (try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            batteryAlertsEnabled = granted
+            UserDefaults.standard.set(granted, forKey: BatteryAlertMonitor.enabledKey)
+            notifPermissionDenied = !granted
+        }
+    }
+
     private func sendTestCheckin() {
         testStatus = "Sending…"
         let service = CoachNotificationService(modelContext: modelContext, coordinator: coordinator)
@@ -114,28 +158,4 @@ struct NotificationsSettingsView: View {
         }
     }
 
-    // MARK: - Layout helpers (match CoachSettingsSection idiom)
-
-    private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
-            content()
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-        }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 6)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
 }

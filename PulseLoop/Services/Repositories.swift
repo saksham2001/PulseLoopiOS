@@ -80,6 +80,19 @@ enum MetricsRepository {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    /// Battery-history readings within `[start, end]`, oldest-first for a left-to-right chart axis,
+    /// capped at `limit`. Database predicate + sort + limit against the `timestamp` index — no
+    /// full-table scan. Feeds the Wearable screen's drainage chart.
+    @MainActor
+    static func batterySamples(start: Date, end: Date, limit: Int = 1000, context: ModelContext) -> [BatterySample] {
+        var descriptor = FetchDescriptor<BatterySample>(
+            predicate: #Predicate { $0.timestamp >= start && $0.timestamp <= end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     /// All measurements of one kind, newest-first (demo mode keeps full history, no time window).
     @MainActor
     static func measurementsAll(kind: MeasurementKind, context: ModelContext) -> [Measurement] {
@@ -175,8 +188,11 @@ enum SleepRepository {
     
     @MainActor
     static func blocks(sessionId: UUID, context: ModelContext) -> [SleepStageBlock] {
-        let descriptor = FetchDescriptor<SleepStageBlock>(sortBy: [SortDescriptor(\.startMinute)])
-        return ((try? context.fetch(descriptor)) ?? []).filter { $0.sessionId == sessionId }
+        let descriptor = FetchDescriptor<SleepStageBlock>(
+            predicate: #Predicate { $0.sessionId == sessionId },
+            sortBy: [SortDescriptor(\.startMinute)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
     }
 }
 
@@ -189,20 +205,50 @@ enum ActivityRepository {
     
     @MainActor
     static func samples(sessionId: UUID, context: ModelContext) -> [ActivitySample] {
-        let descriptor = FetchDescriptor<ActivitySample>(sortBy: [SortDescriptor(\.timestamp)])
-        return ((try? context.fetch(descriptor)) ?? []).filter { $0.sessionId == sessionId }
+        let descriptor = FetchDescriptor<ActivitySample>(
+            predicate: #Predicate { $0.sessionId == sessionId },
+            sortBy: [SortDescriptor(\.timestamp)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
     }
-    
+
     @MainActor
     static func gpsPoints(sessionId: UUID, context: ModelContext) -> [ActivityGpsPoint] {
-        let descriptor = FetchDescriptor<ActivityGpsPoint>(sortBy: [SortDescriptor(\.timestamp)])
-        return ((try? context.fetch(descriptor)) ?? []).filter { $0.sessionId == sessionId }
+        let descriptor = FetchDescriptor<ActivityGpsPoint>(
+            predicate: #Predicate { $0.sessionId == sessionId },
+            sortBy: [SortDescriptor(\.timestamp)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
     }
-    
+
     @MainActor
     static func events(sessionId: UUID, context: ModelContext) -> [ActivityEvent] {
-        let descriptor = FetchDescriptor<ActivityEvent>(sortBy: [SortDescriptor(\.timestamp)])
-        return ((try? context.fetch(descriptor)) ?? []).filter { $0.sessionId == sessionId }
+        let descriptor = FetchDescriptor<ActivityEvent>(
+            predicate: #Predicate { $0.sessionId == sessionId },
+            sortBy: [SortDescriptor(\.timestamp)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// Newest sample of a kind (optionally restricted to one source) for a session — a
+    /// predicate + `fetchLimit 1` probe, so hot paths (live tiles, stream-health checks) never
+    /// pay for the whole table.
+    @MainActor
+    static func latestSample(sessionId: UUID, kind: String, source: String? = nil, context: ModelContext) -> ActivitySample? {
+        var descriptor: FetchDescriptor<ActivitySample>
+        if let source {
+            descriptor = FetchDescriptor<ActivitySample>(
+                predicate: #Predicate { $0.sessionId == sessionId && $0.kind == kind && $0.source == source },
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+        } else {
+            descriptor = FetchDescriptor<ActivitySample>(
+                predicate: #Predicate { $0.sessionId == sessionId && $0.kind == kind },
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+        }
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
 }
 

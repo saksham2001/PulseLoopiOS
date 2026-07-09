@@ -3,6 +3,36 @@ import SwiftData
 
 // MARK: - Summary components
 
+/// Everything `WorkoutMetricsSections` derives from the store, computed once per data change
+/// (see `refreshKey`) instead of on every render — the fetches + O(n) walks here made the summary
+/// and edit screens crawl when they ran per body evaluation.
+struct WorkoutSummaryData {
+    var accepted: [ActivityGpsPoint] = []
+    var hr: [MetricSample] = []
+    var spo2: [MetricSample] = []
+    var durationSeconds: Int?
+    var elevation: (gain: Double, loss: Double)?
+    var altitudes: [Double] = []
+
+    /// Window everything to [startedAt, endedAt] so a post-finish time edit excludes
+    /// out-of-window data from the map, splits, and charts (inert for unedited sessions).
+    @MainActor
+    static func build(session: ActivitySession, context: ModelContext) -> WorkoutSummaryData {
+        var data = WorkoutSummaryData()
+        let windowEnd = session.endedAt ?? Date()
+        data.accepted = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+            .filter { $0.accepted && $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.hr = sessionHRSamples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.spo2 = sessionSpO2Samples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.durationSeconds = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
+        data.elevation = session.useGps ? routeElevation(data.accepted) : nil
+        data.altitudes = data.accepted.compactMap(\.altitude)
+        return data
+    }
+}
+
 /// The full rich body of a finished workout — header, hero band, stat grid, map, splits, HR chart
 /// + zones, SpO₂ chart, elevation profile, and the recording-quality card. Shared by the
 /// post-record summary (`RecordSummaryView`) and the activity detail screen (`ActivityDetailView`)
@@ -15,16 +45,31 @@ struct WorkoutMetricsSections: View {
     /// Shows the "WORKOUT SAVED" badge in the header (only meaningful right after recording).
     var savedBadge: Bool = false
 
+    /// Memoized derived data; rebuilt only when `refreshKey` changes (summary refresh / backfill).
+    @State private var cachedData: WorkoutSummaryData?
+
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
+    /// Changes when the summary recomputes (`updatedAt`) or late backfill links new samples
+    /// (cheap COUNT probe — no row materialization).
+    private var refreshKey: String {
+        let sessionId = session.id
+        let sampleCount = (try? modelContext.fetchCount(
+            FetchDescriptor<ActivitySample>(predicate: #Predicate { $0.sessionId == sessionId })
+        )) ?? 0
+        return "\(session.updatedAt.timeIntervalSince1970)-\(sampleCount)"
+    }
+
     var body: some View {
-        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
-        let accepted = points.filter { $0.accepted }.sorted { $0.timestamp < $1.timestamp }
-        let hr = sessionHRSamples(session.id, context: modelContext)
-        let spo2 = sessionSpO2Samples(session.id, context: modelContext)
-        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
-        let elevation = session.useGps ? routeElevation(accepted) : nil
-        let altitudes = accepted.compactMap(\.altitude)
+        // First render computes inline (no blank frame); after that the cache serves every render
+        // until refreshKey invalidates it.
+        let data = cachedData ?? WorkoutSummaryData.build(session: session, context: modelContext)
+        let accepted = data.accepted
+        let hr = data.hr
+        let spo2 = data.spo2
+        let duration = data.durationSeconds
+        let elevation = data.elevation
+        let altitudes = data.altitudes
 
         VStack(spacing: 16) {
             header
@@ -33,9 +78,13 @@ struct WorkoutMetricsSections: View {
 
             statsGrid(elevationGain: elevation?.gain)
 
-            if session.useGps {
-                WorkoutMapView(points: points)
-                SplitsTable(points: accepted, units: units)
+            // GPS-capable types always get the map slot — a session edited from an indoor type
+            // shows the honest "GPS route unavailable" placeholder instead of pretending.
+            if ActivityMeta.meta(session.type).gpsCapable {
+                WorkoutMapView(points: accepted, unavailable: !session.useGps || accepted.count < 2)
+                if session.useGps, ActivityMetricSet.set(for: session.type).showsSplits {
+                    SplitsTable(points: accepted, units: units, activityType: session.type)
+                }
             }
 
             if hr.count > 1 {
@@ -79,6 +128,9 @@ struct WorkoutMetricsSections: View {
 
             RecordingQualityCard(session: session)
         }
+        .task(id: refreshKey) {
+            cachedData = WorkoutSummaryData.build(session: session, context: modelContext)
+        }
     }
 
     /// Age from the (single) user profile, used to estimate HRmax for the zones card.
@@ -101,13 +153,13 @@ struct WorkoutMetricsSections: View {
     private var header: some View {
         VStack(spacing: 8) {
             Image(systemName: ActivityMeta.icon(session.type))
-                .font(.system(size: 34)).foregroundStyle(PulseColors.accent)
+                .font(PulseFont.largeTitle.weight(.regular)).foregroundStyle(PulseColors.accent)
                 .frame(width: 72, height: 72).background(PulseColors.accentSoft, in: Circle())
             if savedBadge {
-                Text("WORKOUT SAVED").font(.system(size: 11, weight: .medium)).tracking(1.8).foregroundStyle(PulseColors.accent)
+                Text("WORKOUT SAVED").font(PulseFont.caption2).tracking(1.8).foregroundStyle(PulseColors.accent)
             }
-            Text(ActivityMeta.label(session.type)).font(.system(size: 24, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-            Text(dateRange).font(.system(size: 13)).foregroundStyle(PulseColors.textMuted)
+            Text(ActivityMeta.label(session.type)).font(PulseFont.title2).foregroundStyle(PulseColors.textPrimary)
+            Text(dateRange).font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -134,18 +186,17 @@ struct WorkoutMetricsSections: View {
     private func chartCard<Content: View>(title: String, footnote: String?, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title).font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text(title).font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 Spacer()
                 if let footnote {
-                    Text(footnote).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(PulseColors.textMuted)
+                    Text(footnote).font(PulseFont.caption2.monospacedDigit()).foregroundStyle(PulseColors.textMuted)
                 }
             }
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .padding(16)
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var hrFootnote: String? {
@@ -164,18 +215,25 @@ struct WorkoutMetricsSections: View {
         // The hero band already shows the headline metrics (GPS: distance/duration/pace,
         // indoor: duration/active-min/calories), so the grid fills in the rest without repeating.
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-            if session.useGps {
+            if session.showsGpsHeadline {
                 WorkoutStat(label: "Calories", value: session.calories.map { "\(Int($0))" } ?? "—")
             }
             WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
-            if session.useGps, let elevationGain {
+            if session.showsGpsHeadline, ActivityMetricSet.set(for: session.type).showsElevation, let elevationGain {
                 WorkoutStat(label: "Elev gain", value: String(format: "%.0f m", elevationGain))
             }
         }
     }
+}
+
+private extension ActivitySession {
+    /// GPS-style headline metrics (distance/pace hero, calories in the grid) only when a route was
+    /// actually recorded AND the — possibly edited — type is GPS-capable. A gym session edited to
+    /// "run" keeps the indoor headline: it has no route, and faking one would lie.
+    var showsGpsHeadline: Bool { useGps && ActivityMeta.meta(type).gpsCapable }
 }
 
 /// Three large headline stats in one card. Adapts to whether the workout used GPS:
@@ -189,14 +247,12 @@ private struct SummaryHeroBand: View {
 
     private var metrics: [Metric] {
         let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
-        if session.useGps {
+        if session.showsGpsHeadline {
             let d = session.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units) }
-            let paceUnit = UnitsFormatter.paceUnit(units)
-            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
             return [
                 Metric(value: d?.value ?? "—", label: (d?.unit ?? "km").uppercased(), tint: PulseColors.distance),
                 Metric(value: dur, label: "DURATION", tint: PulseColors.textPrimary),
-                Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+                thirdGpsMetric
             ]
         } else {
             let cals = session.calories.map { "\(Int($0))" } ?? "—"
@@ -208,16 +264,35 @@ private struct SummaryHeroBand: View {
         }
     }
 
+    /// Pace for foot activities, average speed for cycling, calories otherwise (e.g. sport).
+    private var thirdGpsMetric: Metric {
+        let set = ActivityMetricSet.set(for: session.type)
+        if set.showsSpeed {
+            if let meters = session.distanceMeters, let seconds = durationSeconds, seconds > 0, meters >= 50 {
+                let mps = meters / Double(seconds)
+                let value = units == .imperial ? String(format: "%.1f", mps * 2.23694) : String(format: "%.1f", mps * 3.6)
+                return Metric(value: value, label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+            }
+            return Metric(value: "—", label: units == .imperial ? "MPH" : "KM/H", tint: PulseColors.accent)
+        }
+        if set.showsPace {
+            let paceUnit = UnitsFormatter.paceUnit(units)
+            let pace = ActivityMeta.pace(distanceMeters: session.distanceMeters, durationSeconds: durationSeconds, units: units)
+            return Metric(value: pace?.replacingOccurrences(of: " \(paceUnit)", with: "") ?? "—", label: "PACE \(paceUnit)", tint: PulseColors.accent)
+        }
+        return Metric(value: session.calories.map { "\(Int($0))" } ?? "—", label: "CALORIES", tint: PulseColors.calories)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(metrics.enumerated()), id: \.offset) { index, m in
                 VStack(spacing: 6) {
                     Text(m.value)
-                        .font(.system(size: 30, weight: .semibold)).monospacedDigit()
+                        .font(PulseFont.greeting).monospacedDigit()
                         .foregroundStyle(m.tint)
                         .minimumScaleFactor(0.5).lineLimit(1)
                     Text(m.label)
-                        .font(.system(size: 10, weight: .medium)).tracking(0.8)
+                        .font(PulseFont.micro).tracking(0.8)
                         .foregroundStyle(PulseColors.textMuted)
                 }
                 .frame(maxWidth: .infinity)
@@ -228,9 +303,7 @@ private struct SummaryHeroBand: View {
         }
         .padding(.vertical, 18).padding(.horizontal, 8)
         .frame(maxWidth: .infinity)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -239,24 +312,25 @@ private struct SummaryHeroBand: View {
 private struct SplitsTable: View {
     let points: [ActivityGpsPoint]
     var units: UnitsPreference = .metric
+    var activityType: String = "run"
 
     private var splitMeters: Double { units == .imperial ? 1609.344 : 1000 }
     private var splitLabel: String { units == .imperial ? "MI" : "KM" }
     private var paceUnit: String { units == .imperial ? "/mi" : "/km" }
 
     var body: some View {
-        let splits = kmSplitSeconds(points, splitMeters: splitMeters)
+        let splits = RouteDistanceEngine.splitSeconds(points, splitMeters: splitMeters, profile: .profile(for: activityType))
         if splits.count >= 1 {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1
             VStack(alignment: .leading, spacing: 10) {
-                Text("SPLITS").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text("SPLITS").font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(Array(splits.enumerated()), id: \.offset) { index, seconds in
                     let isFastest = seconds == fastest
                     let frac = slowest > fastest ? (seconds - fastest) / (slowest - fastest) : 0
                     HStack(spacing: 12) {
                         Text("\(splitLabel) \(index + 1)")
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(PulseFont.caption.monospacedDigit())
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 44, alignment: .leading)
                         GeometryReader { geo in
@@ -269,16 +343,15 @@ private struct SplitsTable: View {
                         }
                         .frame(height: 8)
                         Text(paceLabel(seconds))
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(PulseFont.caption.monospacedDigit())
                             .foregroundStyle(isFastest ? PulseColors.accent : PulseColors.textPrimary)
                             .frame(width: 64, alignment: .trailing)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 
@@ -300,13 +373,13 @@ private struct HRZonesCard: View {
         let total = zones.reduce(0) { $0 + $1.seconds }
         if total > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                Text("HEART RATE ZONES").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text("HEART RATE ZONES").font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(zones.reversed()) { zone in
                     let frac = zone.seconds / total
                     let pctText = "\(Int((frac * 100).rounded()))%"
                     HStack(spacing: 10) {
                         Text(zone.name)
-                            .font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
+                            .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 120, alignment: .leading).lineLimit(1)
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
@@ -318,16 +391,15 @@ private struct HRZonesCard: View {
                         .frame(height: 8)
                         // Percentage of the workout spent in this zone.
                         Text(zone.seconds >= 1 ? pctText : "—")
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .font(PulseFont.caption.weight(.semibold).monospacedDigit())
                             .foregroundStyle(zone.seconds >= 1 ? PulseColors.textPrimary : PulseColors.textMuted)
                             .frame(width: 48, alignment: .trailing)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 }

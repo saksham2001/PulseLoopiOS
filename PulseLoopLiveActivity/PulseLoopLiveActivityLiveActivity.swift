@@ -38,17 +38,28 @@ struct WorkoutLiveActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
-                        if state.usesGps {
-                            Text(WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial))
-                                .foregroundStyle(.blue)
+                        if state.status == "finished" {
+                            Text("Complete").foregroundStyle(.green)
+                            Spacer()
+                            if state.usesGps {
+                                Text(WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial))
+                                    .foregroundStyle(.blue)
+                            }
+                            Text(state.avgHeartRate.map { "avg \($0) bpm" } ?? "")
+                                .foregroundStyle(.pink)
                         } else {
-                            Text(state.lastSpO2.map { "SpO₂ \($0)%" } ?? "SpO₂ —")
-                                .foregroundStyle(WorkoutLAColors.spo2)
+                            if state.usesGps {
+                                Text(WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial))
+                                    .foregroundStyle(.blue)
+                            } else {
+                                Text(state.lastSpO2.map { "SpO₂ \($0)%" } ?? "SpO₂ —")
+                                    .foregroundStyle(WorkoutLAColors.spo2)
+                            }
+                            Spacer()
+                            Text(state.status == "paused" ? "Paused"
+                                 : (state.usesGps ? WorkoutLAColors.paceLabel(state.paceSecondsPerKm, imperial: state.useImperial) : ""))
+                                .foregroundStyle(.white)
                         }
-                        Spacer()
-                        Text(state.status == "paused" ? "Paused"
-                             : (state.usesGps ? WorkoutLAColors.paceLabel(state.paceSecondsPerKm, imperial: state.useImperial) : ""))
-                            .foregroundStyle(.white)
                     }
                     .font(.caption).monospacedDigit()
                 }
@@ -79,15 +90,18 @@ struct WorkoutLockScreenView: View {
     var body: some View {
         let state = context.state
         let isPaused = state.status == "paused"
+        let isFinished = state.status == "finished"
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: WorkoutLAColors.icon(for: state.activityType))
-                        .foregroundStyle(.purple)
+                    Image(systemName: isFinished ? "flag.checkered" : WorkoutLAColors.icon(for: state.activityType))
+                        .foregroundStyle(isFinished ? .green : .purple)
                     Text(context.attributes.activityName)
                         .font(.headline)
                     if isPaused {
                         Text("· Paused").font(.subheadline).foregroundStyle(.secondary)
+                    } else if isFinished {
+                        Text("· Complete").font(.subheadline).foregroundStyle(.green)
                     }
                 }
                 elapsedTimer(state)
@@ -100,8 +114,13 @@ struct WorkoutLockScreenView: View {
                 if state.usesGps {
                     metric("DIST", WorkoutLAColors.distanceLabel(state.distanceMeters, imperial: state.useImperial), .blue)
                 }
-                metric("HR", state.lastHeartRate.map { "\($0) bpm" } ?? "—", .pink)
-                metric("SpO₂", state.lastSpO2.map { "\($0)%" } ?? "—", .cyan)
+                if isFinished {
+                    // Final card: the session average, not a stale "last" reading.
+                    metric("AVG HR", state.avgHeartRate.map { "\($0) bpm" } ?? "—", .pink)
+                } else {
+                    metric("HR", state.lastHeartRate.map { "\($0) bpm" } ?? "—", .pink)
+                    metric("SpO₂", state.lastSpO2.map { "\($0)%" } ?? "—", .cyan)
+                }
             }
         }
         .foregroundStyle(.white)
@@ -123,10 +142,24 @@ struct WorkoutLockScreenView: View {
 /// Self-counting elapsed timer. `Text(timerInterval:)` ticks in the system process, so it keeps
 /// counting on the Lock Screen / Dynamic Island even when the app is backgrounded and pushing no
 /// updates. `startDate` already excludes paused time; while paused, `pauseTime` freezes the display.
+/// A finished workout shows its final duration as static text — the self-counting interval would
+/// otherwise keep ticking on the "complete" card.
 func elapsedTimer(_ state: WorkoutActivityAttributes.ContentState) -> Text {
-    Text(timerInterval: state.startDate...state.startDate.addingTimeInterval(48 * 3600),
-         pauseTime: state.status == "paused" ? state.pausedAt : nil,
-         countsDown: false)
+    if state.status == "finished" {
+        return Text(formatDuration(state.elapsedSeconds))
+    }
+    return Text(timerInterval: state.startDate...state.startDate.addingTimeInterval(48 * 3600),
+                pauseTime: state.status == "paused" ? state.pausedAt : nil,
+                countsDown: false)
+}
+
+/// h:mm:ss / m:ss for the frozen final duration (the widget can't see the app-only `ActivityMeta`).
+func formatDuration(_ seconds: Int) -> String {
+    let s = max(0, seconds)
+    let h = s / 3600
+    let m = (s % 3600) / 60
+    let sec = s % 60
+    return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
 }
 
 // MARK: - Previews

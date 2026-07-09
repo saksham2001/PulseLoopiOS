@@ -185,6 +185,24 @@ final class RingDecoderTests: XCTestCase {
         XCTAssertTrue(events.contains { if case .firmware = $0 { return true } else { return false } })
     }
 
+    /// 0x16 with the end-of-stream marker (bytes[1] == 0xFF) decodes as `.historySyncFinished`, which
+    /// the event bridge maps to `.syncProgress("done")` so the coordinator's endSync fires.
+    func testHistoryMeasurementFinishedMarker() {
+        let event = decode("16ff000000000000000000000000000000000000")
+        guard case .historySyncFinished = event else {
+            return XCTFail("expected historySyncFinished, got \(event.kind)")
+        }
+    }
+
+    /// A non-0xFF 0x16 sub-type (e.g. the 0xF0 header marker) still decodes as a plain ack, unchanged.
+    func testHistoryMeasurementHeaderStillAcks() {
+        let event = decode("16f0000000000000000000000000000000000000")
+        guard case let .commandAck(commandId) = event else {
+            return XCTFail("expected commandAck, got \(event.kind)")
+        }
+        XCTAssertEqual(commandId, 0x16)
+    }
+
     /// 0x16 data block (sub-type 0xA0): base ts at [2..5], then two 6-sample HR blocks → two averages
     /// 60s apart. Here both blocks are all 60 → averages 60, second timestamped +60s.
     func testHistoryHeartRateAveraging() {

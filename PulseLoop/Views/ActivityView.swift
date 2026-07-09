@@ -42,39 +42,66 @@ struct ActivityView: View {
                 HStack(spacing: 12) {
                     Button { path.append(AppRoute.recordSelect) } label: {
                         Text("+ Record Activity")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(PulseFont.headline)
                             .frame(maxWidth: .infinity)
                             .frame(height: 60)
-                            .foregroundStyle(.white)
-                            .background(PulseColors.accent)
-                            .clipShape(Capsule())
+                            .foregroundStyle(PulseColors.textPrimary)
+                            // Plain translucent Liquid Glass (no accent tint, so it reads as glass
+                            // rather than a solid fill) — matches the Connect button.
+                            .pulseGlass(Capsule(), interactive: true)
                     }
                     .buttonStyle(.plain)
 
                     Button { historyOpen = true } label: {
                         Image(systemName: "calendar")
-                            .font(.system(size: 18))
+                            .font(PulseFont.title3.weight(.regular))
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 60, height: 60)
-                            .background(PulseColors.card, in: Circle())
-                            .overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                            // Glass circle, matching the pushed-page back button.
+                            .pulseGlass(Circle(), interactive: true)
                     }
                     .buttonStyle(.plain)
                 }
 
+                Button { path.append(AppRoute.logPastActivity) } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(PulseFont.title3)
+                            .foregroundStyle(PulseColors.accent)
+                            .frame(width: 40, height: 40)
+                            .background(PulseColors.accentSoft, in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Log Past Activity")
+                                .font(PulseFont.bodyEmphasis)
+                                .foregroundStyle(PulseColors.textPrimary)
+                            Text("Add a workout you forgot to record")
+                                .font(PulseFont.caption.weight(.regular))
+                                .foregroundStyle(PulseColors.textMuted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(PulseFont.footnote.weight(.semibold))
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 68)
+                    .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
                 // Today's workouts
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("TODAY").font(.system(size: 11, weight: .medium)).tracking(1.4)
+                    Text("TODAY").font(PulseFont.caption2).tracking(1.4)
                         .foregroundStyle(PulseColors.textMuted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if todayWorkouts.isEmpty {
                         VStack(spacing: 4) {
-                            Text("No workouts recorded today").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-                            Text("Start one manually when your ring misses an activity.").font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                            Text("No workouts recorded today").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                            Text("Start one manually when your ring misses an activity.").font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 20)
-                        .background(PulseColors.card).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     } else {
                         ForEach(todayWorkouts) { session in
                             ActivityWorkoutRow(session: session, units: units) { path.append(AppRoute.activityDetail(session.id)) }
@@ -88,24 +115,22 @@ struct ActivityView: View {
                         HStack(spacing: 16) {
                             ProgressRingView(value: Double(summary.activeMinutes ?? 0), max: Double(activeGoal), color: PulseColors.steps) {
                                 VStack(spacing: 0) {
-                                    Text("\(summary.activeMinutes ?? 0)").font(.system(size: 20, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
-                                    Text("MIN").font(.system(size: 10, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                                    Text("\(summary.activeMinutes ?? 0)").font(PulseFont.title3).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                                    Text("MIN").font(PulseFont.micro).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                                 }
                             }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("WEEKLY GOAL").font(.system(size: 11, weight: .medium)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
-                                Text("\(activeDayCount) of 7 active days").font(.system(size: 16)).foregroundStyle(PulseColors.textPrimary)
+                                Text("WEEKLY GOAL").font(PulseFont.caption2).tracking(1.4).foregroundStyle(PulseColors.textMuted)
+                                Text("\(activeDayCount) of 7 active days").font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
                             }
                             Spacer(minLength: 0)
                         }
                         WeeklyPillCalendarView(days: days)
-                        Text("TAP TO EDIT GOALS").font(.system(size: 10, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                        Text("TAP TO EDIT GOALS").font(PulseFont.micro).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(PulseColors.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -114,6 +139,7 @@ struct ActivityView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .sheet(isPresented: $goalsOpen) { GoalEditorSheet() }
         .sheet(isPresented: $historyOpen) {
             WorkoutHistorySheet(units: units) { id in
@@ -176,7 +202,7 @@ struct DailyActivitySummaryCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 18) {
-                        HStack(alignment: .top, spacing: 0) {
+                        HStack(alignment: .top, spacing: 12) {
                             metric(label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
                             metric(label: "Distance", value: distanceValue ?? "—", unit: distanceValue == nil ? nil : distanceUnit, color: PulseColors.distance)
                         }
@@ -194,9 +220,7 @@ struct DailyActivitySummaryCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -204,18 +228,15 @@ struct DailyActivitySummaryCard: View {
     private func metric(label: String, value: String, unit: String?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
-                .font(.system(size: 15, weight: .bold)).tracking(0.6)
+                .font(PulseFont.callout.weight(.bold)).tracking(0.6)
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(.system(size: 32, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
+                    .activityValueStyle(size: 32)
                 if let unit {
-                    Text(unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                    Text(unit).font(PulseFont.subheadline).foregroundStyle(PulseColors.textMuted)
                 }
             }
         }
@@ -313,16 +334,42 @@ struct WorkoutHistorySheet: View {
     var units: UnitsPreference = .metric
     let onSelect: (UUID) -> Void
 
+    private static let dayHeaderFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d"
+        return f
+    }()
+
+    /// Finished workouts bucketed by calendar day, day keys newest-first. Dictionary(grouping:)
+    /// preserves the query's newest-first order within each bucket.
+    private var groups: [(day: Date, sessions: [ActivitySession])] {
+        let finished = sessions.filter { $0.status == .finished }
+        let buckets = Dictionary(grouping: finished) { Calendar.current.startOfDay(for: $0.startedAt) }
+        return buckets.sorted { $0.key > $1.key }.map { (day: $0.key, sessions: $0.value) }
+    }
+
+    private func header(for day: Date) -> String {
+        if Calendar.current.isDateInToday(day) { return "TODAY" }
+        if Calendar.current.isDateInYesterday(day) { return "YESTERDAY" }
+        return Self.dayHeaderFormatter.string(from: day).uppercased()
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 10) {
-                    let finished = sessions.filter { $0.status == .finished }
-                    if finished.isEmpty {
+                    if groups.isEmpty {
                         EmptyStateView(title: "No workouts yet", body: "Recorded workouts will appear here.")
                     } else {
-                        ForEach(finished) { session in
-                            ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
+                        ForEach(Array(groups.enumerated()), id: \.element.day) { index, group in
+                            Text(header(for: group.day))
+                                .font(.system(size: 11, weight: .medium)).tracking(1.4)
+                                .foregroundStyle(PulseColors.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, index == 0 ? 0 : 8)
+                            ForEach(group.sessions) { session in
+                                ActivityWorkoutRow(session: session, units: units) { onSelect(session.id) }
+                            }
                         }
                     }
                 }

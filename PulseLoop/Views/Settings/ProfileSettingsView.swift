@@ -5,7 +5,6 @@ import SwiftData
 struct ProfileSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
-    @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [UserProfile]
 
     @State private var draft = ProfileDraft()
@@ -15,23 +14,27 @@ struct ProfileSettingsView: View {
         ScrollView {
             VStack(spacing: 16) {
                 ProfileEditorView(draft: $draft)
-                PrimaryButton(title: "Save profile", systemImage: "checkmark", action: save)
             }
             .padding()
         }
         .scrollDismissesKeyboard(.interactively)
         .background(PulseColors.background)
-        .navigationTitle("Profile")
+        .pageChrome("Profile")
         .onAppear(perform: loadIfNeeded)
+        // Autosave: every field edit persists immediately — no explicit Save step.
+        .onChange(of: draft) { _, _ in autosave() }
     }
 
     private func loadIfNeeded() {
         guard !loaded else { return }
-        loaded = true
+        // Assign the draft before flipping `loaded`, so the resulting onChange lands while
+        // `loaded` is still false and autosave skips it (no write just from opening the screen).
         draft = ProfileDraft(profile: profiles.first)
+        loaded = true
     }
 
-    private func save() {
+    private func autosave() {
+        guard loaded else { return }
         let profile: UserProfile
         if let existing = profiles.first {
             profile = existing
@@ -42,6 +45,5 @@ struct ProfileSettingsView: View {
         draft.apply(to: profile)
         try? modelContext.save()
         coordinator.applyUserProfile()
-        dismiss()
     }
 }

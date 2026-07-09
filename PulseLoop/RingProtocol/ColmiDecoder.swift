@@ -1,4 +1,9 @@
 import Foundation
+import os.log
+
+#if DEBUG
+private let realtimeHRLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "ColmiRealtimeHR")
+#endif
 
 /// Decodes Colmi frames into the shared `RingDecodedEvent`. Two channels:
 ///  - **Normal (V1)**: realtime HR, manual HR, battery, notifications, and paged history
@@ -37,10 +42,25 @@ struct ColmiDecoder {
             return [.heartRateSample(bpm: bpm, timestamp: now)]
 
         case ColmiCommandID.realtimeHeartRate:
-            // Reject the no-reading sentinel (0xee=238) and out-of-range noise.
-            let bpm = Int(v[1])
-            guard (30...220).contains(bpm) else { return [] }
-            return [.heartRateSample(bpm: bpm, timestamp: now)]
+            // Realtime reply layout is UNVERIFIED on hardware, so accept both plausible shapes:
+            //  - documented (GadgetBridge/colmi): 1e <errCode> <bpm>  — like manual 0x69, flag first
+            //  - legacy (what this decoder originally assumed): 1e <bpm>
+            // A zero error code with bpm 0 is warm-up; a nonzero code (incl. the 0xee=238 sentinel)
+            // with no plausible bpm anywhere is a genuine no-reading.
+            if v[1] == 0, (30...220).contains(Int(v[2])) {
+                logRealtimeHR(v, branch: "errCode+bpm v[2]=\(v[2])")
+                return [.heartRateSample(bpm: Int(v[2]), timestamp: now)]
+            }
+            if (30...220).contains(Int(v[1])) {
+                logRealtimeHR(v, branch: "legacy v[1]=\(v[1])")
+                return [.heartRateSample(bpm: Int(v[1]), timestamp: now)]
+            }
+            if v[1] != 0 {
+                logRealtimeHR(v, branch: "error code v[1]=\(v[1])")
+                return [.heartRateComplete(timestamp: now)]
+            }
+            logRealtimeHR(v, branch: "warm-up")
+            return []
 
         case ColmiCommandID.realtimeHeartRateError:
             // Ring not worn / no reading available — surface completion, no sample.
@@ -52,6 +72,15 @@ struct ColmiDecoder {
         default:
             return [.commandAck(commandId: v[0])]
         }
+    }
+
+    /// DEBUG-only trace for realtime-HR (`0x1e`) frames: dumps the full frame and which parse
+    /// branch fired, so a field test can pin the ring's actual (undocumented) reply layout.
+    private func logRealtimeHR(_ v: [UInt8], branch: String) {
+        #if DEBUG
+        let hex = v.map { String(format: "%02x", $0) }.joined(separator: " ")
+        realtimeHRLog.debug("0x1e frame [\(hex, privacy: .public)] → \(branch, privacy: .public)")
+        #endif
     }
 
     /// Day-aware history decode, called by `ColmiSyncEngine` which tracks the current sync-day.

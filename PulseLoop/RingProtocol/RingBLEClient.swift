@@ -107,6 +107,9 @@ final class RingBLEClient: NSObject {
     /// Android's 50s because iOS hands background apps shorter, less predictable execution windows.
     private let watchdogInterval: UInt64 = 15_000_000_000
     private let linkStaleSeconds: TimeInterval = 60
+    /// Watchdog tick counter, used to piggyback a periodic battery re-read on the existing 15s loop
+    /// (no new timer). jring only reports battery on connect, so without this the level goes stale.
+    private var watchdogTicks = 0
     /// Write-ACK timeout: if CoreBluetooth never reports the write completing, unblock the queue so a
     /// single dropped ACK can't wedge it.
     private let writeAckTimeout: UInt64 = 4_000_000_000
@@ -134,7 +137,13 @@ final class RingBLEClient: NSObject {
     init(startManager: Bool) {
         super.init()
         if startManager {
-            central = CBCentralManager(delegate: self, queue: nil)
+            // State restoration: if iOS kills the app mid-workout, a BLE event (e.g. the ring's HR
+            // stream notifying) relaunches us and `willRestoreState` re-adopts the connection.
+            central = CBCentralManager(
+                delegate: self,
+                queue: nil,
+                options: [CBCentralManagerOptionRestoreIdentifierKey: "pulseloop.ring.central"]
+            )
         }
     }
 
@@ -359,6 +368,7 @@ final class RingBLEClient: NSObject {
     /// `linkStaleSeconds` with no inbound activity, force a reconnect. Also catches a hung connect.
     private func startWatchdog() {
         watchdogTask?.cancel()
+        watchdogTicks = 0
         watchdogTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: self?.watchdogInterval ?? 15_000_000_000)
@@ -369,6 +379,15 @@ final class RingBLEClient: NSObject {
     }
 
     private func watchdogTick() {
+        // Periodic battery re-read (~every 60 min at the 15s cadence): jring reports battery only on
+        // connect, so refresh it here. Colmi's engine re-requests 0x03; both are harmless no-ops when
+        // unsupported. Runs before the stale-link check (which may return early).
+        watchdogTicks += 1
+        if watchdogTicks >= 240, state == .connected {
+            watchdogTicks = 0
+            readBattery()                                // jring GATT; no-op when the characteristic is absent
+            activeSyncEngine?.requestBattery()           // Colmi 0x03; protocol default no-op
+        }
         guard isBluetoothReady, state == .connected, let last = lastActivityAt else { return }
         if Date().timeIntervalSince(last) > linkStaleSeconds {
             // Zombie link: drop it and let the disconnect handler's auto-reconnect re-link.
@@ -419,12 +438,37 @@ extension RingBLEClient: RingCommandWriter {
 // MARK: - CBCentralManagerDelegate
 
 extension RingBLEClient: CBCentralManagerDelegate {
+    /// iOS relaunched us to service a preserved BLE session (e.g. the ring's HR stream notified
+    /// while we were dead). Re-adopt the peripheral and remembered driver here; the actual
+    /// connect/discovery is deferred to `centralManagerDidUpdateState` — restoration fires before
+    /// power-on completes, and issuing `connect` that early is API misuse.
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        MainActor.assumeIsolated {
+            let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
+            guard peripheral == nil, let target = restored.first else { return }
+            autoReconnect = true
+            peripheral = target
+            target.delegate = self
+            let coordinatorType = Self.coordinators.first { $0.deviceType == lastKnownDeviceType } ?? JringCoordinator.self
+            installDriver(coordinatorType)
+        }
+    }
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         MainActor.assumeIsolated {
             isBluetoothReady = (central.state == .poweredOn)
             switch central.state {
             case .poweredOn:
-                if autoReconnect, hasLastKnownRing, peripheral == nil {
+                if let restored = peripheral, state != .connected {
+                    // Adopted in willRestoreState — resume from wherever the link actually is.
+                    if restored.state == .connected {
+                        state = .connecting
+                        restored.discoverServices(nil)
+                    } else {
+                        state = .reconnecting
+                        central.connect(restored, options: nil)
+                    }
+                } else if autoReconnect, hasLastKnownRing, peripheral == nil {
                     connectLastKnown()
                 }
             case .poweredOff, .unauthorized, .unsupported:

@@ -1,6 +1,19 @@
 import Foundation
 import SwiftData
 
+/// The slice of `RingSyncCoordinator` the coach-notification path depends on: is the ring reachable,
+/// is a sync in flight, and the ability to start one and await its completion. A protocol seam so the
+/// notification service can be driven with a fake gate in tests (the coordinator itself is never
+/// constructed in the unit suite — it owns live BLE/SwiftData wiring).
+@MainActor
+protocol RingSyncGating: AnyObject {
+    var isRingConnected: Bool { get }
+    var isSyncInFlight: Bool { get }
+    func beginSync()
+    func connectAndSync() async
+    func awaitSyncCompletion(timeout: TimeInterval) async -> Bool
+}
+
 /// High-level orchestration of ring command flows. Subscribes to `PulseEventBus` to track the
 /// latest measurement values and completion signals, and exposes app-facing actions
 /// (`syncNow`, `measureHR`, `measureSpO2`, `querySleep`, `setGoal`). It only *orchestrates*
@@ -8,6 +21,8 @@ import SwiftData
 @MainActor
 @Observable
 final class RingSyncCoordinator {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     enum MeasureState: Equatable {
         case idle
         case measuring
@@ -29,6 +44,14 @@ final class RingSyncCoordinator {
     private var syncTimeoutTask: Task<Void, Never>?
     /// Hard ceiling on how long the bar stays up without a fresh progress event.
     private let syncStallTimeout: UInt64 = 20
+
+    /// Callers suspended in `awaitSyncCompletion`, resumed together by `endSync()`. Keyed by a
+    /// per-call id so a cancellation / per-call timeout resumes exactly one waiter.
+    private var syncWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /// Ids whose caller was already cancelled before its continuation could be stored (the
+    /// `onCancel` handler fired first). We resume such waiters as soon as they register so a
+    /// cancelled BGTask can't leak a suspended continuation.
+    private var cancelledSyncWaiters: Set<UUID> = []
 
     /// Latest live values, mirrored for UI (e.g. the live workout screen) without a query.
     private(set) var latestHRValue: Int?
@@ -101,6 +124,10 @@ final class RingSyncCoordinator {
             engine?.setBloodPressureCalibration(systolic: cal.bpReferenceSystolic, diastolic: cal.bpReferenceDiastolic)
         }
         engine?.runStartup()
+        // Refresh the jring GATT battery on every manual sync (jring only pushes battery on connect);
+        // Colmi's battery re-request is part of its `runStartup` handshake. No-op when the GATT
+        // characteristic is absent.
+        client.readBattery()
         lastSyncAt = Date()
         // Show the progress bar immediately; the engine's own `.syncProgress` stages refine the
         // label and the `"done"` stage (or the stall timeout) clears it.
@@ -167,9 +194,11 @@ final class RingSyncCoordinator {
     /// the ring supports. Samples persist via `EventPersistenceSubscriber` and attach to the active
     /// session through `ActivityRecorderService.linkSample`.
     func startWorkoutHeartRate() {
+        // Record the intent even while disconnected: the reconnect handler re-issues the stream
+        // command for any connection made while a workout wants live HR.
+        workoutHRActive = true
         guard client.state == .connected else { return }
         engine?.startHeartRate()
-        workoutHRActive = true
     }
 
     /// Stop the workout's live HR stream and restore the ring's normal background cadence.
@@ -177,6 +206,38 @@ final class RingSyncCoordinator {
         guard workoutHRActive else { return }
         engine?.stopHeartRate()
         workoutHRActive = false
+    }
+
+    /// Re-issue the live HR stream command if a workout stream should be running — used by the
+    /// stream-health check when samples stall and after ring reconnects (a fresh connection builds a
+    /// fresh engine whose stream flag starts off).
+    func restartWorkoutHeartRateIfActive() {
+        guard workoutHRActive, client.state == .connected else { return }
+        engine?.startHeartRate()
+    }
+
+    /// Post-workout reconcile: pull the ring's own HR/SpO2 logs so samples recorded while the phone
+    /// was away or suspended land in the just-finished session (via `linkSample`'s finished-session
+    /// window) and the summary can refresh. No-op while disconnected — the next connect's full
+    /// startup sync covers the same data.
+    func syncWorkoutVitals() {
+        guard client.state == .connected else { return }
+        engine?.syncVitalsHistory()
+        updateSync(stage: "Updating workout…")
+    }
+
+    /// Tighten the ring's all-day HR log for the duration of a workout so it can backfill any stream
+    /// gaps (disconnect, app suspension). The cadence follows the user's "HR every" Activity-Tracking
+    /// setting — the ring firmware clamps to 5-min steps with a 5-min floor, so sub-5-min settings all
+    /// land at the ring's densest 5-min log. The user's normal interval is restored by
+    /// `applyMeasurementSettings()` at finish.
+    func applyWorkoutMeasurementInterval(hrIntervalSeconds: Int) {
+        guard client.state == .connected, let device = DeviceRepository.current(context: context) else { return }
+        var settings = MeasurementConfigRepository.configOrDefault(deviceId: device.id, context: context).asSettings
+        settings.hrEnabled = true
+        // Round the user's seconds up to whole minutes; the encoder floors at 5 min.
+        settings.hrIntervalMinutes = max(1, Int((Double(hrIntervalSeconds) / 60).rounded(.up)))
+        engine?.applyMeasurementSettings(settings)
     }
 
     func querySleep() {
@@ -233,6 +294,9 @@ final class RingSyncCoordinator {
             }
         }
         engine?.stopHeartRate()
+        // A spot read's stop also tears down the realtime stream (Colmi stops both 0x69 and 0x1e);
+        // if a workout stream is supposed to be running, bring it straight back.
+        restartWorkoutHeartRateIfActive()
         hrState = result.map { .done($0) } ?? .failed
         return result
     }
@@ -305,6 +369,9 @@ final class RingSyncCoordinator {
             latestHRVValue = value
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
+            // Ring came back mid-workout: the new connection's engine doesn't know a stream was
+            // running, so re-issue the live HR command.
+            restartWorkoutHeartRateIfActive()
         case let .deviceStateChanged(state, _):
             // Any non-connected transition (disconnect / failure) ends an in-flight sync.
             if state != .connected { endSync() }
@@ -329,6 +396,55 @@ final class RingSyncCoordinator {
         syncTimeoutTask?.cancel()
         syncTimeoutTask = nil
         syncStage = nil
+        // The sync just ended (done / disconnect / stall timeout) — wake anyone waiting on it.
+        for id in Array(syncWaiters.keys) { resumeSyncWaiter(id) }
+    }
+
+    // MARK: - Sync-completion waiters
+
+    /// Suspend until the in-flight sync ends (done / disconnect / stall timeout) or `timeout` elapses.
+    /// Returns immediately when no sync is in flight; the returned `Bool` is whether the sync is no
+    /// longer running. Cancellation-safe: a cancelled caller (e.g. a BGTask expiring mid-wait) resumes
+    /// promptly instead of leaking a suspended continuation.
+    func awaitSyncCompletion(timeout: TimeInterval) async -> Bool {
+        guard isSyncing else { return true }
+        let id = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            self?.resumeSyncWaiter(id)
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                // If the enclosing task was already cancelled, `onCancel` ran before we got here and
+                // recorded the id — resume right away rather than storing a continuation nobody wakes.
+                if cancelledSyncWaiters.remove(id) != nil {
+                    continuation.resume()
+                } else {
+                    syncWaiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelSyncWaiter(id) }
+        }
+        timer.cancel()
+        return !isSyncing
+    }
+
+    /// Resume (and remove) the waiter for `id`, if it's currently registered. A no-op otherwise (the
+    /// sync already ended, or the timer/cancel already resumed it) — so double-signalling is harmless.
+    private func resumeSyncWaiter(_ id: UUID) {
+        syncWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    /// Cancellation path: resume the waiter if it's registered, else remember the id so the pending
+    /// `withCheckedContinuation` resumes it the moment it stores (handles the onCancel-before-store
+    /// race). Only this path seeds `cancelledSyncWaiters`, so it can't accumulate stale ids.
+    private func cancelSyncWaiter(_ id: UUID) {
+        if let continuation = syncWaiters.removeValue(forKey: id) {
+            continuation.resume()
+        } else {
+            cancelledSyncWaiters.insert(id)
+        }
     }
 
     /// Re-arm a one-shot timeout so the bar can't linger if a final `.syncProgress("done")` never
@@ -342,4 +458,14 @@ final class RingSyncCoordinator {
             self.endSync()
         }
     }
+}
+
+// MARK: - RingSyncGating
+
+/// The coach-notification path drives sync through this narrow seam so it can be faked in tests.
+extension RingSyncCoordinator: RingSyncGating {
+    var isRingConnected: Bool { isConnected }
+    var isSyncInFlight: Bool { isSyncing }
+    func beginSync() { syncNow() }
+    func connectAndSync() async { await pullToRefresh() }
 }

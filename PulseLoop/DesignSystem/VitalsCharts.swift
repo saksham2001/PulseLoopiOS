@@ -34,7 +34,7 @@ private extension View {
                         AxisGridLine().foregroundStyle(.clear)
                         AxisTick().foregroundStyle(.clear)
                         AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
-                            .font(.system(size: 10))
+                            .font(PulseFont.micro.weight(.regular))
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 } else {
@@ -42,7 +42,7 @@ private extension View {
                         AxisGridLine().foregroundStyle(.clear)
                         AxisTick().foregroundStyle(.clear)
                         AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
-                            .font(.system(size: 10))
+                            .font(PulseFont.micro.weight(.regular))
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
@@ -54,7 +54,7 @@ private extension View {
                     AxisGridLine().foregroundStyle(PulseColors.borderSubtle)
                     AxisTick().foregroundStyle(.clear)
                     AxisValueLabel()
-                        .font(.system(size: 10))
+                        .font(PulseFont.micro.weight(.regular))
                         .foregroundStyle(PulseColors.textMuted)
                 }
             }

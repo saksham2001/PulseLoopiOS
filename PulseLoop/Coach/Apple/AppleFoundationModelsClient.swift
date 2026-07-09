@@ -123,18 +123,26 @@ final class AppleFoundationModelsClient: ResponsesClient, @unchecked Sendable {
     }
 
     /// Renders the running transcript into a single prompt string, trimmed to the
-    /// on-device character budget (oldest turns dropped first).
+    /// on-device character budget by dropping whole oldest turns (rather than a
+    /// mid-sentence `suffix` cut that leaves the model a truncated first line). The
+    /// newest turn is always kept even if it alone exceeds the budget — the
+    /// `promptCharBudget` still backstops a runaway single turn.
     private func buildPrompt() -> String {
-        var lines: [String] = []
-        for turn in turns {
-            let label = turn.role == "assistant" ? "Assistant" : "User"
-            lines.append("\(label): \(turn.text)")
+        let lines = turns.map { "\($0.role == "assistant" ? "Assistant" : "User"): \($0.text)" }
+
+        // Keep the most recent turns that fit, walking backward from the newest.
+        var kept: [String] = []
+        var used = 0
+        for line in lines.reversed() {
+            let add = line.count + (kept.isEmpty ? 0 : 2)  // account for the "\n\n" join
+            if !kept.isEmpty, used + add > promptCharBudget { break }
+            kept.insert(line, at: 0)
+            used += add
         }
-        var prompt = lines.joined(separator: "\n\n")
-        if prompt.count > promptCharBudget {
-            prompt = String(prompt.suffix(promptCharBudget))
-        }
-        return prompt
+
+        let prompt = kept.joined(separator: "\n\n")
+        // Backstop: a single oversized newest turn still gets clamped.
+        return prompt.count > promptCharBudget ? String(prompt.suffix(promptCharBudget)) : prompt
     }
 
     #if canImport(FoundationModels)

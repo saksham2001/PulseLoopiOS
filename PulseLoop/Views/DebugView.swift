@@ -62,7 +62,7 @@ struct DebugView: View {
         }
         .id(refreshToken)
         .background(PulseColors.background)
-        .navigationTitle("Debug")
+        .pageChrome("Debug")
     }
 
     private var packetFilter: DebugPacketFilter {

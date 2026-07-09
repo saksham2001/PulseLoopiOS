@@ -125,19 +125,19 @@ struct DeviceHeroCard: View {
 
                     VStack(alignment: .leading, spacing: 5) {
                         Text(status.title)
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(PulseFont.title3)
                             .foregroundStyle(PulseColors.textPrimary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
 
                         Text(status.statusLine)
-                            .font(.system(size: 13))
+                            .font(PulseFont.footnote.weight(.regular))
                             .foregroundStyle(status.statusTint)
                             .lineLimit(1)
 
                         if let syncText = status.syncText {
                             Text(syncText)
-                                .font(.system(size: 12))
+                                .font(PulseFont.caption.weight(.regular))
                                 .foregroundStyle(PulseColors.textSecondary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -152,7 +152,7 @@ struct DeviceHeroCard: View {
                                 Image(systemName: "battery.100")
                                 Text(batteryText)
                             }
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(PulseFont.caption.weight(.semibold))
                                 .foregroundStyle(PulseColors.success)
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 6)
@@ -161,7 +161,7 @@ struct DeviceHeroCard: View {
                         }
 
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(PulseFont.footnote.weight(.semibold))
                             .foregroundStyle(PulseColors.textMuted)
                             .frame(width: 20, height: 20)
                     }
@@ -177,14 +177,12 @@ struct DeviceHeroCard: View {
             if status.action != .disconnect {
                 Button(action: { performAction(status.action) }) {
                     Text(status.actionTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(status.actionEnabled ? PulseColors.accent : PulseColors.textMuted)
+                        .font(PulseFont.footnote.weight(.semibold))
+                        .foregroundStyle(status.actionEnabled ? PulseColors.textPrimary : PulseColors.textMuted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(
-                            status.actionEnabled ? PulseColors.accent.opacity(0.12) : PulseColors.elevated,
-                            in: Capsule()
-                        )
+                        // Plain liquid glass (no accent tint); interactive when enabled.
+                        .pulseGlass(Capsule(), interactive: status.actionEnabled)
                 }
                 .buttonStyle(.plain)
                 .disabled(!status.actionEnabled)
@@ -196,9 +194,11 @@ struct DeviceHeroCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        // Liquid glass hero card. The container lets the card glass and the inner
+        // Connect-pill glass coexist as one managed group (glass can't sample glass,
+        // so a bare nested glass would render flat).
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlassContainer(spacing: 24)
     }
 
     private func cardAccessibilityLabel(_ status: DeviceHeroStatus) -> String {

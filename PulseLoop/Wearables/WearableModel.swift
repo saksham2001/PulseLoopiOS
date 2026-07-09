@@ -27,7 +27,7 @@ extension WearableModel {
     // "jring" is intentionally lowercase — that's how the brand styles its name (kept as-is in the tab).
     static let jring = WearableModel(
         id: "jring", displayName: "jring", brand: "jring", family: .jring,
-        tint: PulseColors.accent, blurb: "Heart rate · SpO₂ · Sleep",
+        tint: PulseColors.accent, blurb: "HR · SpO₂ · Sleep",
         advertisedNamePatterns: ["^SMART_RING$"], imageName: "jring"
     )
 

@@ -25,10 +25,10 @@ enum CoachResponseSchema {
       "summary": string (≤ 900 chars) — put the main answer here, not in a "message" field,
       "bullets": array of strings (≤ 5 items, each ≤ 220 chars),
       "chart": null, or a chart object (only when response_type is "insight_with_chart"),
-      "safety_note": string or null,
-      "data_quality_note": string or null,
+      "safety_note": string or null (null unless there is a genuine safety concern),
+      "data_quality_note": string or null (null unless a data gap materially affects the answer),
       "sources": array of { "title": string, "url": string, "publisher": string } (use [] if none),
-      "follow_up_chips": array of strings (≤ 4 items, each ≤ 60 chars),
+      "follow_up_chips": array of strings (≤ 2 items, each ≤ 60 chars),
       "actions_taken": array of strings (use [] if none),
       "confidence": one of "low" | "medium" | "high"
     }
@@ -84,7 +84,7 @@ enum CoachResponseSchema {
                 "follow_up_chips": [
                     "type": "array",
                     "items": ["type": "string", "maxLength": 60],
-                    "maxItems": 4,
+                    "maxItems": 2,
                 ],
                 "actions_taken": ["type": "array", "items": ["type": "string"]],
                 "confidence": ["type": "string", "enum": ["low", "medium", "high"]],

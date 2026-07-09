@@ -43,6 +43,7 @@ struct SleepView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task(id: range) {
             guard coachEnabled else { return }
             if range == .day { await summaryService.refreshSleepDayIfNeeded() }
@@ -74,6 +75,7 @@ struct SleepView: View {
         if let night = SleepInsights.validSessions(summary.sessions).last {
             let score = SleepScore.calculate(night)
             let coach = SleepInsights.dayCoach(night, score: score.score, awakePct: score.awakePct, deepPct: score.deepPct, activitySteps: activitySteps)
+            // Hero card opens the page; coach card closes it.
             SleepHeroCardView(
                 label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep",
                 value: SleepFormat.duration(night.session.totalMinutes),
@@ -123,6 +125,7 @@ struct SleepView: View {
             : SleepInsights.buildNightAxis(start: summary.start, end: summary.end, sessions: summary.sessions, range: range)
         let vizTitle = range == .year ? "Monthly average" : "Nightly sleep"
 
+        // Hero card opens the page; coach card closes it.
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[range] ?? "Sleep",
             value: enough ? SleepFormat.duration(avgMin) : noData.value,
@@ -155,8 +158,8 @@ private struct VisualizationCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(eyebrow.uppercased()).font(.system(size: 11, weight: .medium)).tracking(1.8).foregroundStyle(PulseColors.textMuted)
-                    Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
+                    Text(eyebrow.uppercased()).font(PulseFont.caption2).tracking(1.8).foregroundStyle(PulseColors.textMuted)
+                    Text(title).font(PulseFont.bodyEmphasis).foregroundStyle(PulseColors.textPrimary)
                 }
                 Spacer()
                 if legend {
@@ -173,15 +176,13 @@ private struct VisualizationCard<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private func legendItem(_ label: String, _ color: Color) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).font(.system(size: 9)).foregroundStyle(PulseColors.textSecondary)
+            Text(label).font(PulseFont.nano.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
         }
     }
 }

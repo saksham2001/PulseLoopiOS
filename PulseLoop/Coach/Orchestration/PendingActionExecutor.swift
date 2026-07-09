@@ -22,24 +22,37 @@ enum PendingActionExecutor {
             return "Deleted the \(typeLabel) session."
 
         case .updateActivitySession:
-            apply(action.updates, to: session)
+            apply(action.updates, to: session, context: context)
             session.updatedAt = Date()
             try? context.save()
             return "Updated the \(typeLabel) session."
         }
     }
 
-    private static func apply(_ updates: ActivityUpdates?, to session: ActivitySession) {
+    private static func apply(_ updates: ActivityUpdates?, to session: ActivitySession, context: ModelContext) {
         guard let updates else { return }
-        if let type = updates.type { session.type = type }
         if let notes = updates.notes { session.notes = notes }
-        if let distanceKm = updates.distanceKm { session.distanceMeters = distanceKm * 1000 }
         if let effort = updates.perceivedEffort { session.perceivedEffort = effort }
-        if let start = updates.startTime, let date = CoachDataAccess.parseLocalDate(start) {
-            session.startedAt = date
-        }
+
+        // Type/time changes route through the edit service so aggregates, the sample window, and
+        // the daily rollup stay consistent (setting the fields directly left them all stale).
+        let newType = updates.type ?? session.type
+        var newStart = session.startedAt
+        if let start = updates.startTime, let date = CoachDataAccess.parseLocalDate(start) { newStart = date }
+        var newEnd = session.endedAt ?? Date()
         if let durationMin = updates.durationMin {
-            session.endedAt = session.startedAt.addingTimeInterval(durationMin * 60 + session.totalPauseSeconds)
+            newEnd = newStart.addingTimeInterval(durationMin * 60 + session.totalPauseSeconds)
+        } else if newStart != session.startedAt {
+            // Start moved without a new duration: shift the whole window, keeping its span.
+            newEnd = newStart.addingTimeInterval((session.endedAt ?? Date()).timeIntervalSince(session.startedAt))
         }
+        if newType != session.type || newStart != session.startedAt || newEnd != session.endedAt {
+            _ = ActivityService.applyEdit(
+                session: session, newType: newType, newStartedAt: newStart, newEndedAt: newEnd, context: context
+            )
+        }
+
+        // A user-stated distance overrides the GPS recompute, so apply it after the edit.
+        if let distanceKm = updates.distanceKm { session.distanceMeters = distanceKm * 1000 }
     }
 }

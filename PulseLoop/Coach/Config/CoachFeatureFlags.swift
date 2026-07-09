@@ -24,7 +24,7 @@ struct CoachFeatureFlags {
             // device. Otherwise the coach degrades to scripted and on-device
             // failures surface as an error in chat.
             return AppleOnDeviceAvailability.current.isAvailable
-        case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey:
+        case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey, .userMiniMaxKey:
             return hasAPIKey
         case .backendProxy:
             return false  // not implemented in v1
@@ -40,6 +40,20 @@ struct CoachFeatureFlags {
     var maxRounds: Int { max(1, settings.maxRounds) }
     var model: String { settings.model }
 
+    /// The model string actually sent for the active provider — the single place
+    /// that resolves the per-provider naming (OpenRouter/MiniMax read their own
+    /// slug fields; on-device has no external model name). Used to label and price
+    /// a turn's usage. Mirrors `CoachClientResolver`'s per-provider `model` choice.
+    var effectiveModel: String {
+        switch settings.providerMode {
+        case .appleOnDevice: return "apple-on-device"
+        case .offlineStub: return "offline-stub"
+        case .userOpenRouterKey: return settings.openRouterModel
+        case .userMiniMaxKey: return settings.minimaxModel
+        case .userOpenAIKey, .userGeminiKey, .backendProxy: return settings.model
+        }
+    }
+
     /// One-line status for the Settings UI.
     var statusLine: String {
         if !settings.coachMasterEnabled { return "Off — turn on AI Coach to enable." }
@@ -54,6 +68,8 @@ struct CoachFeatureFlags {
             return hasAPIKey ? "Ready · \(settings.model)" : "Add a Gemini key to enable."
         case .userOpenRouterKey:
             return hasAPIKey ? "Ready · \(settings.openRouterModel)" : "Add an OpenRouter key to enable."
+        case .userMiniMaxKey:
+            return hasAPIKey ? "Ready · \(settings.minimaxModel)" : "Add a MiniMax key to enable."
         case .backendProxy:
             return "Backend proxy not available yet."
         }
