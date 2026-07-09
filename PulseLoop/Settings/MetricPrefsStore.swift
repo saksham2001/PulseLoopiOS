@@ -72,6 +72,11 @@ struct MetricPrefs: Codable, Equatable {
     /// Today-scope hidden metrics, independent of the Vitals scope.
     var todayHiddenMetrics: Set<String> = []
     var todayResolution: GraphResolution = .full
+    /// User-chosen card order per scope, stored as `MetricKey.rawValue`s. Empty means
+    /// "use the screen's default order". Keys not present here fall back to their
+    /// default position, so a newly supported metric appears without any migration.
+    var vitalsOrder: [String] = []
+    var todayOrder: [String] = []
 
     static let `default` = MetricPrefs()
 
@@ -85,6 +90,8 @@ struct MetricPrefs: Codable, Equatable {
         resolution = try c.decodeIfPresent(GraphResolution.self, forKey: .resolution) ?? d.resolution
         todayHiddenMetrics = try c.decodeIfPresent(Set<String>.self, forKey: .todayHiddenMetrics) ?? d.todayHiddenMetrics
         todayResolution = try c.decodeIfPresent(GraphResolution.self, forKey: .todayResolution) ?? d.todayResolution
+        vitalsOrder = try c.decodeIfPresent([String].self, forKey: .vitalsOrder) ?? d.vitalsOrder
+        todayOrder = try c.decodeIfPresent([String].self, forKey: .todayOrder) ?? d.todayOrder
     }
 }
 
@@ -145,6 +152,38 @@ final class MetricPrefsStore {
         case .vitals: settings.resolution = resolution
         case .today: settings.todayResolution = resolution
         }
+    }
+
+    // MARK: - Card order
+
+    /// The saved card order (`MetricKey.rawValue`s) for a scope; empty until the user reorders.
+    func order(for scope: MetricScope) -> [String] {
+        scope == .today ? settings.todayOrder : settings.vitalsOrder
+    }
+
+    func setOrder(_ order: [String], for scope: MetricScope) {
+        switch scope {
+        case .today: settings.todayOrder = order
+        case .vitals: settings.vitalsOrder = order
+        }
+    }
+
+    /// Resolves the display order for a set of currently-visible card ids: the saved order (filtered
+    /// to visible), with any visible-but-unordered id slotted into its `defaultOrder` neighbourhood
+    /// rather than appended. A card restored from the Hidden tray, or a metric a newly-paired ring
+    /// just unlocked, therefore reappears where the user expects instead of at the bottom. With no
+    /// saved order this reduces to `defaultOrder` filtered by `visible`.
+    func resolvedOrder(visible: Set<String>, defaultOrder: [String], scope: MetricScope) -> [String] {
+        var result = order(for: scope).filter { visible.contains($0) }
+        let saved = Set(result)
+        for (i, id) in defaultOrder.enumerated() where visible.contains(id) && !saved.contains(id) {
+            // Land just after the nearest metric that precedes `id` by default and already has a slot.
+            // Earlier inserts are visible to later ones, so a run of missing ids keeps its default order.
+            let anchor = defaultOrder[..<i].last { result.contains($0) }
+            let at = anchor.flatMap { result.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+            result.insert(id, at: at)
+        }
+        return result
     }
 
     private func persist() {
