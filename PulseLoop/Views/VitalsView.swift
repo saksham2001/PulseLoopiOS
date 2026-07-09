@@ -16,10 +16,15 @@ struct VitalsView: View {
     /// Owns the prepared vitals state. Created lazily in `.task` (never in `body`) so a `body`
     /// re-render never triggers DB work — it just reads the already-prepared store.
     @State private var store: VitalsStore?
-    // Card reorder ("edit mode"): long-press a card to enter, drag to reorder, Done to exit.
-    @State private var editing = false
+    // Card reorder ("edit mode"): long-press a card to enter, drag to reorder, Done to exit. The Done
+    // bar itself is rendered by `MainTabView`, which is why edit state lives in a shared session.
+    @State private var reorder = CardReorderSession.shared
     @State private var dragging: MetricKey?
     @State private var prefs = MetricPrefsStore.shared
+    /// The order being dragged — see the matching note in `TodayView`. Persisted on drop and on exit.
+    @State private var liveKeys: [MetricKey] = []
+    /// Whether the user actually moved a card; an unsaved order means "use the screen default".
+    @State private var orderDirty = false
 
     /// Canonical Vitals card order (used until the user reorders). Card id = `MetricKey`.
     private static let defaultOrder: [MetricKey] = [
@@ -27,6 +32,7 @@ struct VitalsView: View {
     ]
 
     private var profile: UserProfile? { profiles.first }
+    private var editing: Bool { reorder.editingScope == .vitals }
 
     var body: some View {
         guard let activeStore = store else {
@@ -39,7 +45,8 @@ struct VitalsView: View {
                 grid(activeStore)
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 96)
+            // Extra clearance while editing so the last card stays draggable above the Done bar.
+            .padding(.bottom, editing ? PulseLayout.scrollBottomInsetEditing : PulseLayout.scrollBottomInset)
         }
         // Tap-outside-to-exit: a catcher layered above the opaque background colour — `.background`
         // stacks back-to-front, so adding it after `PulseColors.background` would bury it.
@@ -54,7 +61,17 @@ struct VitalsView: View {
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .pulseScrollEdges()
-        .overlay(alignment: .top) { if editing { ReorderDoneBar { exitEdit() } } }
+        // A sync can rebuild the store mid-edit — fold the new card set into the on-screen order, and
+        // never while a drag is in flight.
+        .onChange(of: activeStore.revision) { _, _ in
+            guard editing, dragging == nil else { return }
+            liveKeys = CardOrder.reconcile(current: liveKeys, target: orderedKeys(activeStore))
+        }
+        .onChange(of: reorder.editingScope) { old, new in
+            guard old == .vitals, new != .vitals else { return }
+            dragging = nil
+            persistOrder()
+        }
         .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
         .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
         .onChange(of: isActive) { _, active in if active { store?.updateProfile(profile) } }
@@ -92,18 +109,21 @@ struct VitalsView: View {
     @ViewBuilder
     private func grid(_ store: VitalsStore) -> some View {
         let physiology = UserPhysiologyProfile(profile)
-        let keys = orderedKeys(store)
+        // While editing the column follows the in-flight drag order; otherwise the saved one.
+        let keys = editing ? liveKeys : orderedKeys(store)
 
         VStack(spacing: 14) {
-            ReorderableForEach(items: keys, isEditing: editing, dragging: $dragging,
-                               move: { from, to in move(keys, from, to) },
-                               hide: { key in hide(key) },
+            ReorderableForEach(items: keys, isEditing: editing, revision: store.revision, dragging: $dragging,
+                               move: { from, to in move(from, to) },
+                               commit: { persistOrder() },
+                               hide: { key in hide(key, store) },
                                displayName: { $0.reorderDisplayName },
+                               symbolName: { $0.reorderSymbolName },
                                content: { key in
                 cardFor(key, store, physiology)
                     // simultaneousGesture so the long-press fires even though each card is a Button.
                     .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit() }
+                        LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit(store) }
                     )
             })
 
@@ -111,7 +131,7 @@ struct VitalsView: View {
             if editing {
                 HiddenMetricsTray(
                     hidden: hiddenKeys(store),
-                    restore: { restore($0) },
+                    restore: { restore($0, store) },
                     displayName: { $0.reorderDisplayName },
                     symbolName: { $0.reorderSymbolName }
                 )
@@ -127,13 +147,26 @@ struct VitalsView: View {
         }
     }
 
-    private func hide(_ key: MetricKey) {
-        UISelectionFeedbackGenerator().selectionChanged()
+    /// Hide and restore change which keys belong on screen, so they capture the drag order and then
+    /// re-derive it — reusing `resolvedOrder`, which knows where a restored card should land.
+    private func hide(_ key: MetricKey, _ store: VitalsStore) {
+        ReorderHaptics.selection.selectionChanged()
+        persistOrder()
         prefs.setHidden(key, true, scope: .vitals)
+        liveKeys = orderedKeys(store)
     }
 
-    private func restore(_ key: MetricKey) {
+    private func restore(_ key: MetricKey, _ store: VitalsStore) {
+        persistOrder()
         prefs.setHidden(key, false, scope: .vitals)
+        liveKeys = orderedKeys(store)
+    }
+
+    /// The one place the drag order reaches `UserDefaults`: on drop, on exit, and around a hide.
+    private func persistOrder() {
+        guard orderDirty, !liveKeys.isEmpty else { return }
+        prefs.setOrder(liveKeys.map(\.rawValue), for: .vitals)
+        orderDirty = false
     }
 
     /// Visible Vitals cards in the saved order (falling back to `defaultOrder`).
@@ -169,29 +202,30 @@ struct VitalsView: View {
         }
     }
 
-    private func move(_ keys: [MetricKey], _ from: Int, _ to: Int) {
-        var k = keys
-        let item = k.remove(at: from)
-        k.insert(item, at: min(to, k.count))
-        prefs.setOrder(k.map(\.rawValue), for: .vitals)
+    /// Fires on every cell a dragged card crosses — view state only, no persistence.
+    private func move(_ from: Int, _ to: Int) {
+        liveKeys = CardOrder.moving(liveKeys, from: from, to: to)
+        orderDirty = true
     }
 
-    private func enterEdit() {
+    private func enterEdit(_ store: VitalsStore) {
         guard !editing else { return }
+        liveKeys = orderedKeys(store)   // seed before flipping, or the first frame renders an empty column
+        orderDirty = false
+        ReorderHaptics.selection.prepare()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        withAnimation(.easeInOut(duration: 0.2)) { editing = true }
+        withAnimation(.easeInOut(duration: 0.2)) { reorder.begin(.vitals) }
         // Drag is invisible to VoiceOver — tell VO users how to reorder without it.
         AccessibilityNotification.Announcement(
             "Editing layout. Double-tap and hold to drag, or use actions to move cards."
         ).post()
     }
 
+    /// Ends edit mode. The order is persisted (and `dragging` cleared) by the `editingScope` observer,
+    /// which also covers the Done bar and tab switches.
     private func exitEdit() {
         guard editing else { return }
-        // A drop outside every cell never reaches a drop delegate, so `dragging` can outlive the drag
-        // and leave that card dimmed. Clear it on the way out.
-        dragging = nil
-        withAnimation(.easeInOut(duration: 0.2)) { editing = false }
+        withAnimation(.easeInOut(duration: 0.2)) { reorder.end() }
     }
 
     // MARK: - Card builders
@@ -207,7 +241,7 @@ struct VitalsView: View {
     private func chartCard(_ store: VitalsStore, _ metric: MetricKind,
                            _ physiology: UserPhysiologyProfile, showPoints: Bool = false) -> some View {
         if let model = card(store, metric) {
-            let baseline = metric == .hrv ? BaselineStats.compute(store.hrvSamples) : nil
+            let baseline = metric == .hrv ? store.hrvBaseline : nil
             VitalChartCard(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) { open(metric) }
                 .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
