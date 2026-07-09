@@ -255,20 +255,73 @@ struct AppHeader: View {
         return full.split(separator: " ").first.map(String.init) ?? full
     }
 
+    /// A rotating, time-of-day greeting. Each variant is a `lead` phrase plus a `suffix`
+    /// (usually "" or "?") so it composes both with a name — "\(lead), \(name)\(suffix)" — and
+    /// without — "\(lead)\(suffix)". The pick advances every 2 hours (and differs day to day),
+    /// so it stays stable within each 2-hour block — no flicker as the view re-renders.
+    private var greeting: (lead: String, suffix: String) {
+        let now = Date()
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: now)
+        let day = cal.ordinality(of: .day, in: .year, for: now) ?? 0
+        // 12 two-hour blocks per day; a global block index rotates the variant every 2 hours.
+        let block = day * 12 + hour / 2
+        let variants = Self.greetingVariants(hour: hour)
+        return variants[block % variants.count]
+    }
+
+    private static func greetingVariants(hour: Int) -> [(lead: String, suffix: String)] {
+        switch hour {
+        case 5..<12: // Morning
+            return [
+                ("Good morning", ""),
+                ("Rise and shine", ""),
+                ("Ready for a run", "?"),
+                ("Ready to seize the day", "?"),
+                ("Fresh start", "")
+            ]
+        case 12..<17: // Afternoon
+            return [
+                ("Good afternoon", ""),
+                ("Keeping the momentum", "?"),
+                ("Staying on track", "?"),
+                ("How's the day treating you", "?"),
+                ("Powering through", "?")
+            ]
+        case 17..<22: // Evening
+            return [
+                ("Good evening", ""),
+                ("How was your day", "?"),
+                ("Time to unwind", ""),
+                ("Winding down", "?"),
+                ("Evening, champ", "")
+            ]
+        default: // Night (22–5)
+            return [
+                ("Good night", ""),
+                ("Time to wind down", ""),
+                ("Ready to rest", "?"),
+                ("Rest well", ""),
+                ("Burning the midnight oil", "?")
+            ]
+        }
+    }
+
     var body: some View {
+        let greeting = self.greeting
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 if let firstName {
                     // Two lines: greeting on top, name below — avoids truncating a long name.
-                    Text("\(greetingForHour()),")
+                    Text("\(greeting.lead),")
                         .font(PulseFont.footnote)
                         .foregroundStyle(PulseColors.textMuted)
-                    Text(firstName)
+                    Text("\(firstName)\(greeting.suffix)")
                         .font(PulseFont.title2.weight(.semibold))
                         .foregroundStyle(PulseColors.textPrimary)
                         .lineLimit(1)
                 } else {
-                    Text(greetingForHour())
+                    Text("\(greeting.lead)\(greeting.suffix)")
                         .font(PulseFont.title3)
                         .foregroundStyle(PulseColors.textPrimary)
                         .lineLimit(1)
