@@ -40,6 +40,17 @@ struct VitalsView: View {
             .padding(.bottom, 96)
         }
         .background(PulseColors.background)
+        // Tap-outside-to-exit: a catcher behind the cards, live only while editing.
+        .background {
+            if editing {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { exitEdit() }
+                    .accessibilityHidden(true)
+            }
+        }
+        // Scroll-begin-to-exit.
+        .modifier(ScrollExitOnEdit(editing: editing, exit: exitEdit))
         .refreshable { await coordinator.pullToRefresh() }
         .overlay(alignment: .top) { if editing { editDoneBar } }
         .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
@@ -83,14 +94,41 @@ struct VitalsView: View {
 
         VStack(spacing: 14) {
             ReorderableForEach(items: keys, isEditing: editing, dragging: $dragging,
-                               move: { from, to in move(keys, from, to) }) { key in
+                               move: { from, to in move(keys, from, to) },
+                               hide: { key in hide(key) },
+                               displayName: { $0.reorderDisplayName }) { key in
                 cardFor(key, store, physiology)
                     // simultaneousGesture so the long-press fires even though each card is a Button.
                     .simultaneousGesture(
                         LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit() }
                     )
             }
+
+            // Restore tray: only while editing, and only if something is hidden.
+            if editing {
+                HiddenMetricsTray(
+                    hidden: hiddenKeys(),
+                    restore: { restore($0) },
+                    displayName: { $0.reorderDisplayName },
+                    symbolName: { $0.reorderSymbolName }
+                )
+            }
         }
+    }
+
+    /// Metrics hidden in the Vitals scope: the full Vitals set filtered by `prefs.isHidden`, so the
+    /// tray stays in lockstep with Settings visibility.
+    private func hiddenKeys() -> [MetricKey] {
+        Self.defaultOrder.filter { prefs.isHidden($0, scope: .vitals) }
+    }
+
+    private func hide(_ key: MetricKey) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        prefs.setHidden(key, true, scope: .vitals)
+    }
+
+    private func restore(_ key: MetricKey) {
+        prefs.setHidden(key, false, scope: .vitals)
     }
 
     /// Visible Vitals cards in the saved order (falling back to `defaultOrder`).
@@ -133,6 +171,15 @@ struct VitalsView: View {
         guard !editing else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         withAnimation(.easeInOut(duration: 0.2)) { editing = true }
+        // Drag is invisible to VoiceOver — tell VO users how to reorder without it.
+        AccessibilityNotification.Announcement(
+            "Editing layout. Double-tap and hold to drag, or use actions to move cards."
+        ).post()
+    }
+
+    private func exitEdit() {
+        guard editing else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { editing = false }
     }
 
     /// Floating "Done" pill shown while reordering.
@@ -142,7 +189,7 @@ struct VitalsView: View {
             Text("Drag to reorder").font(.system(size: 14, weight: .semibold))
             Spacer(minLength: 12)
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) { editing = false }
+                exitEdit()
             } label: {
                 Text("Done").font(.system(size: 14, weight: .semibold))
             }

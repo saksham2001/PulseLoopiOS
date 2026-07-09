@@ -81,11 +81,32 @@ struct TodayView: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     tiles(activeStore)
                 }
+
+                // Restore tray: only while editing, and only if something is hidden.
+                if editing {
+                    HiddenMetricsTray(
+                        hidden: hiddenKeys(),
+                        restore: { restore($0) },
+                        displayName: { $0.reorderDisplayName },
+                        symbolName: { $0.reorderSymbolName }
+                    )
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
         }
         .background(PulseColors.background)
+        // Tap-outside-to-exit: a catcher behind the cards, live only while editing.
+        .background {
+            if editing {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { exitEdit() }
+                    .accessibilityHidden(true)
+            }
+        }
+        // Scroll-begin-to-exit: SwiftUI's scroll phase change fires when the user starts scrolling.
+        .modifier(ScrollExitOnEdit(editing: editing, exit: exitEdit))
         .refreshable { await coordinator.pullToRefresh() }
         .overlay(alignment: .top) { if editing { editDoneBar } }
         .task {
@@ -112,7 +133,9 @@ struct TodayView: View {
         let keys = orderedKeys(store)
 
         ReorderableForEach(items: keys, isEditing: editing, dragging: $dragging,
-                           move: { from, to in move(keys, from, to) }) { key in
+                           move: { from, to in move(keys, from, to) },
+                           hide: { key in hide(key) },
+                           displayName: { $0.reorderDisplayName }) { key in
             cardFor(key, store, physiology)
                 // simultaneousGesture so the long-press fires even though each tile is a Button
                 // (a plain .onLongPressGesture is swallowed by the button's own tap gesture).
@@ -120,6 +143,22 @@ struct TodayView: View {
                     LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit() }
                 )
         }
+    }
+
+    /// Metrics hidden in the Today scope: the full Today set filtered by `prefs.isHidden`, so the
+    /// restore tray stays in lockstep with Settings visibility. (Filtering the default order rather
+    /// than "visible minus resolved" keeps device-unsupported metrics out of the tray.)
+    private func hiddenKeys() -> [MetricKey] {
+        Self.defaultOrder.filter { prefs.isHidden($0, scope: .today) }
+    }
+
+    private func hide(_ key: MetricKey) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        prefs.setHidden(key, true, scope: .today)
+    }
+
+    private func restore(_ key: MetricKey) {
+        prefs.setHidden(key, false, scope: .today)
     }
 
     /// Visible Today tiles in the saved order (falling back to `defaultOrder`).
@@ -167,6 +206,15 @@ struct TodayView: View {
         guard !editing else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         withAnimation(.easeInOut(duration: 0.2)) { editing = true }
+        // Drag is invisible to VoiceOver — tell VO users how to reorder without it.
+        AccessibilityNotification.Announcement(
+            "Editing layout. Double-tap and hold to drag, or use actions to move cards."
+        ).post()
+    }
+
+    private func exitEdit() {
+        guard editing else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { editing = false }
     }
 
     /// Floating "Done" pill shown while reordering.
@@ -176,7 +224,7 @@ struct TodayView: View {
             Text("Drag to reorder").font(.system(size: 14, weight: .semibold))
             Spacer(minLength: 12)
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) { editing = false }
+                exitEdit()
             } label: {
                 Text("Done").font(.system(size: 14, weight: .semibold))
             }
