@@ -727,19 +727,6 @@ enum ActivityService {
     /// Tag for days whose totals are summed from ring history buckets (vs. live cumulative updates).
     static let ringHistorySource = "ring_history"
 
-    /// One-time cleanup of `ActivityDaily` rows inflated by the old `+=` accumulator bug (steps that
-    /// compounded into the millions across repeated syncs). Deletes ring-history daily rows so they get
-    /// recomputed cleanly from buckets on the next sync. Idempotent + UserDefaults-gated so it runs once.
-    static func migrateInflatedActivityIfNeeded(context: ModelContext) {
-        let key = "activityBucketMigration.v1"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        for row in MetricsRepository.activityRows(context: context) where row.source == ringHistorySource {
-            context.delete(row)
-        }
-        try? context.save()
-        UserDefaults.standard.set(true, forKey: key)
-    }
-
     /// Persist one intraday activity **bucket** from ring history (e.g. a Colmi quarter-hour `0x43`
     /// sample) and recompute its day's total. The bucket is **upserted by its start time** into
     /// `ActivityBucketSample`, so re-syncing the same bucket *replaces* it (never accumulates), and the
@@ -779,15 +766,25 @@ enum ActivityService {
             row = ActivityDaily(date: dayStart, source: ringHistorySource)
             context.insert(row)
         }
-        row.steps = totalSteps
-        row.distanceMeters = totalDistance
-        row.source = ringHistorySource
+        // For today only, never let a partial mid-sync bucket sum regress the visible total: the bucket
+        // log can lag the live cumulative update, and within a day cumulative counters only legitimately
+        // increase. Keep the higher of each and don't clobber the live `source`. Past days always take the
+        // exact bucket-sum assignment (they're fully synced and authoritative).
+        if Calendar.current.isDate(dayStart, inSameDayAs: Date()),
+           row.steps > totalSteps || row.distanceMeters > totalDistance {
+            row.steps = max(row.steps, totalSteps)
+            row.distanceMeters = max(row.distanceMeters, totalDistance)
+        } else {
+            row.steps = totalSteps
+            row.distanceMeters = totalDistance
+            row.source = ringHistorySource
+        }
         row.syncedAt = syncedAt
         row.updatedAt = Date()
         return row
     }
 
-    
+
     static func computeActiveMinutes(for date: Date, context: ModelContext) -> ActiveMinutesResult {
         let samples = MetricsRepository.measurements(kind: .heartRate, context: context)
             .filter { Calendar.current.isDate($0.timestamp, inSameDayAs: date) }

@@ -93,4 +93,61 @@ final class EventBridgeTests: XCTestCase {
             return XCTFail("expected sleepTimeline")
         }
     }
+
+    // MARK: - live activity update plausibility gates
+
+    func testActivityUpdateMapsThroughWhenPlausible() {
+        let events = RingEventBridge.events(for: .activityUpdate(timestamp: Date(), steps: 8000, distanceMeters: 6200, calories: 320))
+        guard case .activityUpdate(_, 8000, 6200, 320) = events.first else {
+            return XCTFail("expected activityUpdate")
+        }
+    }
+
+    func testImplausibleStepsDropped() {
+        // A misframed u24 read paints millions of steps — well beyond the 100k daily ceiling.
+        XCTAssertTrue(RingEventBridge.events(for: .activityUpdate(timestamp: Date(), steps: 16_700_000, distanceMeters: 0, calories: 0)).isEmpty)
+    }
+
+    func testImplausibleDistanceDropped() {
+        // 1,000 km in a day is beyond the 120 km ceiling.
+        XCTAssertTrue(RingEventBridge.events(for: .activityUpdate(timestamp: Date(), steps: 0, distanceMeters: 1_000_000, calories: 0)).isEmpty)
+    }
+
+    func testImplausibleCaloriesDropped() {
+        // 50,000 kcal is beyond the 10,000 kcal ceiling.
+        XCTAssertTrue(RingEventBridge.events(for: .activityUpdate(timestamp: Date(), steps: 0, distanceMeters: 0, calories: 50_000)).isEmpty)
+    }
+
+    func testFutureActivityTimestampDropped() {
+        // A garbage ring-clock timestamp in the future would otherwise poison "today" permanently.
+        let future = Date().addingTimeInterval(2 * 24 * 3600)
+        XCTAssertTrue(RingEventBridge.events(for: .activityUpdate(timestamp: future, steps: 100, distanceMeters: 80, calories: 5)).isEmpty)
+    }
+
+    func testStaleActivityTimestampDropped() {
+        let old = Date().addingTimeInterval(-10 * 24 * 3600)
+        XCTAssertTrue(RingEventBridge.events(for: .activityUpdate(timestamp: old, steps: 100, distanceMeters: 80, calories: 5)).isEmpty)
+    }
+
+    func testRecentActivityTimestampAccepted() {
+        let recent = Date().addingTimeInterval(-3600)
+        let events = RingEventBridge.events(for: .activityUpdate(timestamp: recent, steps: 100, distanceMeters: 80, calories: 5))
+        guard case .activityUpdate = events.first else {
+            return XCTFail("expected activityUpdate")
+        }
+    }
+
+    // MARK: - activity bucket boundary gates
+
+    func testActivityBucketAtCeilingAccepted() {
+        let events = RingEventBridge.events(for: .activityBucket(timestamp: Date(), steps: 4_999, distanceMeters: 5_999))
+        guard case .activityBucket = events.first else {
+            return XCTFail("expected activityBucket")
+        }
+    }
+
+    func testActivityBucketAboveCeilingDropped() {
+        // A single ~15-min bucket can't exceed the per-bucket step ceiling.
+        XCTAssertTrue(RingEventBridge.events(for: .activityBucket(timestamp: Date(), steps: 5_001, distanceMeters: 0)).isEmpty)
+    }
 }

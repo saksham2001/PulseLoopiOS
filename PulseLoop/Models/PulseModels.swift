@@ -95,6 +95,12 @@ final class Device {
     var lastConnectedAt: Date?
     var lastDisconnectedAt: Date?
     var lastSyncAt: Date?
+    /// When the last *full history sync* actually completed (`.syncProgress("done")`), as distinct
+    /// from `lastSyncAt` — which is re-stamped on every CONNECT before any data streams. The coach
+    /// freshness gate reads this so a check-in doesn't fire on connect with pre-sync data. Optional +
+    /// defaulted to nil, so it's an additive SwiftData lightweight migration (same pattern as the
+    /// fields below).
+    var lastFullSyncAt: Date?
     var firmwareVersion: String?
     /// Exact catalog model (for example `colmi-r10`), separate from the protocol/driver family.
     var wearableModelID: String?
@@ -230,6 +236,26 @@ final class Measurement {
     }
     
     var kind: MeasurementKind { MeasurementKind(rawValue: kindRaw) ?? .heartRate }
+}
+
+/// A single historical battery reading, kept so the Wearable screen can chart drainage over time.
+/// Battery is stored separately from `Measurement` (it isn't a health vital) but follows the same
+/// timestamped-sample shape. Writes are throttled (on-change or a 30-min floor) so the table stays
+/// tiny — at most a few dozen rows a day. Indexed on `timestamp` for the windowed chart query.
+@Model
+final class BatterySample {
+    #Index<BatterySample>([\.timestamp])
+    @Attribute(.unique) var id: UUID
+    var percent: Int
+    var timestamp: Date
+    var createdAt: Date
+
+    init(id: UUID = UUID(), percent: Int, timestamp: Date = Date()) {
+        self.id = id
+        self.percent = percent
+        self.timestamp = timestamp
+        self.createdAt = Date()
+    }
 }
 
 @Model
@@ -727,7 +753,12 @@ final class CoachConversation {
     var title: String
     var createdAt: Date
     var updatedAt: Date
-    
+    // Running token/cost totals across the conversation's turns. Defaults keep the
+    // SwiftData migration lightweight for existing installs.
+    var totalInputTokens: Int = 0
+    var totalOutputTokens: Int = 0
+    var totalCostUSD: Double = 0
+
     init(id: UUID = UUID(), title: String = "Today check-in") {
         self.id = id
         self.title = title
@@ -749,9 +780,28 @@ final class CoachMessage {
     /// bytes live in `Documents/coach_attachments/`; this holds only the refs.
     /// Optional with a default keeps the SwiftData migration lightweight.
     var attachmentsJSON: String? = nil
+    // Token/cost accounting for the turn that produced this message (assistant and
+    // error rows carry it — failed turns burned tokens too). `costUSD` is the
+    // provider-reported cost or a catalog estimate; nil when unavailable. Optional
+    // with defaults keeps the SwiftData migration lightweight.
+    var inputTokens: Int? = nil
+    var outputTokens: Int? = nil
+    var costUSD: Double? = nil
+    var modelUsed: String? = nil
+    var providerUsed: String? = nil
+    /// Encoded `[UUID]` of activity sessions logged/edited by the turn that
+    /// produced this message. Drives the in-chat workout card. Optional with a
+    /// default keeps the SwiftData migration lightweight.
+    var loggedActivityIdsJSON: String? = nil
     var createdAt: Date
 
-    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, attachmentsJSON: String? = nil, createdAt: Date = Date()) {
+    init(
+        id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil,
+        pendingActionJSON: String? = nil, attachmentsJSON: String? = nil,
+        inputTokens: Int? = nil, outputTokens: Int? = nil, costUSD: Double? = nil,
+        modelUsed: String? = nil, providerUsed: String? = nil,
+        loggedActivityIdsJSON: String? = nil, createdAt: Date = Date()
+    ) {
         self.id = id
         self.conversationId = conversationId
         self.role = role
@@ -759,6 +809,12 @@ final class CoachMessage {
         self.cardsJSON = cardsJSON
         self.pendingActionJSON = pendingActionJSON
         self.attachmentsJSON = attachmentsJSON
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.costUSD = costUSD
+        self.modelUsed = modelUsed
+        self.providerUsed = providerUsed
+        self.loggedActivityIdsJSON = loggedActivityIdsJSON
         self.createdAt = createdAt
     }
 }
@@ -809,15 +865,28 @@ final class CoachToolCall {
     var toolName: String
     var inputJSON: String?
     var outputJSON: String?
+    // Friendly label ("Got HR data"), execution status ("success"/"error"), and
+    // 0-based ordering within the turn. Defaults keep the SwiftData migration
+    // lightweight; legacy rows fall back to a humanized `toolName` in the UI.
+    var label: String = ""
+    var statusRaw: String = "success"
+    var sequence: Int = 0
     var createdAt: Date
-    
-    init(id: UUID = UUID(), conversationId: UUID, messageId: UUID? = nil, toolName: String, inputJSON: String? = nil, outputJSON: String? = nil) {
+
+    init(
+        id: UUID = UUID(), conversationId: UUID, messageId: UUID? = nil, toolName: String,
+        inputJSON: String? = nil, outputJSON: String? = nil,
+        label: String = "", statusRaw: String = "success", sequence: Int = 0
+    ) {
         self.id = id
         self.conversationId = conversationId
         self.messageId = messageId
         self.toolName = toolName
         self.inputJSON = inputJSON
         self.outputJSON = outputJSON
+        self.label = label
+        self.statusRaw = statusRaw
+        self.sequence = sequence
         self.createdAt = Date()
     }
 }

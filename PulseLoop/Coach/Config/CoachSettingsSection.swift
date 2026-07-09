@@ -236,6 +236,10 @@ struct CoachSettingsSection: View {
 
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
+            toggleRow("Use location & weather", isOn: environmentContextBinding)
+            Text("Shares your city name and current weather with the AI provider so coaching can account for conditions. Never shares your precise location.")
+                .font(.caption).foregroundStyle(PulseColors.textMuted)
+                .padding(.horizontal, 16)
             if showsImageInputToggle {
                 toggleRow("Image input (attach photos)", isOn: imageInputBinding)
             }
@@ -534,6 +538,15 @@ struct CoachSettingsSection: View {
     }
     private var imageInputBinding: Binding<Bool> {
         Binding(get: { store.settings.enableImageInput }, set: { store.settings.enableImageInput = $0 })
+    }
+    private var environmentContextBinding: Binding<Bool> {
+        Binding(
+            get: { store.settings.enableEnvironmentContext },
+            set: { newValue in
+                store.settings.enableEnvironmentContext = newValue
+                if newValue { CoachEnvironmentContextService.shared.requestPermissionIfNeeded() }
+            }
+        )
     }
 
     // MARK: - Key actions

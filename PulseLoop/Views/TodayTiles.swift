@@ -103,11 +103,7 @@ struct ActivityTileView: View {
                                 .tracking(0.8)
                                 .foregroundStyle(value.color)
                             Text(value.text)
-                                .font(.system(size: 26, weight: .semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(PulseColors.textPrimary)
-                                .minimumScaleFactor(0.75)
-                                .lineLimit(1)
+                                .activityValueStyle(size: 26)
                         }
                     }
                 }

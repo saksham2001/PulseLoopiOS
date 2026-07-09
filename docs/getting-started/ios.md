@@ -52,6 +52,15 @@ to request an invite, or ask on the [Discord](https://discord.gg/t9y85ebaKD).
         give it your team and a unique bundle ID as well, or the build will fail
         to sign.
 
+    !!! note "WeatherKit capability (optional weather-aware coaching)"
+        The Coach can share your **city name and current weather** with the AI
+        provider (opt-in under **Settings → Coach → "Use location & weather"**).
+        This uses **WeatherKit**, which needs the *WeatherKit* capability enabled
+        on your App ID in the Apple Developer portal — the `PulseLoop.entitlements`
+        already declares `com.apple.developer.weatherkit`. If you skip this step
+        the coach still works; the weather block is simply omitted. Only the
+        reverse-geocoded city is ever shared — never your precise location.
+
 4. Build & run (`⌘R`).
 5. On first launch, complete onboarding, then keep the ring nearby — the app
    auto-scans and connects when Bluetooth powers on.

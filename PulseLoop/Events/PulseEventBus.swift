@@ -108,6 +108,14 @@ final class EventPersistenceSubscriber {
     /// Hard ceiling so a long continuous stream still flushes periodically (never unbounded latency).
     private let flushMaxPending = 100
 
+    /// Battery-history throttle. Battery events arrive on connect and roughly hourly from the watchdog,
+    /// sometimes repeating the same percent; we only persist a `BatterySample` when the value changes or
+    /// a 30-min floor has elapsed, keeping the history table tiny. State is in-memory, so the first
+    /// reading after a (re)launch always records — which is what we want for a per-session data point.
+    private var lastBatteryPercent: Int?
+    private var lastBatteryLogAt: Date?
+    private let batteryMinInterval: TimeInterval = 30 * 60   // 30 min
+
     init(context: ModelContext) {
         self.context = context
     }
@@ -209,6 +217,7 @@ final class EventPersistenceSubscriber {
             let device = MetricsService.fetchDevices(context).first ?? Device()
             device.batteryPercent = percent
             context.insert(device)
+            recordBatterySample(percent)
         case let .rawPacket(direction, data, decoded):
             // The raw byte trace is a developer diagnostic only — never stored in release builds, so
             // production never persists protocol hex/opcodes.
@@ -305,7 +314,13 @@ final class EventPersistenceSubscriber {
                     session.rejectedGpsPointCount += 1
                 }
             }
-        case .heartRateComplete, .spo2Progress, .spo2Complete, .syncProgress, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
+        case let .syncProgress(stage):
+            // Stamp the *completion* of a full history sync so the coach freshness gate can tell a
+            // finished sync from a bare CONNECT (`lastSyncAt`, re-stamped every connect).
+            if stage == "done", let device = DeviceRepository.current(context: context) {
+                device.lastFullSyncAt = Date()
+            }
+        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
         }
         // NB: no per-event save here — `scheduleFlush()` (called by `persist`) batches the save.
@@ -326,6 +341,19 @@ final class EventPersistenceSubscriber {
             confidence: .known,
             context: context
         )
+    }
+
+    /// Append a battery reading to the drainage history, throttled to on-change or a 30-min floor so
+    /// the table stays tiny. Rides the same coalesced flush as every other persist (no extra `save()`).
+    private func recordBatterySample(_ percent: Int) {
+        guard (0...100).contains(percent) else { return }   // guard the Device()-fallback default / garbage
+        let now = Date()
+        let changed = percent != lastBatteryPercent
+        let floorElapsed = lastBatteryLogAt.map { now.timeIntervalSince($0) >= batteryMinInterval } ?? true
+        guard changed || floorElapsed else { return }
+        context.insert(BatterySample(percent: percent, timestamp: now))
+        lastBatteryPercent = percent
+        lastBatteryLogAt = now
     }
 
     /// Record the ring's firmware version on the current Device row (idempotent — no-op if unchanged).

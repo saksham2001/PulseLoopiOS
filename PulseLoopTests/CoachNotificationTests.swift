@@ -137,3 +137,192 @@ private struct StubKeyStore: APIKeyStore {
     func saveKey(_ key: String) throws {}
     func deleteKey() throws {}
 }
+
+// MARK: - Sync gating (ensureFreshData)
+
+/// A recording `RingSyncGating` fake. `onAwait` runs each time `awaitSyncCompletion` is called (e.g.
+/// to insert a fresh measurement, simulating a sync landing data) and its return value is what the
+/// method resolves to.
+@MainActor
+private final class FakeSyncGate: RingSyncGating {
+    var isRingConnected: Bool
+    var isSyncInFlight: Bool
+    private(set) var beginSyncCalls = 0
+    private(set) var awaitCalls = 0
+    private(set) var connectAndSyncCalls = 0
+    /// Ordered log of calls, so tests can assert beginSync happened *before* the wait.
+    private(set) var callLog: [String] = []
+    var onAwait: (() -> Bool)?
+
+    init(connected: Bool = false, inFlight: Bool = false) {
+        self.isRingConnected = connected
+        self.isSyncInFlight = inFlight
+    }
+
+    func beginSync() { beginSyncCalls += 1; callLog.append("begin") }
+    func connectAndSync() async { connectAndSyncCalls += 1; callLog.append("connect") }
+    func awaitSyncCompletion(timeout: TimeInterval) async -> Bool {
+        awaitCalls += 1
+        callLog.append("await")
+        return onAwait?() ?? true
+    }
+}
+
+@MainActor
+final class CoachNotificationSyncGatingTests: XCTestCase {
+
+    /// A settings store with the coach master switch on so a non-forced `runDueSlot` reaches the
+    /// freshness gate (default provider `.userOpenAIKey` + a stub key ⇒ `coachEnabled`).
+    private func enabledStore() -> CoachSettingsStore {
+        let store = CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        store.settings.coachMasterEnabled = true
+        return store
+    }
+
+    private func service(
+        _ c: ModelContext,
+        gate: RingSyncGating?,
+        policy: CoachNotificationService.StaleDataPolicy = .sendWithLastKnown
+    ) -> CoachNotificationService {
+        CoachNotificationService(
+            modelContext: c, coordinator: gate,
+            keyStore: StubKeyStore(key: "sk-test"), settingsStore: enabledStore(),
+            syncWaitTimeout: 1, staleDataPolicy: policy,
+            clientFactory: { _ in StubResponsesClient([
+                OpenAIResponse(id: "n", outputItems: [.message(text: notificationJSON())])
+            ]) }
+        )
+    }
+
+    private func morning() -> Date {
+        Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
+    }
+
+    /// Connected ring, no fresh data yet: the service starts a sync and waits; the wait lands a fresh
+    /// HR sample, so the check-in sends. `beginSync` must precede the `await`.
+    func testConnectedRingSyncsThenSends() async throws {
+        let c = try TestSupport.makeContext()
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = {
+            TestSupport.insertMeasurement(kind: .heartRate, value: 72, timestamp: Date(), into: c)
+            return true
+        }
+        let outcome = await service(c, gate: gate).runDueSlot(now: morning())
+        if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
+        XCTAssertEqual(gate.beginSyncCalls, 1)
+        XCTAssertEqual(gate.awaitCalls, 1)
+        // beginSync before the wait.
+        XCTAssertEqual(gate.callLog.firstIndex(of: "begin")!, gate.callLog.firstIndex(of: "await")! - 1)
+    }
+
+    /// A sync already in flight: the service just awaits it — it must NOT kick off a second sync.
+    func testInFlightSyncIsAwaitedNotRestarted() async throws {
+        let c = try TestSupport.makeContext()
+        let gate = FakeSyncGate(connected: true, inFlight: true)
+        gate.onAwait = {
+            TestSupport.insertMeasurement(kind: .heartRate, value: 68, timestamp: Date(), into: c)
+            return true
+        }
+        let outcome = await service(c, gate: gate).runDueSlot(now: morning())
+        if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
+        XCTAssertEqual(gate.awaitCalls, 1)
+        XCTAssertEqual(gate.beginSyncCalls, 0)
+    }
+
+    /// Gate times out (await returns false) but the store already holds an old-but-real measurement:
+    /// sendWithLastKnown proceeds and sends.
+    func testTimeoutWithLastKnownStillSends() async throws {
+        let c = try TestSupport.makeContext()
+        // A stale measurement (5h ago — outside the 3h freshness window) so the store isn't empty.
+        TestSupport.insertMeasurement(kind: .heartRate, value: 60, timestamp: Date().addingTimeInterval(-5 * 3600), into: c)
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = { false }   // sync never lands fresh data
+        let outcome = await service(c, gate: gate, policy: .sendWithLastKnown).runDueSlot(now: morning())
+        if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
+    }
+
+    /// Same timeout, but `.skip` policy → skippedNoData.
+    func testTimeoutWithSkipPolicySkips() async throws {
+        let c = try TestSupport.makeContext()
+        TestSupport.insertMeasurement(kind: .heartRate, value: 60, timestamp: Date().addingTimeInterval(-5 * 3600), into: c)
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = { false }
+        let outcome = await service(c, gate: gate, policy: .skip).runDueSlot(now: morning())
+        XCTAssertEqual(outcome, .skippedNoData)
+    }
+
+    /// Timeout AND a truly empty store → skippedNoData even under sendWithLastKnown.
+    func testTimeoutWithEmptyStoreSkips() async throws {
+        let c = try TestSupport.makeContext()
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = { false }
+        let outcome = await service(c, gate: gate, policy: .sendWithLastKnown).runDueSlot(now: morning())
+        XCTAssertEqual(outcome, .skippedNoData)
+    }
+
+    /// Disconnected + stale: the service tries to (re)connect and sync.
+    func testDisconnectedTriesConnectAndSync() async throws {
+        let c = try TestSupport.makeContext()
+        let gate = FakeSyncGate(connected: false)
+        gate.onAwait = {
+            TestSupport.insertMeasurement(kind: .heartRate, value: 66, timestamp: Date(), into: c)
+            return true
+        }
+        let outcome = await service(c, gate: gate).runDueSlot(now: morning())
+        if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
+        XCTAssertEqual(gate.connectAndSyncCalls, 1)
+        XCTAssertEqual(gate.beginSyncCalls, 0)
+    }
+}
+
+// MARK: - Freshness gate (lastFullSyncAt) + persistence
+
+@MainActor
+final class CoachNotificationFreshnessTests: XCTestCase {
+
+    private func service(_ c: ModelContext) -> CoachNotificationService {
+        CoachNotificationService(
+            modelContext: c, coordinator: nil,
+            keyStore: StubKeyStore(key: "sk-test"),
+            settingsStore: CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        )
+    }
+
+    /// A Device with a fresh `lastSyncAt` (re-stamped on every connect) but nil `lastFullSyncAt` and
+    /// no measurements must NOT count as recent — that was the stale-data bug.
+    func testConnectStampAloneIsNotFresh() throws {
+        let c = try TestSupport.makeContext()
+        let device = Device()
+        device.lastSyncAt = Date()
+        device.lastFullSyncAt = nil
+        c.insert(device)
+        try c.save()
+        XCTAssertFalse(service(c).hasRecentData(now: Date()))
+    }
+
+    /// A completed full sync (`lastFullSyncAt` = now) counts as recent.
+    func testFullSyncStampIsFresh() throws {
+        let c = try TestSupport.makeContext()
+        let device = Device()
+        device.lastFullSyncAt = Date()
+        c.insert(device)
+        try c.save()
+        XCTAssertTrue(service(c).hasRecentData(now: Date()))
+    }
+
+    /// Applying `.syncProgress("done")` through the persistence subscriber stamps `lastFullSyncAt` on
+    /// the Device row; a non-done stage leaves it nil.
+    func testSyncProgressDoneStampsLastFullSyncAt() throws {
+        let c = try TestSupport.makeContext()
+        let device = Device()
+        c.insert(device)
+        try c.save()
+
+        let subscriber = EventPersistenceSubscriber(context: c)
+        subscriber.persist(.syncProgress(stage: "Syncing sleep…"))
+        XCTAssertNil(DeviceRepository.current(context: c)?.lastFullSyncAt)
+
+        subscriber.persist(.syncProgress(stage: "done"))
+        XCTAssertNotNil(DeviceRepository.current(context: c)?.lastFullSyncAt)
+    }
+}

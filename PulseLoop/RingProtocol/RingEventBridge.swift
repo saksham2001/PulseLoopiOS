@@ -30,11 +30,22 @@ enum RingEventBridge {
     /// only clearly-misframed packets are rejected.
     static let maxBucketSteps = 5000
     static let maxBucketDistance: Double = 6000   // metres
+    /// Sanity ceilings for a full day of cumulative activity: a live `.activityUpdate` beyond these is a
+    /// misframed packet (e.g. a u24/u32 field read at the wrong offset), which — since it ratchets the
+    /// daily row via `max` — would otherwise show as garbage until the next history-bucket recompute.
+    static let maxDailySteps = 100_000
+    static let maxDailyDistanceMeters: Double = 120_000   // metres
+    static let maxDailyCalories: Double = 10_000          // kcal
 
     static func events(for decoded: RingDecodedEvent, now: Date = Date()) -> [PulseEvent] {
         switch decoded {
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):
-            return [.activityUpdate(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, calories: calories)]
+            // A live cumulative update ratchets the daily row via `max`, so a single misframed packet
+            // permanently inflates the visible total until a history recompute. Drop (never clamp) any
+            // update outside the daily ceilings or with an implausible ring-supplied timestamp.
+            return isPlausibleDailyActivity(steps: steps, distanceMeters: distanceMeters, calories: calories, timestamp: timestamp, now: now)
+                ? [.activityUpdate(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, calories: calories)]
+                : []
 
         case let .activityBucket(timestamp, steps, distanceMeters):
             // Guard against a misframed history packet painting a wild total: a single 15-min bucket
@@ -130,8 +141,29 @@ enum RingEventBridge {
     /// future. The Colmi sleep big-data payload can carry several recent nights (day-indexed), so the
     /// window matches the ~8-day history horizon; a value outside it indicates a misdecoded frame.
     static func isPlausibleSleepStart(_ start: Date, now: Date = Date()) -> Bool {
+        isWithinHistoryWindow(start, now: now)
+    }
+
+    /// A live activity update's ring-supplied timestamp is plausible within the same ~8-day history
+    /// window as sleep. A garbage future timestamp is especially dangerous here because `buildTodaySummary`
+    /// treats the max-dated row as "today", so a future date would permanently poison the visible day.
+    static func isPlausibleActivityTimestamp(_ timestamp: Date, now: Date = Date()) -> Bool {
+        isWithinHistoryWindow(timestamp, now: now)
+    }
+
+    /// True when a live cumulative update is within the daily ceilings and carries a plausible timestamp.
+    private static func isPlausibleDailyActivity(steps: Int, distanceMeters: Double, calories: Double, timestamp: Date, now: Date) -> Bool {
+        (0...maxDailySteps).contains(steps)
+            && (0...maxDailyDistanceMeters).contains(distanceMeters)
+            && (0...maxDailyCalories).contains(calories)
+            && isPlausibleActivityTimestamp(timestamp, now: now)
+    }
+
+    /// Shared plausibility window: within the last ~8 days (the history horizon) and no more than an hour
+    /// into the future. A timestamp outside it indicates a misdecoded frame.
+    private static func isWithinHistoryWindow(_ date: Date, now: Date) -> Bool {
         let lower = now.addingTimeInterval(-8 * 24 * 3600)
         let upper = now.addingTimeInterval(3600)
-        return start >= lower && start <= upper
+        return date >= lower && date <= upper
     }
 }
