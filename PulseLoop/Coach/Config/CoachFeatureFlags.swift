@@ -40,6 +40,20 @@ struct CoachFeatureFlags {
     var maxRounds: Int { max(1, settings.maxRounds) }
     var model: String { settings.model }
 
+    /// The model string actually sent for the active provider — the single place
+    /// that resolves the per-provider naming (OpenRouter/MiniMax read their own
+    /// slug fields; on-device has no external model name). Used to label and price
+    /// a turn's usage. Mirrors `CoachClientResolver`'s per-provider `model` choice.
+    var effectiveModel: String {
+        switch settings.providerMode {
+        case .appleOnDevice: return "apple-on-device"
+        case .offlineStub: return "offline-stub"
+        case .userOpenRouterKey: return settings.openRouterModel
+        case .userMiniMaxKey: return settings.minimaxModel
+        case .userOpenAIKey, .userGeminiKey, .backendProxy: return settings.model
+        }
+    }
+
     /// One-line status for the Settings UI.
     var statusLine: String {
         if !settings.coachMasterEnabled { return "Off — turn on AI Coach to enable." }

@@ -8,6 +8,8 @@ import SwiftData
 @MainActor
 @Observable
 final class CoachViewModel {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     var traceEvents: [CoachTraceEvent] = []
     var isSending = false
     var errorBanner: String?
@@ -59,8 +61,11 @@ final class CoachViewModel {
 
         let (apiKey, activeClient) = resolveClient()
         let flags = CoachFeatureFlags(settings: settingsStore.settings, hasAPIKey: apiKey != nil)
-        let packet = CoachContextBuilder.build(context: context)
-        let recent = recentMessages(conversationId: conversationId, excluding: userMessage.id, context: context)
+        let budget = flags.contextBudget
+        let environment = await CoachEnvironmentContextService.shared.snapshot()
+        let packet = CoachContextBuilder.build(context: context, budget: budget, environment: environment)
+        let recent = recentMessages(
+            conversationId: conversationId, excluding: userMessage.id, context: context, limit: budget.historyTurns)
         let userImages = CoachAttachmentStore.payloads(for: attachments)
 
         let orchestrator = CoachOrchestrator(
@@ -79,7 +84,7 @@ final class CoachViewModel {
             self?.traceEvents.append(event)
         }
 
-        persist(result, conversationId: conversationId, context: context)
+        persist(result, conversationId: conversationId, context: context, flags: flags)
     }
 
     // MARK: - Provider resolution
@@ -102,7 +107,14 @@ final class CoachViewModel {
         guard let action = PendingAction.decode(fromJSON: message.pendingActionJSON) else { return }
         let resultText = PendingActionExecutor.execute(action, context: context)
         message.pendingActionJSON = nil
-        context.insert(CoachMessage(conversationId: message.conversationId, role: "assistant", body: resultText))
+        // A confirmed edit still touches a real workout — surface its card. Deletes
+        // have nothing left to show, so skip them.
+        let loggedIds: String? = action.kind == .updateActivitySession
+            ? UUID(uuidString: action.activityId).map { Self.encodeActivityIds([$0]) } ?? nil
+            : nil
+        context.insert(CoachMessage(
+            conversationId: message.conversationId, role: "assistant", body: resultText,
+            loggedActivityIdsJSON: loggedIds))
         try? context.save()
     }
 
@@ -115,9 +127,10 @@ final class CoachViewModel {
 
     // MARK: - Persistence
 
-    private func persist(_ result: CoachOrchestrator.TurnResult, conversationId: UUID, context: ModelContext) {
+    private func persist(_ result: CoachOrchestrator.TurnResult, conversationId: UUID, context: ModelContext, flags: CoachFeatureFlags) {
         // A failed turn surfaces as a red error bubble (role "error") carrying the
-        // code + reason, instead of the generic assistant fallback.
+        // code + reason, instead of the generic assistant fallback. Failed turns
+        // still burned tokens, so usage rides on the error message too.
         if let error = result.error {
             let errorMessage = CoachMessage(
                 conversationId: conversationId,
@@ -125,9 +138,10 @@ final class CoachViewModel {
                 body: error.plainText,
                 cardsJSON: error.encodedJSON()
             )
+            applyUsage(result.usage, to: errorMessage, flags: flags)
             context.insert(errorMessage)
             persistTrace(result.trace, messageId: errorMessage.id, conversationId: conversationId, context: context)
-            touchConversation(conversationId, context: context)
+            touchConversation(conversationId, context: context, usage: result.usage, cost: errorMessage.costUSD)
             try? context.save()
             return
         }
@@ -137,32 +151,65 @@ final class CoachViewModel {
             role: "assistant",
             body: result.assistant.plainText,
             cardsJSON: result.assistant.encodedJSON(),
-            pendingActionJSON: result.pendingActions.first?.encodedJSON()
+            pendingActionJSON: result.pendingActions.first?.encodedJSON(),
+            loggedActivityIdsJSON: Self.encodeActivityIds(result.loggedActivityIds)
         )
+        applyUsage(result.usage, to: assistant, flags: flags)
         context.insert(assistant)
 
         persistTrace(result.trace, messageId: assistant.id, conversationId: conversationId, context: context)
-        touchConversation(conversationId, context: context)
+        touchConversation(conversationId, context: context, usage: result.usage, cost: assistant.costUSD)
         try? context.save()
     }
 
-    private func persistTrace(
+    /// Stamps a turn's token/cost accounting onto the message. Cost prefers the
+    /// provider-reported figure (OpenRouter), else the catalog estimate; `nil` when
+    /// the model is unknown or on-device (the UI shows "cost unavailable").
+    private func applyUsage(_ usage: CoachTokenUsage?, to message: CoachMessage, flags: CoachFeatureFlags) {
+        message.modelUsed = flags.effectiveModel
+        message.providerUsed = flags.settings.providerMode.rawValue
+        guard let usage else { return }
+        message.inputTokens = usage.inputTokens
+        message.outputTokens = usage.outputTokens
+        message.costUSD = usage.reportedCostUSD ?? CoachPricingCatalog.cost(model: flags.effectiveModel, usage: usage)
+    }
+
+    /// Internal (not private) so unit tests can assert label/status/sequence are
+    /// persisted rather than dropped.
+    func persistTrace(
         _ trace: [CoachToolCallTrace], messageId: UUID, conversationId: UUID, context: ModelContext
     ) {
-        for entry in trace {
+        for (index, entry) in trace.enumerated() {
             context.insert(CoachToolCall(
                 conversationId: conversationId,
                 messageId: messageId,
                 toolName: entry.toolName,
                 inputJSON: entry.argsRedacted,
-                outputJSON: entry.resultSummary
+                outputJSON: entry.resultSummary,
+                label: entry.label,
+                statusRaw: entry.status,
+                sequence: index
             ))
         }
     }
 
-    private func touchConversation(_ conversationId: UUID, context: ModelContext) {
+    /// Encodes activity ids logged/edited during a turn onto a message. Returns
+    /// nil for the common empty case to keep migrations light.
+    static func encodeActivityIds(_ ids: [UUID]) -> String? {
+        guard !ids.isEmpty else { return nil }
+        return (try? JSONEncoder().encode(ids)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    private func touchConversation(
+        _ conversationId: UUID, context: ModelContext, usage: CoachTokenUsage? = nil, cost: Double? = nil
+    ) {
         if let convo = fetchConversation(conversationId, context: context) {
             convo.updatedAt = Date()
+            if let usage {
+                convo.totalInputTokens += usage.inputTokens
+                convo.totalOutputTokens += usage.outputTokens
+            }
+            if let cost { convo.totalCostUSD += cost }
         }
     }
 
