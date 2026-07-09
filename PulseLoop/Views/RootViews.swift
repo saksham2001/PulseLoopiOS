@@ -169,7 +169,7 @@ struct MainTabView: View {
                     ActivityView(path: $path).tag(MainTab.activity)
                     SleepView().tag(MainTab.sleep)
                     if coachEnabled {
-                        CoachView().tag(MainTab.coach)
+                        CoachView(path: $path).tag(MainTab.coach)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))

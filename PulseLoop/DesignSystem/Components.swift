@@ -126,16 +126,20 @@ struct CoachMessageCard: View {
                 .foregroundStyle(PulseColors.textSecondary)
                 .padding(.top, 6)
             if !chips.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(chips, id: \.self) { chip in
+                // Both questions share one compact row (each wraps to ≤2 lines)
+                // so the card stays short; chat bubbles use full-width rows instead.
+                HStack(alignment: .top, spacing: 6) {
+                    ForEach(chips.prefix(2), id: \.self) { chip in
                         Text(chip)
                             .font(.system(size: 11))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
                             .foregroundStyle(PulseColors.textSecondary)
-                            .background(PulseColors.cardSoft)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                            .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
                     }
                 }
                 .padding(.top, 12)

@@ -363,7 +363,20 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         if outputItems.isEmpty { throw ResponsesError.emptyOutput }
 
         storedModelParts[responseId] = modelParts
-        return OpenAIResponse(id: responseId, outputItems: outputItems)
+        return OpenAIResponse(id: responseId, outputItems: outputItems, usage: usage(from: root))
+    }
+
+    /// Maps Gemini's `usageMetadata` to the app's usage struct. Output tokens count
+    /// both the answer (`candidatesTokenCount`) and any thinking tokens
+    /// (`thoughtsTokenCount`); cached context is `cachedContentTokenCount`.
+    private func usage(from root: [String: Any]) -> CoachTokenUsage? {
+        guard let meta = root["usageMetadata"] as? [String: Any] else { return nil }
+        let output = (meta["candidatesTokenCount"] as? Int ?? 0) + (meta["thoughtsTokenCount"] as? Int ?? 0)
+        return CoachTokenUsage(
+            inputTokens: meta["promptTokenCount"] as? Int ?? 0,
+            outputTokens: output,
+            cachedInputTokens: meta["cachedContentTokenCount"] as? Int ?? 0
+        )
     }
 
     /// Extracts cited pages from a candidate's `groundingMetadata` as

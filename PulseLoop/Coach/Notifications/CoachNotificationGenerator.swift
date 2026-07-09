@@ -10,13 +10,15 @@ enum CoachNotificationGenerator {
         slot: CoachNotificationSlot,
         packet: NotificationContextPacket,
         flags: CoachFeatureFlags,
-        client: ResponsesClient
+        client: ResponsesClient,
+        angle: String = "",
+        recentTexts: [String] = []
     ) async -> CoachNotification {
         guard flags.coachEnabled else { return scripted(slot: slot, packet: packet) }
         do {
             let input: [[String: Any]] = [
                 OpenAIRequestBuilder.message(role: "system", content: NotificationPromptBuilder.systemPrompt(slot: slot)),
-                OpenAIRequestBuilder.message(role: "developer", content: NotificationPromptBuilder.developerMessage(packet: packet)),
+                OpenAIRequestBuilder.message(role: "developer", content: NotificationPromptBuilder.developerMessage(packet: packet, angle: angle, recentTexts: recentTexts)),
             ]
             let body = try OpenAIRequestBuilder.data(
                 model: flags.model, input: input, tools: [],

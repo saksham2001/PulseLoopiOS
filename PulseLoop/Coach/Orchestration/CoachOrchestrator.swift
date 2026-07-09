@@ -18,9 +18,27 @@ struct CoachOrchestrator {
         let assistant: CoachResponse
         let trace: [CoachToolCallTrace]
         var pendingActions: [PendingAction] = []
+        /// Activity sessions created/edited during this turn (immediate writes).
+        /// Drives the in-chat workout card.
+        var loggedActivityIds: [UUID] = []
+        /// Summed token usage across every model call in the turn (initial send +
+        /// tool-loop rounds + JSON-repair sends). `nil` when no call reported usage
+        /// (e.g. Apple on-device) or the turn never reached the client.
+        var usage: CoachTokenUsage? = nil
         /// Set when the turn failed; surfaced as a red error bubble instead of the
         /// `assistant` fallback. `nil` on success.
         var error: CoachTurnError? = nil
+    }
+
+    /// Reference accumulator so a single instance sums usage across every `send`
+    /// in a turn regardless of which code path (initial / tool-loop / repair) made
+    /// the call. `nil` stays `nil` until at least one call reports usage.
+    private final class UsageTally {
+        var total: CoachTokenUsage?
+        func add(_ usage: CoachTokenUsage?) {
+            guard let usage else { return }
+            if total == nil { total = usage } else { total?.add(usage) }
+        }
     }
 
     struct PriorMessage { let role: String; let text: String; var images: [CoachImagePayload] = [] }
@@ -56,12 +74,15 @@ struct CoachOrchestrator {
     ) async throws -> TurnResult {
         let toolSpecs = registry.toolSpecs
         let textFormat = CoachResponseSchema.textFormat
+        let tally = UsageTally()
 
         // Initial input: system + developer + recent turns + the new user message.
         // Images only ever ride on user turns (system/developer/assistant stay text).
+        let budget = flags.contextBudget
+        let systemPrompt = budget == .compact ? CoachPromptBuilder.systemPromptCompact : CoachPromptBuilder.systemPrompt
         var input: [[String: Any]] = [
-            OpenAIRequestBuilder.message(role: "system", content: CoachPromptBuilder.systemPrompt),
-            OpenAIRequestBuilder.message(role: "developer", content: CoachPromptBuilder.developerMessage(packet: packet)),
+            OpenAIRequestBuilder.message(role: "system", content: systemPrompt),
+            OpenAIRequestBuilder.message(role: "developer", content: CoachPromptBuilder.developerMessage(packet: packet, budget: budget)),
         ]
         for m in recentMessages {
             let isUser = m.role == "user"
@@ -75,7 +96,7 @@ struct CoachOrchestrator {
 
         onTrace(CoachTraceEvent(label: "Thinking about your question…", status: .thinking))
 
-        var response = try await send(input: input, tools: toolSpecs, textFormat: textFormat, previousResponseId: nil)
+        var response = try await send(input: input, tools: toolSpecs, textFormat: textFormat, previousResponseId: nil, tally: tally)
         noteWebSearch(response, onTrace: onTrace)
 
         var trace: [CoachToolCallTrace] = []
@@ -123,20 +144,22 @@ struct CoachOrchestrator {
 
             rounds += 1
             onTrace(CoachTraceEvent(label: "Putting it together…", status: .writingAnswer))
-            response = try await send(input: outputs, tools: toolSpecs, textFormat: textFormat, previousResponseId: response.id)
+            response = try await send(input: outputs, tools: toolSpecs, textFormat: textFormat, previousResponseId: response.id, tally: tally)
             noteWebSearch(response, onTrace: onTrace)
         }
 
         do {
-            let assistant = try await parseFinal(response, textFormat: textFormat)
+            let assistant = try await parseFinal(response, textFormat: textFormat, tally: tally)
             onTrace(CoachTraceEvent(label: "", status: .done))
-            return TurnResult(assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions)
+            return TurnResult(
+                assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions,
+                loggedActivityIds: toolContext.loggedActivityIds, usage: tally.total)
         } catch let parseError as ParseExhausted {
             // The model never produced valid coach_response JSON. Surface it as an
             // error bubble, but keep the trace from the tools that did run.
             onTrace(CoachTraceEvent(label: "Couldn't format the answer", status: .failedTool))
             return TurnResult(
-                assistant: CoachFallbacks.fallback(), trace: trace,
+                assistant: CoachFallbacks.fallback(), trace: trace, usage: tally.total,
                 error: CoachTurnError(code: "Bad response", reason: parseError.reason))
         }
     }
@@ -147,7 +170,7 @@ struct CoachOrchestrator {
 
     // MARK: - Final parse + repair
 
-    private func parseFinal(_ response: OpenAIResponse, textFormat: [String: Any]) async throws -> CoachResponse {
+    private func parseFinal(_ response: OpenAIResponse, textFormat: [String: Any], tally: UsageTally) async throws -> CoachResponse {
         var current = response
         var attempts = 1
         while true {
@@ -162,19 +185,21 @@ struct CoachOrchestrator {
             let repair = OpenAIRequestBuilder.message(
                 role: "user",
                 content: "Your previous output did not match the required coach_response JSON schema. Return only valid JSON for that schema now.")
-            current = try await send(input: [repair], tools: [], textFormat: textFormat, previousResponseId: current.id)
+            current = try await send(input: [repair], tools: [], textFormat: textFormat, previousResponseId: current.id, tally: tally)
         }
     }
 
     // MARK: - Helpers
 
     private func send(
-        input: [[String: Any]], tools: [[String: Any]], textFormat: [String: Any], previousResponseId: String?
+        input: [[String: Any]], tools: [[String: Any]], textFormat: [String: Any], previousResponseId: String?, tally: UsageTally
     ) async throws -> OpenAIResponse {
         let body = try OpenAIRequestBuilder.data(
             model: flags.model, input: input, tools: tools, textFormat: textFormat,
             previousResponseId: previousResponseId, reasoningEffort: flags.settings.reasoningEffort)
-        return try await client.send(requestBody: body)
+        let response = try await client.send(requestBody: body)
+        tally.add(response.usage)
+        return response
     }
 
     private func noteWebSearch(_ response: OpenAIResponse, onTrace: (CoachTraceEvent) -> Void) {

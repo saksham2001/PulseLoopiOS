@@ -649,7 +649,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts when GPS is enabled.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts, and — when enabled — uses your approximate location for weather-aware coaching.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -689,7 +689,7 @@
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts when GPS is enabled.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts, and — when enabled — uses your approximate location for weather-aware coaching.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

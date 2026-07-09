@@ -11,13 +11,15 @@ enum CoachSummaryGenerator {
         contextJSON: String,
         fallback: CoachSummaryContent,
         flags: CoachFeatureFlags,
-        client: ResponsesClient
+        client: ResponsesClient,
+        angle: String = "",
+        recentTexts: [String] = []
     ) async -> CoachSummaryContent {
         guard flags.coachEnabled else { return fallback }
         do {
             let input: [[String: Any]] = [
                 OpenAIRequestBuilder.message(role: "system", content: CoachSummaryPromptBuilder.systemPrompt(kind: kind)),
-                OpenAIRequestBuilder.message(role: "developer", content: CoachSummaryPromptBuilder.developerMessage(contextJSON: contextJSON)),
+                OpenAIRequestBuilder.message(role: "developer", content: CoachSummaryPromptBuilder.developerMessage(contextJSON: contextJSON, angle: angle, recentTexts: recentTexts)),
             ]
             let body = try OpenAIRequestBuilder.data(
                 model: flags.model, input: input, tools: [],

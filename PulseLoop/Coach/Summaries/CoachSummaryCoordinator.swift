@@ -39,6 +39,12 @@ final class CoachSummaryCoordinator {
             pendingSleep = true
             pendingToday = true
             scheduleRefresh()
+        case let .syncProgress(stage) where stage == "done":
+            // A full history sync just completed — the sleep gate may now pass, so
+            // re-evaluate both cards (the service self-gates if there's nothing new).
+            pendingSleep = true
+            pendingToday = true
+            scheduleRefresh()
         default:
             break
         }

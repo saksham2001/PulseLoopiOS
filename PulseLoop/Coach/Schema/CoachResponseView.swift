@@ -71,19 +71,15 @@ struct CoachResponseView: View {
             }
 
             if !response.followUpChips.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(response.followUpChips, id: \.self) { chip in
-                            Button { onChipTap?(chip) } label: {
-                                Text(chip)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(PulseColors.textSecondary)
-                                    .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(PulseColors.cardSoft, in: Capsule())
-                                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
+                // Full-width tappable rows (≤2). Wider than the old capsules so a
+                // real follow-up question reads without truncation. `.prefix(2)`
+                // clamps legacy messages and non-strict providers at render time.
+                VStack(spacing: 6) {
+                    ForEach(Array(response.followUpChips.prefix(2)), id: \.self) { chip in
+                        Button { onChipTap?(chip) } label: {
+                            CoachFollowUpChipLabel(text: chip)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.top, 2)
@@ -100,6 +96,33 @@ struct CoachResponseView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(tone.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+/// Full-width follow-up chip row: wraps up to two lines of question text with a
+/// trailing arrow glyph. Shared by the chat response view and the Today/Sleep
+/// summary cards so both render the same wider treatment.
+struct CoachFollowUpChipLabel: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(PulseColors.textSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(PulseColors.textMuted)
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 

@@ -9,8 +9,7 @@ enum CoachFallbacks {
         CoachResponse(
             responseType: .errorRecovery,
             title: "I had trouble with that",
-            summary: "I checked your data but couldn't finish preparing the answer. Try asking again, or narrow the question.",
-            dataQualityNote: "No changes were made.",
+            summary: "I checked your data but couldn't finish preparing the answer. No changes were made — try asking again, or narrow the question.",
             followUpChips: ["How am I doing today?", "Summarize my week", "What data is missing?"],
             confidence: .low
         )
@@ -26,7 +25,6 @@ enum CoachFallbacks {
                 title: "No activity synced yet",
                 // swiftlint:disable:next line_length
                 summary: "I don't have today's activity from the ring yet. Sync the ring or take a measurement and I'll summarize what comes in. (The AI coach is off — add an OpenAI key in Settings to enable full coaching.)",
-                dataQualityNote: packet.dataQualityWarnings.first,
                 followUpChips: ["Is my ring connected?", "What data is missing?"],
                 confidence: .low
             )
@@ -40,7 +38,6 @@ enum CoachFallbacks {
             title: "Here's where you are today",
             summary: "You're at \(steps) steps so far today. The AI coach is off — add an OpenAI key in Settings for trends and tailored guidance.",
             bullets: bullets,
-            dataQualityNote: packet.dataQualityWarnings.last,
             followUpChips: ["How does today compare to yesterday?", "What's my heart rate trend?"],
             confidence: today.dataConfidence == "high" ? .medium : .low
         )

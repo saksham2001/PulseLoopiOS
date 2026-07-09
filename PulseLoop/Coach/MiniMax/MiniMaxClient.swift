@@ -246,7 +246,18 @@ final class MiniMaxClient: ResponsesClient, @unchecked Sendable {
         if outputItems.isEmpty { throw ResponsesError.emptyOutput }
 
         storedAssistantMessage[responseId] = assistantMessage
-        return OpenAIResponse(id: responseId, outputItems: outputItems)
+        return OpenAIResponse(id: responseId, outputItems: outputItems, usage: usage(from: root))
+    }
+
+    /// Maps MiniMax's `usage` block. Only the prompt/completion split is used; if
+    /// MiniMax reports just `total_tokens` (no split), usage stays `nil` rather than
+    /// mis-attributing the total to either side.
+    private func usage(from root: [String: Any]) -> CoachTokenUsage? {
+        guard let usage = root["usage"] as? [String: Any] else { return nil }
+        guard let input = usage["prompt_tokens"] as? Int, let output = usage["completion_tokens"] as? Int else {
+            return nil
+        }
+        return CoachTokenUsage(inputTokens: input, outputTokens: output)
     }
 
     /// Removes `<think>…</think>` reasoning blocks (and any leading whitespace they
