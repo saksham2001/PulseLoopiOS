@@ -8,6 +8,8 @@ import SwiftData
 @MainActor
 @Observable
 final class CoachViewModel {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     var traceEvents: [CoachTraceEvent] = []
     var isSending = false
     var errorBanner: String?
