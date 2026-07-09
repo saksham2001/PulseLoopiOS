@@ -23,17 +23,7 @@ struct CoachResponseView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !response.bullets.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(response.bullets, id: \.self) { bullet in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text("•").foregroundStyle(PulseColors.accent)
-                            Text(coachMarkdown: bullet).foregroundStyle(PulseColors.textSecondary)
-                        }
-                        .font(.system(size: 13))
-                    }
-                }
-            }
+            bulletsSection
 
             if let chart = response.chart {
                 CoachChartView(chart: chart).padding(.top, 2)
@@ -47,43 +37,72 @@ struct CoachResponseView: View {
                 noteRow(icon: "info.circle", text: dq, tone: PulseColors.textMuted)
             }
 
-            if !response.sources.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("SOURCES")
-                        .font(.system(size: 9, weight: .semibold)).tracking(1.2)
-                        .foregroundStyle(PulseColors.textMuted)
-                    ForEach(response.sources) { source in
-                        if let url = URL(string: source.url) {
-                            Link(destination: url) {
-                                Text("\(source.title) — \(source.publisher)")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(PulseColors.info)
-                                    .underline()
-                            }
-                        } else {
-                            Text("\(source.title) — \(source.publisher)")
-                                .font(.system(size: 11))
-                                .foregroundStyle(PulseColors.textMuted)
-                        }
-                    }
-                }
-                .padding(.top, 2)
-            }
+            sourcesSection
+            chipsSection
+        }
+    }
 
-            if !response.followUpChips.isEmpty {
-                // Full-width tappable rows (≤2). Wider than the old capsules so a
-                // real follow-up question reads without truncation. `.prefix(2)`
-                // clamps legacy messages and non-strict providers at render time.
-                VStack(spacing: 6) {
-                    ForEach(Array(response.followUpChips.prefix(2)), id: \.self) { chip in
-                        Button { onChipTap?(chip) } label: {
-                            CoachFollowUpChipLabel(text: chip)
-                        }
-                        .buttonStyle(.plain)
+    @ViewBuilder
+    private var bulletsSection: some View {
+        if !response.bullets.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(response.bullets, id: \.self) { bullet in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•").foregroundStyle(PulseColors.accent)
+                        Text(coachMarkdown: bullet).foregroundStyle(PulseColors.textSecondary)
                     }
+                    .font(.system(size: 13))
                 }
-                .padding(.top, 2)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var sourcesSection: some View {
+        if !response.sources.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("SOURCES")
+                    .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+                    .foregroundStyle(PulseColors.textMuted)
+                ForEach(response.sources) { source in
+                    sourceLink(source)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func sourceLink(_ source: CoachSource) -> some View {
+        if let url = URL(string: source.url) {
+            Link(destination: url) {
+                Text("\(source.title) — \(source.publisher)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(PulseColors.info)
+                    .underline()
+            }
+        } else {
+            Text("\(source.title) — \(source.publisher)")
+                .font(.system(size: 11))
+                .foregroundStyle(PulseColors.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private var chipsSection: some View {
+        if !response.followUpChips.isEmpty {
+            // Full-width tappable rows (≤2). Wider than the old capsules so a
+            // real follow-up question reads without truncation. `.prefix(2)`
+            // clamps legacy messages and non-strict providers at render time.
+            VStack(spacing: 6) {
+                ForEach(Array(response.followUpChips.prefix(2)), id: \.self) { chip in
+                    Button { onChipTap?(chip) } label: {
+                        CoachFollowUpChipLabel(text: chip)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 2)
         }
     }
 

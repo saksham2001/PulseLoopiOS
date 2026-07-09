@@ -10,10 +10,15 @@ struct CoachToolTraceDisclosure: View {
     @State private var expanded = false
 
     init(messageId: UUID) {
-        _calls = Query(
-            filter: #Predicate<CoachToolCall> { $0.messageId == messageId },
-            sort: [SortDescriptor(\.sequence, order: .forward), SortDescriptor(\.createdAt, order: .forward)]
-        )
+        // Splitting the predicate and sort out of the Query(...) call keeps this
+        // initializer's type-check cost low (the inline form is slow enough to
+        // risk the compiler's expression budget on CI's slower runners).
+        let predicate = #Predicate<CoachToolCall> { $0.messageId == messageId }
+        let order: [SortDescriptor<CoachToolCall>] = [
+            SortDescriptor(\.sequence, order: .forward),
+            SortDescriptor(\.createdAt, order: .forward),
+        ]
+        _calls = Query(filter: predicate, sort: order)
     }
 
     /// Collapsed line: joins ≤2 friendly labels with " → ", else "Used N tools".
