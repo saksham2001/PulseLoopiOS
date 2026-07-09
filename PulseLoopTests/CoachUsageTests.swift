@@ -132,9 +132,14 @@ final class CoachPricingCatalogTests: XCTestCase {
         let model = "gpt-5.4"
         let price = try XCTUnwrap(CoachPricingCatalog.price(for: model))
         let usage = CoachTokenUsage(inputTokens: 1_000_000, outputTokens: 500_000, cachedInputTokens: 400_000)
-        let expected = (600_000 * price.inputPer1M
-            + 400_000 * (price.cachedInputPer1M ?? price.inputPer1M)
-            + 500_000 * price.outputPer1M) / 1_000_000
+        // Explicit Double locals: mixing untyped integer literals with the Double
+        // rates through `??`/`*`/`+`/`/` in one expression makes literal-overload
+        // resolution blow up the type-checker on slow CI runners.
+        let cachedRate: Double = price.cachedInputPer1M ?? price.inputPer1M
+        let uncachedInputCost: Double = 600_000 * price.inputPer1M
+        let cachedInputCost: Double = 400_000 * cachedRate
+        let outputCost: Double = 500_000 * price.outputPer1M
+        let expected: Double = (uncachedInputCost + cachedInputCost + outputCost) / 1_000_000
         let cost = try XCTUnwrap(CoachPricingCatalog.cost(model: model, usage: usage))
         XCTAssertEqual(cost, expected, accuracy: 1e-9)
     }
