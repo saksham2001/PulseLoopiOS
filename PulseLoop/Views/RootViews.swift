@@ -136,12 +136,62 @@ struct RootAppView: View {
 struct MainTabView: View {
     @Binding var path: NavigationPath
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(RingBLEClient.self) private var ble
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
+    @State private var quickConnect = QuickConnectNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
     /// Route requested from inside the Coach sheet, pushed once the sheet dismisses.
     @State private var pendingCoachRoute: AppRoute?
+
+    /// RSSI floor for a Quick Connect offer — only rings physically close (in the user's hand /
+    /// pairing mode) clear this, so we don't nag about a ring across the room or a neighbor's.
+    private let quickConnectRSSIThreshold = -65
+
+    /// Quick Connect ambiently scans whenever we're foreground and NOT connected to (or actively
+    /// connecting to) a ring. We deliberately do NOT gate on `hasLastKnownRing`: a healthy paired ring
+    /// auto-reconnects (→ `.connecting`/`.connected`), which turns the scan off, so it only runs when
+    /// the app is genuinely idle-disconnected — i.e. the ring is gone/forgotten/unreachable and the
+    /// user likely wants to (re)pair. `.scanning` is excluded so we never fight the explicit pairing
+    /// screen. (MainTabView is post-onboarding, so onboarding is never a case.)
+    private var shouldAmbientScan: Bool {
+        scenePhase == .active
+            && ble.state != .connected
+            && ble.state != .connecting
+            && ble.state != .reconnecting
+            && ble.state != .scanning
+    }
+
+    /// Refresh the ambient scan to match `shouldAmbientScan`; also close a stale popup once a ring is
+    /// paired/connecting so it can't linger after the user pairs elsewhere.
+    private func syncAmbientScan() {
+        if shouldAmbientScan {
+            ble.startAmbientScan()
+        } else {
+            ble.stopAmbientScan()
+            if ble.state == .connected || ble.state == .connecting { quickConnect.close() }
+        }
+    }
+
+    /// Pick the best Quick Connect candidate from a fresh `discovered` list and, if eligible, present
+    /// the popup. Best = a close, known ring the user hasn't already dismissed and isn't the paired one.
+    private func evaluateQuickConnectCandidate() {
+        guard shouldAmbientScan, !quickConnect.isPresented, ble.state != .connected else { return }
+        // Note: we do NOT exclude `lastKnownIdentifier` — a stored ring that isn't currently
+        // connected/connecting (forgotten at the OS level, replaced, or out of range long enough that
+        // silent reconnect gave up) is exactly what the user wants offered. A healthy paired ring is
+        // already `.connected`/`.connecting`, so `shouldAmbientScan` gates this off for it anyway.
+        let best = ble.discovered
+            .filter {
+                $0.isLikelyRing
+                    && $0.rssi >= quickConnectRSSIThreshold
+                    && !quickConnect.dismissed.contains($0.id)
+            }
+            .max { $0.rssi < $1.rssi }
+        if let best { quickConnect.present(best) }
+    }
 
     init(path: Binding<NavigationPath>) {
         self._path = path
@@ -251,6 +301,21 @@ struct MainTabView: View {
             CoachView(onOpenWorkout: requestCoachRoute)
                 .presentationDragIndicator(.visible) // grabber ("pull tab") at the top of the sheet
         }
+        // Quick Connect: while no ring is paired and the app is foregrounded, an ambient BLE scan
+        // (below) surfaces a close, known ring in this bottom sheet — "Is this your ring?".
+        .sheet(isPresented: $quickConnect.isPresented) {
+            if let candidate = quickConnect.candidate {
+                QuickConnectSheet(candidate: candidate)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+        // Drive the ambient scan off foreground + pairing state, and offer a candidate as rings appear.
+        .onAppear(perform: syncAmbientScan)
+        .onChange(of: scenePhase) { _, _ in syncAmbientScan() }
+        .onChange(of: ble.hasLastKnownRing) { _, _ in syncAmbientScan() }
+        .onChange(of: ble.state) { _, _ in syncAmbientScan() }
+        .onChange(of: ble.discovered) { _, _ in evaluateQuickConnectCandidate() }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
     }

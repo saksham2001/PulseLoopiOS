@@ -153,6 +153,11 @@ final class RingBLEClient: NSObject {
             lastError = "Bluetooth is not powered on."
             return
         }
+        // An explicit scan takes over from any ambient (Quick Connect) scan cleanly: clear the flag so
+        // `stopAmbientScan()` later won't kill this explicit scan's radio, and stop the current scan
+        // before restarting fresh with a cleared discovered list.
+        isAmbientScanning = false
+        central.stopScan()
         discovered = []
         discoveredPeripherals = [:]
         lastError = nil
@@ -166,6 +171,31 @@ final class RingBLEClient: NSObject {
     func stopScanning() {
         central.stopScan()
         if state == .scanning { state = .idle }
+    }
+
+    /// True while an ambient (Quick Connect) background scan is running. Kept separate from `state` so
+    /// the passive scan never flips the connection-state machine / header pill.
+    private(set) var isAmbientScanning = false
+
+    /// Ambient scan for the Quick Connect popup: populate `discovered` WITHOUT touching `state`. Unlike
+    /// `startScanning()`, this never sets `state = .scanning`, so the header pill stays "Disconnected"
+    /// (there's no ring paired) rather than reading as an in-progress action. No-op if an explicit
+    /// scan/connect/connection is already in flight — those own the radio and set `state` themselves.
+    func startAmbientScan() {
+        guard isBluetoothReady, !isAmbientScanning else { return }
+        guard state != .scanning, state != .connecting, state != .connected else { return }
+        isAmbientScanning = true
+        // Same wide, no-filter scan as `startScanning()` (matching happens in didDiscover), but we
+        // don't clear `discovered`/`discoveredPeripherals` or touch `state`.
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    }
+
+    /// Stop the ambient scan. Only calls `central.stopScan()` if no explicit scan is active — an
+    /// explicit `startScanning()`/`connect` that took over must keep the radio running.
+    func stopAmbientScan() {
+        guard isAmbientScanning else { return }
+        isAmbientScanning = false
+        if state != .scanning { central.stopScan() }
     }
 
     func connect(to id: UUID, selectedModelID: String? = nil) {
@@ -279,6 +309,7 @@ final class RingBLEClient: NSObject {
         advertisedName: String?
     ) {
         central.stopScan()
+        isAmbientScanning = false   // an explicit connect owns the radio; drop the ambient (Quick Connect) scan
         autoReconnect = true
         // Force-close any stale connection (incl. a different peripheral) before opening a new one, so
         // a reconnect after an idle drop can't collide with an orphaned handle. iOS analogue of
