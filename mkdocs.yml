@@ -110,6 +110,8 @@ nav:
       - Overview: hardware/index.md
       - Jring / 56ff: hardware/jring.md
       - Colmi / Yawell: hardware/colmi.md
+      - TK5 / SmartHealth: hardware/tk5.md
+      - TK5 protocol notes: hardware/tk5-protocol.md
       - SIMSONLAB: hardware/simsonlab.md
       - Premium Rings: hardware/premium.md
   - Platforms:

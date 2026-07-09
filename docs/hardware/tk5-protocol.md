@@ -1,9 +1,20 @@
+---
+title: TK5 protocol notes
+description: >-
+  Byte-level teardown of the TK5's be940 protocol — GATT map, CRC16 framing,
+  commands, history records, and sleep decoding.
+---
+
 # TK5 Ring Protocol (SmartHealth)
 
 Developer notes for the TK5 ring driver (`PulseLoop/RingProtocol/TK5*.swift`). Reverse-engineered
 from a single Android **btsnoop HCI** capture of the **SmartHealth** app
 (`com.zhuoting.healthyucheng`, [Play Store](https://play.google.com/store/apps/details?id=com.zhuoting.healthyucheng))
 talking to a `TK5 24AA` ring on 2026-07-06.
+
+!!! warning "Experimental — limited support"
+    One capture is not a spec. See [TK5 / SmartHealth](tk5.md) for what this does and doesn't mean
+    for the readings you'll see in the app.
 
 Fields read straight out of the capture are **verified**; offsets inferred but not independently
 confirmed are tagged **UNVERIFIED** here and in code. Every decode routes through `RingEventBridge`,
@@ -119,10 +130,10 @@ from HRV rather than expecting a ring field.
 
 History frames **concatenate many fixed-size records**; decoding only the first hid periodic data.
 - `05 15`: packed **6-byte** HR records `[ts:4][flag:1][hr:1]` (e.g. eight hourly overnight samples).
-- `05 18`: packed **20-byte** combined-vitals records `[ts:4][steps:2][hr@6][sys?@7][dia?@8][spo2@9]
-  [?@10][hrv@11]…`. We emit periodic **SpO₂ (@9)** and **HRV (@11)**; HR comes from `05 15`. Steps are
-  a *cumulative* daily counter (not deltas) and sync live, so not re-emitted. BP (@7/@8, plausible
-  110/75-type values) left out pending a verified reading.
+- `05 18`: packed **20-byte** combined-vitals records `[ts:4][steps:2][hr@6][sys@7][dia@8][spo2@9]
+  [?@10][hrv@11]…`. We emit periodic **SpO₂ (@9)**, **HRV (@11)**, and **BP (@7/@8** — later verified
+  against the app, see below); HR comes from `05 15`. Steps are a *cumulative* daily counter (not
+  deltas), emitted as a per-day max rather than an additive bucket.
 
 ## Sleep (`05 13`) — VERIFIED
 

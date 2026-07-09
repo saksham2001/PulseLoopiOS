@@ -45,6 +45,15 @@ section breaks the hardware down by manufacturer.
 
     [:octicons-arrow-right-24: Colmi / Yawell](colmi.md)
 
+-   :material-flask-outline: __TK5 / SmartHealth__
+
+    ---
+
+    🧪 Experimental. Custom `be940` protocol (SmartHealth app), reverse-engineered
+    from a single capture — some metrics unverified, no encrypted login yet.
+
+    [:octicons-arrow-right-24: TK5 / SmartHealth](tk5.md)
+
 -   :material-help-circle-outline: __SIMSONLAB__
 
     ---
@@ -70,60 +79,63 @@ section breaks the hardware down by manufacturer.
 !!! info "Legend"
     - ✅ — yes / supported
     - ❌ — no / not supported
+    - 🧪 — implemented, needs testing / experimental
     - ❓ — unknown
 
-|  | 56ff / Jring | Colmi R02/R03/etc | Colmi R10 | Colmi R12 | Colmi R11 |
-|---|---:|---:|---:|---:|---:|
-| **SoC** | Renesas DA14531 | Realtek RTL8762 | RTL8762 ESF | Realtek RTL8762 | Realtek AB2026 |
-| **Architecture** | ARM Cortex-M0 | ARM | ARM | ARM | ARM |
-| **Bluetooth** | BLE 5.x | BLE 5.0 | BLE 5.0 | BLE 5.0 | BLE 5.0 |
-| **PPG sensor** | Unknown (HR/SpO₂) | Unknown | Vcare VC30F | Vcare VC30F | Vcare VC30F |
-| **PPG LEDs** | Unknown | Unknown | Red + green (dual) | Red + green (dual) | Red + green (dual) |
-| **Accelerometer** | Yes | Unknown | STK8321 | ST LIS2DOC | STK8321 |
-| **Skin temperature** | ❌ | ❓ | ✅ | ✅ | ✅ |
-| **Battery** | Unknown | Varies | 17 mAh | 15–18 mAh | 15–18 mAh¹ |
-| **Battery life** | Unknown | Varies | ~4–7 days | ~4–7 days | ~4–7 days |
-| **Charging case** | ❌ | ❌ | ✅ (200 mAh) | ❌ | ✅ (200 mAh) |
-| **Display** | ❌ | ❌ | ❌ | ✅ | ❌ |
-| **Waterproof** | Varies by seller | IP68 / 3ATM | 5ATM | IP68 + 1ATM | IP68 + 5ATM |
-| **Weight** | Unknown | Unknown | Unknown | ~4 g | Unknown |
-| **Price** | $7–12 | $15–25 | $15–25 | ~$30 | ~$15–25 |
-| **Protocol** | Custom 56ff | Nordic-UART QRing | Nordic-UART QRing | Nordic-UART QRing | Nordic-UART QRing² |
-| **Frame size** | Fixed 20 bytes | 16 bytes (checksum) | 16 bytes (checksum) | 16 bytes (checksum) | 16 bytes (checksum) |
-| **Encryption** | None | None | None | None | None |
-| **FW OTA** | ✅ Renesas SUOTA | ✅ BLE OTA (no sign) | ❓ | ❓ | ❓ |
-| **Custom firmware** | ✅ (SR08 ref) | ✅ (RF03 ref) | ❓ | ❓ | ❓ |
-| **PulseLoop support** | ✅ | ✅ | ✅ | ✅ | ✅ |
+|  | 56ff / Jring | Colmi R02/R03/etc | Colmi R10 | Colmi R12 | Colmi R11 | TK5 |
+|---|---:|---:|---:|---:|---:|---:|
+| **SoC** | Renesas DA14531 | Realtek RTL8762 | RTL8762 ESF | Realtek RTL8762 | Realtek AB2026 | ❓ |
+| **Architecture** | ARM Cortex-M0 | ARM | ARM | ARM | ARM | ❓ |
+| **Bluetooth** | BLE 5.x | BLE 5.0 | BLE 5.0 | BLE 5.0 | BLE 5.0 | BLE |
+| **PPG sensor** | Unknown (HR/SpO₂) | Unknown | Vcare VC30F | Vcare VC30F | Vcare VC30F | ❓ |
+| **PPG LEDs** | Unknown | Unknown | Red + green (dual) | Red + green (dual) | Red + green (dual) | Green + red/IR |
+| **Accelerometer** | Yes | Unknown | STK8321 | ST LIS2DOC | STK8321 | Yes (❓ part) |
+| **Skin temperature** | ❌ | ❓ | ✅ | ✅ | ✅ | ❌ |
+| **Battery** | Unknown | Varies | 17 mAh | 15–18 mAh | 15–18 mAh¹ | ❓ |
+| **Battery life** | Unknown | Varies | ~4–7 days | ~4–7 days | ~4–7 days | ❓ |
+| **Charging case** | ❌ | ❌ | ✅ (200 mAh) | ❌ | ✅ (200 mAh) | ❓ |
+| **Display** | ❌ | ❌ | ❌ | ✅ | ❌ | ❓ |
+| **Waterproof** | Varies by seller | IP68 / 3ATM | 5ATM | IP68 + 1ATM | IP68 + 5ATM | ❓ |
+| **Weight** | Unknown | Unknown | Unknown | ~4 g | Unknown | ❓ |
+| **Price** | $7–12 | $15–25 | $15–25 | ~$30 | ~$15–25 | ❓ |
+| **Protocol** | Custom 56ff | Nordic-UART QRing | Nordic-UART QRing | Nordic-UART QRing | Nordic-UART QRing² | Custom be940 |
+| **Frame size** | Fixed 20 bytes | 16 bytes (checksum) | 16 bytes (checksum) | 16 bytes (checksum) | 16 bytes (checksum) | Variable (CRC16) |
+| **Encryption** | None | None | None | None | None | None³ |
+| **FW OTA** | ✅ Renesas SUOTA | ✅ BLE OTA (no sign) | ❓ | ❓ | ❓ | ❓ |
+| **Custom firmware** | ✅ (SR08 ref) | ✅ (RF03 ref) | ❓ | ❓ | ❓ | ❓ |
+| **PulseLoop support** | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
 
 ¹ 15 mAh for sizes 8–9, 18 mAh for sizes 10–13.
 ² Works with the QRing app; also has a companion "Da Rings" app. Matched by Colmi driver.
+³ TK5 data channels are cleartext. It also exposes a separate encrypted `AE00` login, which PulseLoop does not implement.
 
 ## Supported Rings — Capabilities
 
-| Capability | 56ff / Jring | Colmi R02/etc | Colmi R10 | Colmi R12 | Colmi R11 |
-|---|---:|---:|---:|---:|---:|
-| Heart rate — spot | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Heart rate — history | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Heart rate — live | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SpO₂ — history | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SpO₂ — spot | ✅ | ❌¹ | ❌¹ | ❌¹ | ❌¹ |
-| Steps / distance / calories | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Sleep (light/deep/awake) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| REM sleep | ❌ | ✅ | ✅ | ✅ | ✅ |
-| Blood pressure | ✅² | ❌ | ❌ | ❌ | ❌ |
-| Blood sugar | ✅³ | ❌ | ❌ | ❌ | ❌ |
-| HRV | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Stress | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Fatigue | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Skin temperature | ❌ | ✅ | ✅ | ✅ | ✅ |
-| Battery level | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Find device | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Continuous background sync | ❌ | ✅ | ✅ | ✅ | ✅ |
-| FW update via app | ✅ | ✅ | ❓ | ❓ | ❓ |
+| Capability | 56ff / Jring | Colmi R02/etc | Colmi R10 | Colmi R12 | Colmi R11 | TK5 |
+|---|---:|---:|---:|---:|---:|---:|
+| Heart rate — spot | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Heart rate — history | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Heart rate — live | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| SpO₂ — history | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| SpO₂ — spot | ✅ | ❌¹ | ❌¹ | ❌¹ | ❌¹ | 🧪 |
+| Steps / distance / calories | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Sleep (light/deep/awake) | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| REM sleep | ❌ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Blood pressure | ✅² | ❌ | ❌ | ❌ | ❌ | 🧪 |
+| Blood sugar | ✅³ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| HRV | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Stress | ✅ | ✅ | ✅ | ✅ | ✅ | ❌⁴ |
+| Fatigue | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Skin temperature | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Battery level | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Find device | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 |
+| Continuous background sync | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| FW update via app | ✅ | ✅ | ❓ | ❓ | ❓ | ❓ |
 
 ¹ Colmi family has no on-demand SpO₂ reading; SpO₂ is all-day background only.
 ² Direct PPG sensor reading, no user profile required.
 ³ Profile-derived estimate from sex/age/height/weight, not a real glucometer reading.
+⁴ The TK5 doesn't store stress — SmartHealth derives it from HRV app-side — so PulseLoop doesn't claim it.
 
 ## Not Supported by PulseLoop
 

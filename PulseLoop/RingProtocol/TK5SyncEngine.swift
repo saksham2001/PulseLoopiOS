@@ -32,7 +32,10 @@ final class TK5SyncEngine: RingSyncEngine {
 
     private var historyActive = false
     private var historyWatchdog: Task<Void, Never>?
-    private let historyQuietTimeout: UInt64 = 4_000_000_000   // 4s of no records ⇒ dump complete
+    /// Quiet period after the last inbound record before we call the dump complete. Matches the Colmi
+    /// engine's per-stage timeout: a 4s window let a slow multi-frame sleep transfer time out and get
+    /// acked away mid-record.
+    private let historyQuietTimeout: UInt64 = 10_000_000_000
 
     private func startHistorySync() {
         historyActive = true
@@ -45,8 +48,9 @@ final class TK5SyncEngine: RingSyncEngine {
 
     private func armHistoryWatchdog() {
         historyWatchdog?.cancel()
+        let timeout = historyQuietTimeout
         historyWatchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: self?.historyQuietTimeout ?? 4_000_000_000)
+            try? await Task.sleep(nanoseconds: timeout)
             guard !Task.isCancelled, let self, self.historyActive else { return }
             self.finishHistorySync()
         }
@@ -64,8 +68,18 @@ final class TK5SyncEngine: RingSyncEngine {
         // While a dump is in flight, each history record pulls the next page and resets the quiet timer.
         guard historyActive else { return }
         switch event {
-        case .historyMeasurement, .activityBucket:
+        // Every record a history frame can decode to. `.sleepTimeline` and `.bloodPressureSample` used
+        // to fall through, so a night of sleep or a BP-only page never asked for the next page.
+        // Deliberately *not* `.activityUpdate`: the ring's continuous live `06 00` status decodes to
+        // that too, and treating it as history would keep the watchdog alive forever, so the dump
+        // would never finish and `historyAck` would never be sent.
+        case .historyMeasurement, .activityBucket, .bloodPressureSample, .sleepTimeline:
             writer?.enqueue(Data(encoder.historyPage()))
+            armHistoryWatchdog()
+        case .historySyncProgress:
+            // `TK5Driver` announces every history frame with this, including a sleep continuation that
+            // decodes to nothing and an all-unworn page that decodes to no records. Keep the dump
+            // alive, but don't ask for the next page — the ring may still be streaming this one.
             armHistoryWatchdog()
         default:
             break

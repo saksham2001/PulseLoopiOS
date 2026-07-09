@@ -251,4 +251,109 @@ final class TK5DecoderTests: XCTestCase {
             manufacturerData: bytes("10786501000101120000000000"))
         XCTAssertTrue(TK5Coordinator.matches(name: "Unlabeled", advertisement: adv))
     }
+
+    // MARK: History paging
+
+    /// An unworn `05 18` record (SpO₂ out of range, HRV 0, BP 0) decodes to nothing but the day's
+    /// cumulative step count — which is indistinguishable from a live `06 00` status push.
+    func testUnwornCombinedVitalsRecordDecodesToStepsOnly() {
+        let frame = TK5Frame(validating: bytes("05181a001cf0de31080d4700000000000000000000000000c362"))!
+        let events = decoder.decode(frame)
+        XCTAssertEqual(events.count, 1)
+        guard case .activityUpdate = events.first else {
+            return XCTFail("expected activityUpdate, got \(events)")
+        }
+    }
+}
+
+/// `RingBLEClient` only calls the sync engine's `handle` once per *decoded event*, so a frame that
+/// decodes to nothing — a sleep continuation, an all-unworn history page — is invisible to the
+/// history watchdog. That is how a slow overnight transfer used to get acked away mid-record. The
+/// driver therefore announces every history frame, since only it can see the frame type.
+@MainActor
+final class TK5HistorySyncTests: XCTestCase {
+    private final class FakeWriter: RingCommandWriter {
+        var sent: [Data] = []
+        func enqueue(_ command: Data) { sent.append(command) }
+    }
+
+    private func bytes(_ hex: String) -> Data {
+        var out = [UInt8]()
+        var i = hex.startIndex
+        while i < hex.endIndex {
+            let n = hex.index(i, offsetBy: 2)
+            out.append(UInt8(hex[i..<n], radix: 16)!)
+            i = n
+        }
+        return Data(out)
+    }
+
+    /// Header declares a 256-byte record, so neither frame completes it. Both must still announce
+    /// themselves as history frames, or the engine's quiet watchdog never sees them.
+    func testEveryHistoryFrameAnnouncesProgress() {
+        let writer = FakeWriter()
+        let driver = TK5Driver(writer: writer)
+        let stream = CBUUID(string: TK5UUIDs.stream)
+
+        let header = driver.ingest(bytes("05131a00affa000111111111111111111111111111111111d955"), from: stream)
+        guard case .historySyncProgress = header.first else {
+            return XCTFail("sleep header must announce progress, got \(header)")
+        }
+        let continuation = driver.ingest(bytes("05130e00f29fe9de313c0500d764"), from: stream)
+        guard case .historySyncProgress = continuation.first else {
+            return XCTFail("sleep continuation must announce progress, got \(continuation)")
+        }
+        // An all-unworn `05 18` page decodes to no records at all — only the frame type says it's history.
+        let unworn = driver.ingest(bytes("05181a001cf0de31080d4700000000000000000000000000c362"), from: stream)
+        guard case .historySyncProgress = unworn.first else {
+            return XCTFail("history record frame must announce progress, got \(unworn)")
+        }
+    }
+
+    /// A live `06 00` status frame decodes to `.activityUpdate` too, so it must NOT look like history.
+    func testLiveStatusFrameIsNotAnnouncedAsHistory() {
+        let writer = FakeWriter()
+        let driver = TK5Driver(writer: writer)
+        let events = driver.ingest(bytes("06000c007b0297011a00b60d"), from: CBUUID(string: TK5UUIDs.stream))
+        XCTAssertFalse(events.contains { if case .historySyncProgress = $0 { return true } else { return false } })
+        guard case .activityUpdate = events.first else { return XCTFail("expected activityUpdate") }
+    }
+
+    /// Every record a history frame decodes to has to drive the next page. A sleep timeline and a
+    /// BP-only page used to fall through to `default` and stall the dump.
+    func testHistoryRecordsRequestTheNextPage() {
+        let writer = FakeWriter()
+        let engine = TK5SyncEngine(writer: writer)
+        engine.runStartup()
+
+        let paging: [RingDecodedEvent] = [
+            .sleepTimeline(timestamp: Date(), stages: [.light]),
+            .bloodPressureSample(systolic: 112, diastolic: 75, timestamp: Date()),
+            .historyMeasurement(kind: .heartRate, value: 62, timestamp: Date()),
+        ]
+        let nextPage = Data(TK5Encoder().historyPage())
+        for event in paging {
+            writer.sent.removeAll()
+            engine.handle(event)
+            XCTAssertEqual(writer.sent, [nextPage], "expected a page request for \(event.kind)")
+        }
+    }
+
+    /// Progress keeps the dump alive but must not ask for the next page — the ring may still be
+    /// streaming the current record. And a live `.activityUpdate` must do neither: the ring pushes
+    /// `06 00` continuously, so treating it as history would keep the dump open forever.
+    func testProgressAndLiveStatusDoNotRequestPages() {
+        let writer = FakeWriter()
+        let engine = TK5SyncEngine(writer: writer)
+        engine.runStartup()
+
+        for event: RingDecodedEvent in [
+            .historySyncProgress(stage: "Syncing sleep…"),
+            .activityUpdate(timestamp: Date(), steps: 100, distanceMeters: 0, calories: 0),
+        ] {
+            writer.sent.removeAll()
+            engine.handle(event)
+            XCTAssertTrue(writer.sent.isEmpty, "\(event.kind) must not request a page")
+        }
+    }
 }

@@ -326,6 +326,9 @@ final class RingSyncCoordinator {
             abort: { false }
         )
         engine?.stopSpO2()
+        // On rings whose live metrics share one stream (TK5: every metric rides `03 2f`, and its stop
+        // is mode-agnostic), stopping SpO2 also tears down a running workout HR stream. Bring it back.
+        restartWorkoutHeartRateIfActive()
         spo2State = result.map { .done($0) } ?? .failed
         return result
     }
@@ -346,6 +349,8 @@ final class RingSyncCoordinator {
             abort: { false }
         )
         engine?.stopHRV()
+        // Same shared-stream teardown as SpO2 above: restore the workout's live HR if one was running.
+        restartWorkoutHeartRateIfActive()
         hrvState = result.map { .done($0) } ?? .failed
         return result
     }

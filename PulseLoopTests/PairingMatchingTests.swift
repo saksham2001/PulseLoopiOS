@@ -1,5 +1,6 @@
 import XCTest
 import CoreBluetooth
+import UIKit
 @testable import PulseLoop
 
 /// The pairing flow must recognize the whole Colmi/Yawell ring family by advertised name (they all
@@ -93,5 +94,39 @@ final class PairingMatchingTests: XCTestCase {
 
     func testColmiR11ReusesYawellR11Image() {
         XCTAssertEqual(WearableModel.colmiR11.imageName, WearableModel.yawellR11.imageName)
+    }
+
+    // MARK: - Support level
+
+    func testSupportLevelIsPerFamily() {
+        XCTAssertEqual(RingDeviceType.jring.supportLevel, .full)
+        XCTAssertEqual(RingDeviceType.colmiR02.supportLevel, .full)
+        XCTAssertEqual(RingDeviceType.tk5.supportLevel, .limited)
+    }
+
+    /// The TK5 is the only limited-support family, and only limited families get a badge.
+    func testOnlyTK5CarriesTheLimitedSupportBadge() {
+        XCTAssertEqual(WearableModel.tk5.supportLevel, .limited)
+        XCTAssertEqual(WearableModel.tk5.supportLevel.badgeLabel, "Limited support")
+
+        for model in WearableModel.catalog where model.family != .tk5 {
+            XCTAssertEqual(model.supportLevel, .full, model.displayName)
+            XCTAssertNil(model.supportLevel.badgeLabel, model.displayName)
+        }
+    }
+
+    /// Every catalog model must name an imageset that exists, or `RingArtView` renders an empty
+    /// platter (a non-nil `imageName` has no fallback path). Resolve against the app bundle rather
+    /// than `.main` so this holds whether or not the test target is hosted.
+    func testEveryCatalogImageNameResolvesToAnAsset() {
+        let appBundle = Bundle(for: RingBLEClient.self)
+        for model in WearableModel.catalog {
+            guard let imageName = model.imageName else { continue }
+            XCTAssertNotNil(
+                UIImage(named: imageName, in: appBundle, compatibleWith: nil),
+                "missing imageset '\(imageName)' for \(model.displayName)"
+            )
+        }
+        XCTAssertEqual(WearableModel.tk5.imageName, "tk5")
     }
 }

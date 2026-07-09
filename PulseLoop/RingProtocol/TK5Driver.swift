@@ -4,7 +4,7 @@ import Foundation
 /// TK5 driver. Owns the length-prefixed CRC16 framing and the split-channel topology: the command
 /// characteristic `be940001` is *both* the write target and a notify source (command replies), while
 /// `be940003` carries the async live/history stream. The standard `180D`/`2A37` Heart Rate
-/// characteristic is also subscribed as an auth-independent fallback live-HR source.
+/// characteristic is deliberately left unsubscribed — see the BLE-topology note below.
 ///
 /// Because `be940001` is simultaneously the write and a notify characteristic, `RingBLEClient`'s
 /// discovery subscribes any `notifyUUIDs` entry even when it also matches `writeUUID`.
@@ -49,14 +49,26 @@ final class TK5Driver: WearableDriver {
     private var sleepTotal = 0
 
     // MARK: Inbound decode
+    //
+    // Every history frame is announced with a leading `.historySyncProgress` before its decoded
+    // records. The sync engine's watchdog needs to know *a history frame arrived*, and it can't infer
+    // that from the events alone: a sleep continuation frame decodes to nothing until the record is
+    // complete, an all-unworn `05 18` page yields only `.activityUpdate`, and `.activityUpdate` is
+    // also what the ring's continuous live `06 00` status pushes. Only the frame type distinguishes
+    // them, and only the driver sees it.
     func ingest(_ data: Data, from characteristic: CBUUID) -> [RingDecodedEvent] {
         guard let frame = TK5Frame(validating: data) else {
             return [.unknown(commandId: data.first ?? 0, raw: data)]
         }
-        if frame.type == TK5FrameType.register, frame.cmd == TK5Command.sleepRecord {
-            return reassembleSleep(frame.payload)
+        guard frame.type == TK5FrameType.register else { return decoder.decode(frame) }
+        switch frame.cmd {
+        case TK5Command.sleepRecord:
+            return [.historySyncProgress(stage: "Syncing sleep…")] + reassembleSleep(frame.payload)
+        case TK5Command.historyRecordShort, TK5Command.historyRecordLong:
+            return [.historySyncProgress(stage: "Syncing history…")] + decoder.decode(frame)
+        default:
+            return decoder.decode(frame)   // register reads / pref-write acks
         }
-        return decoder.decode(frame)
     }
 
     private func reassembleSleep(_ payload: [UInt8]) -> [RingDecodedEvent] {
@@ -69,8 +81,8 @@ final class TK5Driver: WearableDriver {
         } else {
             return []   // continuation with no header seen (mid-stream connect) — ignore
         }
-        guard sleepTotal > 0, sleepBuffer.count >= sleepTotal else { return [] }
-        let record = sleepBuffer
+        guard sleepTotal > 0, sleepBuffer.count >= sleepTotal else { return [] }   // still buffering
+        let record = Array(sleepBuffer.prefix(sleepTotal))
         sleepBuffer = []
         sleepTotal = 0
         return decoder.decodeSleep(record)

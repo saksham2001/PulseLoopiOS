@@ -27,9 +27,10 @@ final class TK5Coordinator: WearableCoordinator {
     }
 
     /// Metrics decoded from the captures: live + history HR, live SpO₂, day steps, HRV (history +
-    /// live, verified against the app's displayed values), and the in-band battery. Stress is *not*
-    /// claimed — the ring doesn't store it; SmartHealth derives it from HRV app-side. Sleep/temperature
-    /// are omitted until a capture contains them, so no empty cards appear.
+    /// live, verified against the app's displayed values), blood pressure, the deep/light/REM sleep
+    /// timeline, and the in-band battery. Stress is *not* claimed — the ring doesn't store it;
+    /// SmartHealth derives it from HRV app-side. Temperature is omitted until a capture contains it,
+    /// so no empty card appears.
     ///
     /// `manualHeartRate` / `manualSpo2` / `manualHrv` surface the "Measure now" buttons in Vitals: a
     /// spot reading toggles the live `03 2f` stream on, collects the first good sample from the
