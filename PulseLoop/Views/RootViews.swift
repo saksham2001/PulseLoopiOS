@@ -246,19 +246,33 @@ struct AppHeader: View {
     @Binding var path: NavigationPath
     @Environment(RingBLEClient.self) private var ble
     @Query private var devices: [Device]
+    @Query private var profiles: [UserProfile]
+
+    /// Profile's first name (text before the first space), or nil when no name is set.
+    private var firstName: String? {
+        guard let full = profiles.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !full.isEmpty else { return nil }
+        return full.split(separator: " ").first.map(String.init) ?? full
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("PulseLoop")
-                    .font(PulseFont.caption)
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-                    .foregroundStyle(PulseColors.textMuted)
-                Text(greetingForHour())
-                    .font(PulseFont.title3)
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .lineLimit(1)
+                if let firstName {
+                    // Two lines: greeting on top, name below — avoids truncating a long name.
+                    Text("\(greetingForHour()),")
+                        .font(PulseFont.footnote)
+                        .foregroundStyle(PulseColors.textMuted)
+                    Text(firstName)
+                        .font(PulseFont.title2.weight(.semibold))
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .lineLimit(1)
+                } else {
+                    Text(greetingForHour())
+                        .font(PulseFont.title3)
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
             // Clean top bar: just the live connection status. Settings is in the tab
