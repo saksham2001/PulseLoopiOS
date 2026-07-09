@@ -78,12 +78,28 @@ final class CoachNotificationScheduler {
             return
         }
         let work = Task {
-            _ = await service.runDueSlot()
+            let outcome = await service.runDueSlot()
+            // Morning skipped because last night's sleep hasn't synced yet — queue one
+            // short retry so we catch the check-in once the sync lands (instead of
+            // waiting for the next full window).
+            if outcome == .skippedNoSleepData {
+                submitSleepRetry()
+            }
             // Background is a good moment to also catch a proactive alert; the
             // call self-gates (on-device only, enabled, deduped).
             _ = await service.runProactiveAlertIfNeeded()
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = { work.cancel() }
+    }
+
+    /// One +45min app-refresh wake to retry a morning check-in that was skipped
+    /// because last night's sleep hadn't synced. Best-effort; the foreground
+    /// catch-up covers the case where the retry doesn't run.
+    private func submitSleepRetry() {
+        guard isRegistered else { return }
+        let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
+        request.earliestBeginDate = Date().addingTimeInterval(45 * 60)
+        try? BGTaskScheduler.shared.submit(request)
     }
 }

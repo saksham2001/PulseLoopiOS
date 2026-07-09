@@ -8,6 +8,13 @@ import UserNotifications
 /// Daily check-in notifications live in `NotificationsSettingsView`. Visuals
 /// reuse the existing design system.
 struct CoachSettingsSection: View {
+    /// Footer for the Capabilities group, explaining what the location & weather
+    /// toggle actually shares with the provider.
+    private static let environmentContextFooter = """
+        Location & weather shares your city name and current weather with the AI provider \
+        so coaching can account for conditions. Never shares your precise location.
+        """
+
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
@@ -244,7 +251,7 @@ struct CoachSettingsSection: View {
                 }
             }
 
-            SettingsGroup(header: "Capabilities") {
+            SettingsGroup(header: "Capabilities", footer: Self.environmentContextFooter) {
                 // Web search is provider-hosted. MiniMax's API exposes no web search,
                 // and the on-device model is tool-less — so the toggle is only offered
                 // for providers that can actually search.
@@ -255,6 +262,7 @@ struct CoachSettingsSection: View {
 
                 FormToggleRow(title: "AI actions (set goals, log, edit)", isOn: writeToolsBinding)
                 FormToggleRow(title: "Live ring measurements", isOn: liveMeasurementsBinding)
+                FormToggleRow(title: "Use location & weather", isOn: environmentContextBinding)
                 if showsImageInputToggle {
                     FormToggleRow(title: "Image input (attach photos)", isOn: imageInputBinding)
                 }
@@ -517,6 +525,15 @@ struct CoachSettingsSection: View {
     }
     private var imageInputBinding: Binding<Bool> {
         Binding(get: { store.settings.enableImageInput }, set: { store.settings.enableImageInput = $0 })
+    }
+    private var environmentContextBinding: Binding<Bool> {
+        Binding(
+            get: { store.settings.enableEnvironmentContext },
+            set: { newValue in
+                store.settings.enableEnvironmentContext = newValue
+                if newValue { CoachEnvironmentContextService.shared.requestPermissionIfNeeded() }
+            }
+        )
     }
 
     // MARK: - Key actions

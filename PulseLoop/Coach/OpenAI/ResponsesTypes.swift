@@ -19,6 +19,9 @@ struct ResponseFunctionCall: Sendable {
 struct OpenAIResponse: Sendable {
     let id: String
     let outputItems: [ResponseOutputItem]
+    /// Token usage for this call, when the provider reports it. `nil` for
+    /// providers that don't (Apple on-device) or turns that omit the usage block.
+    var usage: CoachTokenUsage? = nil
 
     var functionCalls: [ResponseFunctionCall] {
         outputItems.compactMap { if case .functionCall(let fc) = $0 { return fc } else { return nil } }
@@ -61,7 +64,20 @@ struct OpenAIResponse: Sendable {
                 items.append(.other(type: type))
             }
         }
-        return OpenAIResponse(id: id, outputItems: items)
+        return OpenAIResponse(id: id, outputItems: items, usage: parseUsage(root["usage"] as? [String: Any]))
+    }
+
+    /// Reads the Responses-API `usage` block: `input_tokens` / `output_tokens`,
+    /// with cached input under `input_tokens_details.cached_tokens`. Returns `nil`
+    /// when the block is absent so callers keep their default.
+    private static func parseUsage(_ usage: [String: Any]?) -> CoachTokenUsage? {
+        guard let usage else { return nil }
+        let cached = (usage["input_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int ?? 0
+        return CoachTokenUsage(
+            inputTokens: usage["input_tokens"] as? Int ?? 0,
+            outputTokens: usage["output_tokens"] as? Int ?? 0,
+            cachedInputTokens: cached
+        )
     }
 
     private static func extractText(_ messageItem: [String: Any]) -> String {

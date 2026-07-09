@@ -14,6 +14,10 @@ final class CoachNotificationService {
         case skippedDuplicate
         case skippedDisabled
         case skippedNoData
+        /// The morning slot was due but last night's sleep hasn't fully synced yet.
+        /// Deliberately NOT recorded, so a foreground catch-up (or a scheduled +45min
+        /// retry) can fire it once the sync lands.
+        case skippedNoSleepData
         /// The model decided there was nothing worth interrupting the user for.
         case skippedAdaptive
         /// A proactive alert fired for a detected anomaly.
@@ -90,6 +94,11 @@ final class CoachNotificationService {
         let flags = CoachFeatureFlags(settings: settings, hasAPIKey: apiKey != nil)
         guard force || flags.coachEnabled else { return .skippedDisabled }
 
+        // Morning-only: don't fire until last night's sleep has fully synced — otherwise
+        // the check-in leads with partial/absent sleep. Skip WITHOUT recording so a
+        // foreground catch-up (or a +45min BGAppRefresh retry) can fire it once synced.
+        if !force, slot == .morning, !sleepDataSynced(now: now) { return .skippedNoSleepData }
+
         if !force {
             let fresh = await ensureFreshData(now: now)
             if Task.isCancelled { return .skippedNoData }          // BGTask expired mid-wait
@@ -100,9 +109,13 @@ final class CoachNotificationService {
             }
         }
 
-        let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now)
+        let environment = await CoachEnvironmentContextService.shared.snapshot(now: now)
+        let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now, environment: environment)
+        let angle = CoachVarietyHints.angle(seed: CoachNotificationRecord.dateKey(for: now) + slot.rawValue)
+        let recentTexts = recentNotificationTexts()
         let notification = await CoachNotificationGenerator.generate(
-            slot: slot, packet: packet, flags: flags, client: activeClient
+            slot: slot, packet: packet, flags: flags, client: activeClient,
+            angle: angle, recentTexts: recentTexts
         )
         // Adaptive skip: when the model says there's nothing useful to add, stay
         // quiet (but the test button still forces a delivery).
@@ -129,7 +142,8 @@ final class CoachNotificationService {
         }
 
         let slot = forcedSlot(now: now)  // only for building the context packet
-        let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now)
+        let environment = await CoachEnvironmentContextService.shared.snapshot(now: now)
+        let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now, environment: environment)
         guard let anomaly = CoachAnomalyDetector.detect(packet) else { return .noAnomaly }
 
         if !force, isAnomalyDuplicate(anomaly, now: now) { return .noAnomaly }
@@ -162,6 +176,29 @@ final class CoachNotificationService {
             predicate: #Predicate { $0.dateKey == key && $0.slotRaw == raw }
         )
         return ((try? modelContext.fetch(descriptor)) ?? []).isEmpty == false
+    }
+
+    /// Whether last night's sleep is safe to summarize in the morning check-in:
+    /// a full history sync must have completed at/after the night ended. Passes
+    /// permissively when there's no last-night session at all (nothing to wait for)
+    /// or no device / full-sync stamp (streaming devices that never run a paged
+    /// history sync) — the general freshness gate still guards those.
+    func sleepDataSynced(now: Date = Date()) -> Bool {
+        guard let session = SleepRepository.latestSession(context: modelContext) else { return true }
+        // Only gate on a *recent* night; an old session (nothing newer) shouldn't block today.
+        let staleCutoff = now.addingTimeInterval(-36 * 3600)
+        guard session.endAt >= staleCutoff else { return true }
+        guard let fullSync = DeviceRepository.current(context: modelContext)?.lastFullSyncAt else { return true }
+        return fullSync >= session.endAt
+    }
+
+    /// The last 6 check-ins ("title — body") so the generator can avoid repeating
+    /// their phrasing/openings. Newest first.
+    private func recentNotificationTexts(limit: Int = 6) -> [String] {
+        var descriptor = FetchDescriptor<CoachNotificationRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        descriptor.fetchLimit = limit
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        return rows.map { "\($0.title) — \($0.body)" }
     }
 
     func hasRecentData(now: Date) -> Bool {

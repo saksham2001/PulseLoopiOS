@@ -11,6 +11,9 @@ final class ToolExecutionContext {
     let coordinator: RingSyncCoordinator?
     /// Risky writes proposed this turn, awaiting a Confirm/Cancel tap.
     var pendingActions: [PendingAction] = []
+    /// Activity sessions created/edited during this turn (immediate writes, not
+    /// confirmation-gated ones). Drives the in-chat workout card.
+    var loggedActivityIds: [UUID] = []
 
     init(modelContext: ModelContext, flags: CoachFeatureFlags, coordinator: RingSyncCoordinator? = nil) {
         self.modelContext = modelContext

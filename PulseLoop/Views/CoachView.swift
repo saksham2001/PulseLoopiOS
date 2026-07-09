@@ -12,6 +12,10 @@ private let coldStartPrompts = [
 ]
 
 struct CoachView: View {
+    /// Called when a workout card in the chat is tapped. Coach stays routing-agnostic
+    /// so it reads the same whether it's presented as a tab or (as now) as a sheet —
+    /// the presenter decides how to get to the activity detail.
+    var onOpenWorkout: ((UUID) -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \CoachMessage.createdAt) private var allMessages: [CoachMessage]
@@ -20,6 +24,7 @@ struct CoachView: View {
     @State private var viewModel = CoachViewModel()
     @State private var activeConversationId: UUID?
     @State private var showHistory = false
+    @State private var showUsage = false
     @State private var keyboardHeight: CGFloat = 0
     @State private var nav = CoachNavigation.shared
     @State private var settingsStore = CoachSettingsStore.shared
@@ -78,7 +83,8 @@ struct CoachView: View {
                                 message: message,
                                 onChipTap: { send($0) },
                                 onConfirm: { viewModel.confirmPendingAction(message, context: modelContext) },
-                                onCancel: { viewModel.cancelPendingAction(message, context: modelContext) }
+                                onCancel: { viewModel.cancelPendingAction(message, context: modelContext) },
+                                onOpenWorkout: { openWorkout($0) }
                             ).id(message.id)
                         }
                         if viewModel.isSending {
@@ -152,6 +158,26 @@ struct CoachView: View {
                 activeConversationId = id
             }
         }
+        .sheet(isPresented: $showUsage) {
+            CoachUsageSheet(
+                conversation: activeConversation,
+                messages: messages,
+                settings: settingsStore.settings
+            )
+        }
+    }
+
+    /// The currently selected conversation object (for usage totals).
+    private var activeConversation: CoachConversation? {
+        guard let id = activeConversationId else { return conversations.first }
+        return conversations.first { $0.id == id }
+    }
+
+    /// Open the activity detail for a workout logged in chat, dismissing the
+    /// composer/keyboard first so the transition reads cleanly.
+    private func openWorkout(_ id: UUID) {
+        composerFocused = false
+        onOpenWorkout?(id)
     }
 
     private var header: some View {
@@ -162,6 +188,10 @@ struct CoachView: View {
                 Text("Using your latest ring sync").font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             }
             Spacer()
+            Button { composerFocused = false; showUsage = true } label: {
+                Image(systemName: "info.circle").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
+                    .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+            }
             Button { newConversation() } label: {
                 Image(systemName: "plus").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
                     .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
@@ -423,6 +453,17 @@ struct CoachBubble: View {
     var onChipTap: ((String) -> Void)?
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onOpenWorkout: ((UUID) -> Void)?
+
+    /// Activity ids logged/edited by this turn — drive the in-chat workout card.
+    private var loggedActivityIds: [UUID] {
+        guard let json = message.loggedActivityIdsJSON, let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([UUID].self, from: data)) ?? []
+    }
+
+    private var isAssistantOrError: Bool {
+        message.role == "assistant" || message.role == "error"
+    }
 
     private var structured: CoachResponse? {
         message.role == "assistant" ? CoachResponse.decode(fromJSON: message.cardsJSON) : nil
@@ -452,6 +493,12 @@ struct CoachBubble: View {
                         onConfirm: { onConfirm?() },
                         onCancel: { onCancel?() }
                     )
+                }
+                if isAssistantOrError {
+                    ForEach(loggedActivityIds, id: \.self) { id in
+                        CoachWorkoutCard(activityId: id, onOpen: { onOpenWorkout?($0) })
+                    }
+                    CoachToolTraceDisclosure(messageId: message.id)
                 }
             }
             if message.role != "user" { Spacer(minLength: 40) }
@@ -532,28 +579,79 @@ struct CoachErrorBubble: View {
     }
 }
 
-/// Live progress strip shown while a turn runs (in-process trace).
+/// Live progress strip shown while a turn runs (in-process trace). Folds the
+/// event stream into completed tool steps (shown with a status icon) above the
+/// current phase's spinner row, so the user sees the turn's work accumulate.
 struct CoachTraceStrip: View {
     let events: [CoachTraceEvent]
 
-    private var label: String {
-        events.last(where: { $0.status != .done })?.label ?? "Thinking…"
+    /// One finished tool step: a friendly label plus success/failure.
+    private struct Step: Identifiable {
+        let id = UUID()
+        let label: String
+        let failed: Bool
+    }
+
+    /// Fold the event stream into completed tool steps. A `.runningTool` opens a
+    /// step; the matching `.completedTool`/`.failedTool` (same toolName) closes the
+    /// most recent still-open step. Shows the last ≤4 finished steps.
+    private var completedSteps: [Step] {
+        var open: [(toolName: String?, label: String)] = []
+        var done: [Step] = []
+        for event in events {
+            switch event.status {
+            case .runningTool:
+                open.append((event.toolName, event.label))
+            case .completedTool, .failedTool:
+                if let index = open.lastIndex(where: { $0.toolName == event.toolName }) {
+                    let entry = open.remove(at: index)
+                    done.append(Step(label: entry.label, failed: event.status == .failedTool))
+                } else {
+                    done.append(Step(label: event.label, failed: event.status == .failedTool))
+                }
+            default:
+                break
+            }
+        }
+        return Array(done.suffix(4))
+    }
+
+    /// Current phase label for the spinner row (thinking / writing / working).
+    private var currentLabel: String {
+        events.last(where: { $0.status == .thinking || $0.status == .writingAnswer })?.label
+            ?? events.last(where: { $0.status == .runningTool })?.label
+            ?? "Thinking…"
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small).tint(PulseColors.accent)
-            Text(label)
-                .font(PulseFont.caption.weight(.regular))
-                .foregroundStyle(PulseColors.textMuted)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(completedSteps) { step in
+                HStack(spacing: 6) {
+                    Image(systemName: step.failed ? "xmark.circle" : "checkmark.circle")
+                        .font(PulseFont.caption2)
+                        .foregroundStyle(step.failed ? PulseColors.danger : PulseColors.success)
+                    Text(step.label)
+                        .font(PulseFont.caption.weight(.regular))
+                        .foregroundStyle(PulseColors.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+            }
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(PulseColors.accent)
+                Text(currentLabel)
+                    .font(PulseFont.caption.weight(.regular))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .animation(.easeOut(duration: 0.18), value: completedSteps.count)
     }
 }
-
 
 /// Message-bubble surface: user bubbles keep the solid accent fill; assistant bubbles
 /// use Liquid Glass. Kept as a modifier so the glass-vs-accent branch stays one place.

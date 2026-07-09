@@ -21,6 +21,10 @@ struct CoachContextPacket: Encodable {
     var memories: [MemoryContext]
     var conversationSummary: String?
     var dataQualityWarnings: [String]
+    /// Opt-in city-level location + current weather. Nil when the toggle is off,
+    /// permission is denied, or WeatherKit is unavailable. Raw coordinates NEVER
+    /// appear here — only the reverse-geocoded city/region.
+    var environment: EnvironmentContext?
 
     struct ProfileContext: Encodable {
         var name: String?
@@ -103,5 +107,21 @@ struct CoachContextPacket: Encodable {
         var key: String
         var value: String
         var importance: Int
+    }
+
+    /// City-level location + current/forecast weather. City-only privacy: never a
+    /// street, never coordinates. Any field may be nil when weather degrades to a
+    /// city-only or stale result.
+    struct EnvironmentContext: Encodable {
+        var city: String?
+        var region: String?
+        var tempC: Double?
+        var condition: String?
+        var highC: Double?
+        var lowC: Double?
+        var precipitationChancePct: Int?
+        var sunrise: String?
+        var sunset: String?
+        var asOf: String
     }
 }

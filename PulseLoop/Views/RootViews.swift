@@ -140,6 +140,8 @@ struct MainTabView: View {
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
+    /// Route requested from inside the Coach sheet, pushed once the sheet dismisses.
+    @State private var pendingCoachRoute: AppRoute?
 
     init(path: Binding<NavigationPath>) {
         self._path = path
@@ -170,6 +172,20 @@ struct MainTabView: View {
         case .coach:    CoachView()
         case .settings: SettingsView(path: $path)
         }
+    }
+
+    /// A workout card tapped inside the chat can't push onto `path` directly: the sheet
+    /// sits outside this NavigationStack, so the detail would slide in behind it. Park
+    /// the route and dismiss; `pushPendingCoachRoute` runs once the sheet is gone.
+    private func requestCoachRoute(_ activityId: UUID) {
+        pendingCoachRoute = .activityDetail(activityId)
+        nav.showCoach = false
+    }
+
+    private func pushPendingCoachRoute() {
+        guard let route = pendingCoachRoute else { return }
+        pendingCoachRoute = nil
+        path.append(route)
     }
 
     var body: some View {
@@ -231,8 +247,8 @@ struct MainTabView: View {
         }
         // Coach opens as a sheet (swipe-to-dismiss) instead of a tab, so it never
         // crowds the tab bar. All entry points set `nav.showCoach`.
-        .sheet(isPresented: $nav.showCoach) {
-            CoachView()
+        .sheet(isPresented: $nav.showCoach, onDismiss: pushPendingCoachRoute) {
+            CoachView(onOpenWorkout: requestCoachRoute)
                 .presentationDragIndicator(.visible) // grabber ("pull tab") at the top of the sheet
         }
         .background(PulseColors.background.ignoresSafeArea())

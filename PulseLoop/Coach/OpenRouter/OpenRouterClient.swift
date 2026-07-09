@@ -222,6 +222,11 @@ final class OpenRouterClient: ResponsesClient, @unchecked Sendable {
             body["provider"] = provider
         }
 
+        // Ask OpenRouter to include the usage accounting (token counts + the exact
+        // upstream `cost` in USD) in the response, so the persisted cost matches the
+        // Activity page rather than a catalog estimate.
+        body["usage"] = ["include": true]
+
         return body
     }
 
@@ -342,6 +347,21 @@ final class OpenRouterClient: ResponsesClient, @unchecked Sendable {
         if outputItems.isEmpty { throw ResponsesError.emptyOutput }
 
         storedAssistantMessage[responseId] = assistantMessage
-        return OpenAIResponse(id: responseId, outputItems: outputItems)
+        return OpenAIResponse(id: responseId, outputItems: outputItems, usage: usage(from: root))
+    }
+
+    /// Maps OpenRouter's Chat Completions `usage` block. `cost` is the exact USD
+    /// OpenRouter billed for the call (requested via `usage.include` in the body),
+    /// so it's stored as the reported cost instead of a catalog estimate.
+    private func usage(from root: [String: Any]) -> CoachTokenUsage? {
+        guard let usage = root["usage"] as? [String: Any] else { return nil }
+        let cached = (usage["prompt_tokens_details"] as? [String: Any])?["cached_tokens"] as? Int ?? 0
+        let cost = (usage["cost"] as? Double) ?? (usage["cost"] as? NSNumber)?.doubleValue
+        return CoachTokenUsage(
+            inputTokens: usage["prompt_tokens"] as? Int ?? 0,
+            outputTokens: usage["completion_tokens"] as? Int ?? 0,
+            cachedInputTokens: cached,
+            reportedCostUSD: cost
+        )
     }
 }

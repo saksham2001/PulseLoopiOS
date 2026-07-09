@@ -46,8 +46,9 @@ enum CoachSummarySchema {
                 "body": ["type": "string", "maxLength": 320],
                 "chips": [
                     "type": "array",
+                    // Kept short so both questions fit side by side on the card.
                     "items": ["type": "string", "maxLength": 40],
-                    "maxItems": 3,
+                    "maxItems": 2,
                 ],
             ],
             "required": ["title", "body", "chips"],

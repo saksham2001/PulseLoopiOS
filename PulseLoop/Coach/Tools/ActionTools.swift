@@ -145,9 +145,16 @@ enum ActionTools {
                 return .object(["ok": false, "needs_follow_up": true, "reason": "duration_missing",
                                 "suggested_question": "Roughly how long was the \(args.activityType) session?"])
             }
-            let start: Date = args.startTime.flatMap(CoachDataAccess.parseLocalDate)
+            let now = Date()
+            var start: Date = args.startTime.flatMap(CoachDataAccess.parseLocalDate)
                 ?? CoachDataAccess.parseLocalDate(args.date).map { $0.addingTimeInterval(12 * 3600) }
-                ?? Date()
+                ?? now
+            // The same-day noon default can land in the future (logging "today"
+            // in the morning) and ManualActivityService rejects future sessions;
+            // pull an unspecified start back so the session ends by now.
+            if args.startTime == nil, start.addingTimeInterval(duration * 60) > now {
+                start = now.addingTimeInterval(-duration * 60)
+            }
             let session: ActivitySession
             do {
                 session = try ManualActivityService.create(
@@ -161,6 +168,7 @@ enum ActionTools {
             } catch {
                 return .error(error.localizedDescription)
             }
+            ctx.loggedActivityIds.append(session.id)
             return .object(["ok": true, "created": true, "activity_id": session.id.uuidString,
                             "type": args.activityType, "duration_min": duration])
         }
@@ -206,6 +214,7 @@ enum ActionTools {
             let isToday = Calendar.current.isDateInToday(session.startedAt)
             if isToday {
                 applyUpdatesNow(updates, to: session, context: ctx.modelContext)
+                ctx.loggedActivityIds.append(session.id)
                 return .object(["ok": true, "updated": true, "activity_id": args.activityId])
             }
             // Older session → confirm.

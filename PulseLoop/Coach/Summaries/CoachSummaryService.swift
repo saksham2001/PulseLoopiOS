@@ -67,7 +67,8 @@ final class CoachSummaryService {
     // MARK: - Refresh (self-gating)
 
     func refreshTodayIfNeeded(now: Date = Date()) async {
-        let built = CoachSummaryContextBuilder.today(context: modelContext, now: now)
+        let environment = await CoachEnvironmentContextService.shared.snapshot(now: now)
+        let built = CoachSummaryContextBuilder.today(context: modelContext, now: now, environment: environment)
         let existing = summary(kind: CoachSummaryKind.today.rawValue, scopeKey: built.scopeKey)
         if let existing {
             if existing.dataSignature == built.signature { return }       // no new data
@@ -77,10 +78,31 @@ final class CoachSummaryService {
     }
 
     func refreshSleepDayIfNeeded(now: Date = Date()) async {
-        guard let built = CoachSummaryContextBuilder.sleepDay(context: modelContext, now: now) else { return }
-        // Once per night: only when this night isn't summarized yet.
-        if summary(kind: CoachSummaryKind.sleepDay.rawValue, scopeKey: built.scopeKey) != nil { return }
-        await generateAndUpsert(.sleepDay, built: built, existing: nil, now: now)
+        let environment = await CoachEnvironmentContextService.shared.snapshot(now: now)
+        guard let built = CoachSummaryContextBuilder.sleepDay(context: modelContext, now: now, environment: environment),
+              let endAt = built.sleepSessionEnd else { return }
+
+        // Gate 1: the night is actually over (give the ring a beat to flush the tail).
+        guard now >= endAt.addingTimeInterval(30 * 60) else { return }
+
+        // Gate 2: a full history sync completed AFTER the night (implies we're not mid-sync
+        // and the night's data is complete). Streaming devices with no full-sync stamp fall
+        // back to a 2h-after-wake floor.
+        if let fullSync = DeviceRepository.current(context: modelContext)?.lastFullSyncAt {
+            guard fullSync >= endAt else { return }
+        } else {
+            guard now >= endAt.addingTimeInterval(2 * 3600) else { return }
+        }
+
+        // Signature-based upsert: regenerate only when the signature differs AND the existing
+        // row is older than the minInterval floor — allows one corrective pass if a late sync
+        // grows the night, without churning.
+        let existing = summary(kind: CoachSummaryKind.sleepDay.rawValue, scopeKey: built.scopeKey)
+        if let existing {
+            if existing.dataSignature == built.signature { return }
+            if now.timeIntervalSince(existing.updatedAt) < minInterval { return }
+        }
+        await generateAndUpsert(.sleepDay, built: built, existing: existing, now: now)
     }
 
     func refreshSleepRangeIfNeeded(_ range: SleepRangeKey, now: Date = Date()) async {
@@ -91,6 +113,20 @@ final class CoachSummaryService {
             if now.timeIntervalSince(existing.updatedAt) < minInterval { return }
         }
         await generateAndUpsert(.sleepRange(range), built: built, existing: existing, now: now)
+    }
+
+    /// The last few cards of this kind (title — body) so the generator can avoid
+    /// repeating their phrasing/openings. Newest first; the row being regenerated
+    /// is excluded.
+    private func recentSummaryTexts(kind: CoachSummaryKind, excluding excludeId: UUID?, limit: Int = 5) -> [String] {
+        let rawKind = kind.rawValue
+        var descriptor = FetchDescriptor<CoachSummary>(
+            predicate: #Predicate { $0.kind == rawKind },
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = limit + 1
+        let rows = (try? modelContext.fetch(descriptor)) ?? []
+        return rows.filter { $0.id != excludeId }.prefix(limit).map { "\($0.title) — \($0.body)" }
     }
 
     private func resolveClient() -> (key: String?, client: ResponsesClient) {
@@ -110,9 +146,11 @@ final class CoachSummaryService {
     ) async {
         let (apiKey, activeClient) = resolveClient()
         let flags = CoachFeatureFlags(settings: settingsStore.settings, hasAPIKey: apiKey != nil)
+        let angle = CoachVarietyHints.angle(seed: built.scopeKey + kind.rawValue)
+        let recentTexts = recentSummaryTexts(kind: kind, excluding: existing?.id)
         let content = await CoachSummaryGenerator.generate(
             kind: kind, contextJSON: built.json, fallback: built.fallback,
-            flags: flags, client: activeClient
+            flags: flags, client: activeClient, angle: angle, recentTexts: recentTexts
         )
         if let existing {
             existing.apply(content, signature: built.signature, now: now)
