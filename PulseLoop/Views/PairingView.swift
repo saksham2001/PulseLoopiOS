@@ -11,6 +11,7 @@ import UIKit
 struct PairingView: View {
     @Environment(RingBLEClient.self) private var ble
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Pushed onto the Settings nav stack (no onboarding "Skip"): show our own glass
     /// back button and hide the system nav bar so it doesn't stack a second, empty
@@ -128,7 +129,56 @@ struct PairingView: View {
         }
     }
 
+    /// The bare default state (Bluetooth ready, not connected, not scanning) fits centered without
+    /// scrolling on every iPhone — but only at standard Dynamic Type sizes. Scanning lists, the
+    /// connected/bluetooth-off states, and accessibility sizes keep the scrolling layout so they
+    /// never clip. `errorText` is nil-friendly and pulled out so both layouts share it.
+    private var isFittedDefaultState: Bool {
+        canUseBluetoothUI
+            && ble.state != .connected
+            && !isLooking
+            && !dynamicTypeSize.isAccessibilitySize
+    }
+
     private var scrollContent: some View {
+        Group {
+            if isFittedDefaultState {
+                fittedDefault
+            } else {
+                scrollingContent
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showsActionFooter {
+                OnboardingActionFooter { pairingFooterContent }
+            }
+        }
+    }
+
+    // Fitted, no-scroll default: header + carousel sized to the viewport via the shared band.
+    private var fittedDefault: some View {
+        OnboardingFittedBand { s in
+            VStack(spacing: 0) {
+                FittedOnboardingHeader(
+                    title: "Add your ring",
+                    subtitle: "Swipe to find your model, then tap to connect.",
+                    s: s
+                )
+                .frame(maxWidth: .infinity)
+
+                Spacer().frame(height: (14 * s).rounded())
+
+                carousel(s: s)
+
+                if hasError {
+                    Spacer().frame(height: 12)
+                    errorText
+                }
+            }
+        }
+    }
+
+    private var scrollingContent: some View {
         ScrollView {
             VStack(spacing: 24) {
                 OnboardingHeader(
@@ -143,18 +193,12 @@ struct PairingView: View {
                 } else if ble.state == .connected {
                     connectedCard
                 } else {
-                    carousel
+                    carousel(s: 1)
                     if isLooking { scanningArea }
                 }
 
-                if let error = ble.lastError,
-                   ble.state != .connected,
-                   !forcePairingUIForTesting {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(PulseColors.danger)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
+                if hasError {
+                    errorText
                 }
 
             }
@@ -164,26 +208,39 @@ struct PairingView: View {
         }
         .scrollBounceBehavior(.basedOnSize) // static when it fits; scrolls only if content overflows
                                             // (small devices / scanning list) so nothing clips
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showsActionFooter {
-                OnboardingActionFooter { pairingFooterContent }
-            }
+    }
+
+    private var hasError: Bool {
+        ble.lastError != nil && ble.state != .connected && !forcePairingUIForTesting
+    }
+
+    @ViewBuilder
+    private var errorText: some View {
+        if let error = ble.lastError {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(PulseColors.danger)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
         }
     }
 
     // MARK: - Carousel
 
-    private var carousel: some View {
-        VStack(spacing: 12) {
+    private func carousel(s: CGFloat) -> some View {
+        let ringSize = (168 * s).rounded()
+        return VStack(spacing: (12 * s).rounded()) {
             brandTabs
 
             TabView(selection: $selectedIndex) {
                 ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
-                    VStack(spacing: 16) {
-                        RingArtView(tint: model.tint, imageName: model.imageName)
+                    VStack(spacing: (16 * s).rounded()) {
+                        RingArtView(tint: model.tint, size: ringSize, imageName: model.imageName)
                         Text(model.displayName)
                             .font(PulseFont.numberL)
                             .foregroundStyle(PulseColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                         CapabilityChips(blurb: model.blurb) // §2 replaces blurb Text
                     }
                     .frame(maxWidth: .infinity) // constant page width so content doesn't drive reflow
@@ -192,7 +249,7 @@ struct PairingView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never)) // §2 Fix #2 — dots moved to modelDotRow
-            .frame(height: 300) // §2 Fix #2
+            .frame(height: (ringSize + 78).rounded()) // §2 derive from ring art + name/chip band
             .id(selectedBrand) // recreate on brand change so pages swap instantly (no page-slide)
 
             modelDotRow // §2 fixed-height dot area keeps layout stable across tabs
@@ -270,7 +327,7 @@ struct PairingView: View {
     private var pairingFooterContent: some View {
         VStack(spacing: 10) {
             if !isLooking, canUseBluetoothUI {
-                PrimaryButton(title: "Connect ring", systemImage: "dot.radiowaves.left.and.right") {
+                PrimaryButton(title: "Connect my ring", systemImage: "dot.radiowaves.left.and.right") {
                     isLooking = true
                     successHaptic.prepare()
                     ble.startScanning()
@@ -283,11 +340,10 @@ struct PairingView: View {
             }
 
             if let onSkip {
-                SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
-                Text("You can pair a ring later from Settings.")
-                    .font(PulseFont.caption.weight(.regular))
+                Button("Skip for now", action: onSkip)
+                    .font(PulseFont.subheadline.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
-                    .multilineTextAlignment(.center)
+                    .frame(height: 44)
             }
         }
     }
