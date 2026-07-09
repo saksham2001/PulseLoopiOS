@@ -25,25 +25,20 @@ struct MetricPrefsSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Visible tiles", action: nil)
-                Text(visibilityBlurb)
-                    .font(.system(size: 12))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                ForEach(supported, id: \.metric) { item in
-                    visibilityRow(item.metric, label: item.label, color: item.color)
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroup(header: "Visible tiles", footer: visibilityBlurb) {
+                    ForEach(supported, id: \.metric) { item in
+                        visibilityRow(item.metric, label: item.label, color: item.color)
+                    }
                 }
 
-                SectionHeader(title: "Chart detail", action: nil)
-                Text("When the ring measures often, charts can look busy. Smoother levels average nearby points into a cleaner line — "
-                     + "this only changes the display on this page, not your stored data.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                resolutionCard
+                SettingsGroup(
+                    header: "Chart detail",
+                    footer: "When the ring measures often, charts can look busy. Smoother levels average nearby points into a cleaner line — "
+                        + "this only changes the display on this page, not your stored data."
+                ) {
+                    resolutionCard
+                }
             }
             .padding()
         }
@@ -52,41 +47,37 @@ struct MetricPrefsSettingsView: View {
     }
 
     private var resolutionCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Resolution", selection: Binding(
-                get: { store.resolution(for: scope) },
-                set: { store.setResolution($0, for: scope) }
-            )) {
-                ForEach(GraphResolution.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
+        FormField {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Resolution", selection: Binding(
+                    get: { store.resolution(for: scope) },
+                    set: { store.setResolution($0, for: scope) }
+                )) {
+                    ForEach(GraphResolution.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
 
-            Text(store.resolution(for: scope).blurb)
-                .font(.caption)
-                .foregroundStyle(PulseColors.textMuted)
+                Text(store.resolution(for: scope).blurb)
+                    .font(.caption)
+                    .foregroundStyle(PulseColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     private func visibilityRow(_ metric: MetricKey, label: String, color: Color) -> some View {
-        Toggle(isOn: Binding(
-            get: { !store.isHidden(metric, scope: scope) },
-            set: { store.setHidden(metric, !$0, scope: scope) }
-        )) {
-            HStack(spacing: 10) {
-                Circle().fill(color).frame(width: 8, height: 8)
-                Text(label).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+        FormField {
+            Toggle(isOn: Binding(
+                get: { !store.isHidden(metric, scope: scope) },
+                set: { store.setHidden(metric, !$0, scope: scope) }
+            )) {
+                HStack(spacing: 10) {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                    Text(label).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                }
             }
+            .tint(PulseColors.accent)
         }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 

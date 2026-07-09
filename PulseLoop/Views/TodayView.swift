@@ -1,9 +1,11 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query(filter: #Predicate<CoachSummary> { $0.kind == "today" }, sort: \CoachSummary.updatedAt, order: .reverse)
     private var todaySummaries: [CoachSummary]
     @Query private var profiles: [UserProfile]
@@ -61,10 +63,10 @@ struct TodayView: View {
                             chips: coachSummary.chips
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else if coachEnabled {
                     // Coach on but no summary generated yet: offer the chat entry point.
-                    Button { selectedTab = .coach } label: {
+                    Button { CoachNavigation.shared.openRoot() } label: {
                         CoachMessageCard(
                             headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
                             body: summary.calibration.isCalibrating
@@ -73,7 +75,7 @@ struct TodayView: View {
                             chips: []
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else {
                     HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
                 }
@@ -85,7 +87,7 @@ struct TodayView: View {
                 // Restore tray: only while editing, and only if something is hidden.
                 if editing {
                     HiddenMetricsTray(
-                        hidden: hiddenKeys(),
+                        hidden: hiddenKeys(activeStore),
                         restore: { restore($0) },
                         displayName: { $0.reorderDisplayName },
                         symbolName: { $0.reorderSymbolName }
@@ -95,8 +97,9 @@ struct TodayView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
         }
-        .background(PulseColors.background)
-        // Tap-outside-to-exit: a catcher behind the cards, live only while editing.
+        // Tap-outside-to-exit: a catcher behind the cards, live only while editing. It must be layered
+        // *above* the opaque background colour — `.background` stacks back-to-front, so a catcher added
+        // after `PulseColors.background` would sit behind it and never see a touch.
         .background {
             if editing {
                 Color.clear
@@ -105,8 +108,10 @@ struct TodayView: View {
                     .accessibilityHidden(true)
             }
         }
+        .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
-        .overlay(alignment: .top) { if editing { editDoneBar } }
+        .pulseScrollEdges()
+        .overlay(alignment: .top) { if editing { ReorderDoneBar { exitEdit() } } }
         .task {
             ensureStore()
             if isActive { store?.updateProfile(profile) }
@@ -133,21 +138,24 @@ struct TodayView: View {
         ReorderableForEach(items: keys, isEditing: editing, dragging: $dragging,
                            move: { from, to in move(keys, from, to) },
                            hide: { key in hide(key) },
-                           displayName: { $0.reorderDisplayName }) { key in
+                           displayName: { $0.reorderDisplayName },
+                           content: { key in
             cardFor(key, store, physiology)
                 // simultaneousGesture so the long-press fires even though each tile is a Button
                 // (a plain .onLongPressGesture is swallowed by the button's own tap gesture).
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit() }
                 )
-        }
+        })
     }
 
-    /// Metrics hidden in the Today scope: the full Today set filtered by `prefs.isHidden`, so the
-    /// restore tray stays in lockstep with Settings visibility. (Filtering the default order rather
-    /// than "visible minus resolved" keeps device-unsupported metrics out of the tray.)
-    private func hiddenKeys() -> [MetricKey] {
-        Self.defaultOrder.filter { prefs.isHidden($0, scope: .today) }
+    /// Metrics hidden in the Today scope, so the restore tray stays in lockstep with Settings
+    /// visibility. Device-unsupported metrics stay out of the tray — restoring one could never
+    /// produce a tile.
+    private func hiddenKeys(_ store: TodayStore) -> [MetricKey] {
+        Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && prefs.isHidden($0, scope: .today)
+        }
     }
 
     private func hide(_ key: MetricKey) {
@@ -161,12 +169,15 @@ struct TodayView: View {
 
     /// Visible Today tiles in the saved order (falling back to `defaultOrder`).
     private func orderedKeys(_ store: TodayStore) -> [MetricKey] {
-        // Live hide/restore: filter by `prefs.isHidden` directly, not just the store's cached
-        // `visibleMetrics` snapshot, so the "–" badge / Hidden-tray "+" drop or re-add a card
-        // immediately (the view observes `prefs`, so this re-renders on toggle).
-        let visible = store.visibleMetrics
-            .intersection(Set(Self.defaultOrder))
-            .filter { !prefs.isHidden($0, scope: .today) }
+        // Visibility is decided here, not read from `store.visibleMetrics`: that snapshot bakes in the
+        // hidden set at its last rebuild, and a rebuild is never triggered by a hide/restore. Composing
+        // it with a live `prefs.isHidden` would strand a card — hide it, let a sync rebuild the store,
+        // and the tray's "+" could no longer bring it back. Capability comes from `store.capabilities`
+        // (changes only with the paired device, and a device change *does* rebuild); hidden is read
+        // live from `prefs`, which the view observes, so the grid updates on the tap.
+        let visible = Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && !prefs.isHidden($0, scope: .today)
+        }
         let raws = prefs.resolvedOrder(
             visible: Set(visible.map(\.rawValue)),
             defaultOrder: Self.defaultOrder.map(\.rawValue),
@@ -217,30 +228,10 @@ struct TodayView: View {
 
     private func exitEdit() {
         guard editing else { return }
+        // A drop outside every cell never reaches a drop delegate, so `dragging` can outlive the drag
+        // and leave that tile dimmed. Clear it on the way out.
+        dragging = nil
         withAnimation(.easeInOut(duration: 0.2)) { editing = false }
-    }
-
-    /// Floating "Done" pill shown while reordering.
-    private var editDoneBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.up.arrow.down").font(.system(size: 12, weight: .semibold))
-            Text("Drag to reorder").font(.system(size: 14, weight: .semibold))
-            Spacer(minLength: 12)
-            Button {
-                exitEdit()
-            } label: {
-                Text("Done").font(.system(size: 14, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-        }
-        .foregroundStyle(PulseColors.textPrimary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(PulseColors.card, in: Capsule())
-        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     @ViewBuilder
@@ -251,6 +242,7 @@ struct TodayView: View {
             TodayChartTile(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) {
                 path.append(AppRoute.metricDetail(metric))
             }
+            .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -258,6 +250,7 @@ struct TodayView: View {
     private func gaugeTile(_ store: TodayStore, _ metric: MetricKind) -> some View {
         if let model = store.cards[metric] {
             TodayGaugeTile(model: model) { path.append(AppRoute.metricDetail(metric)) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -272,6 +265,7 @@ struct TodayView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { path.append(AppRoute.metricDetail(.bloodPressure)) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 }

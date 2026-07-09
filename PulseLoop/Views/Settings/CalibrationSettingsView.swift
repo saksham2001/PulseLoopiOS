@@ -32,7 +32,7 @@ struct CalibrationSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 22) {
                 if supportsBP || supportsGlucose {
                     if supportsBP { bpSection }
                     if supportsGlucose { glucoseSection }
@@ -53,7 +53,7 @@ struct CalibrationSettingsView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(PulseColors.background)
-        .navigationTitle("Calibration")
+        .pageChrome("Calibration")
         .onAppear(perform: loadIfNeeded)
     }
 
@@ -61,16 +61,16 @@ struct CalibrationSettingsView: View {
 
     @ViewBuilder
     private var bpSection: some View {
-        SectionHeader(title: "Blood pressure", action: nil)
-        Text("""
-        Enter a reading from a cuff taken at the same time as a ring measurement. We send it to the \
-        ring to correct its sensor and adjust the values shown here.
-        """)
-            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-        numberRow("Reference systolic (mmHg)", text: $bpSystolicText)
-        numberRow("Reference diastolic (mmHg)", text: $bpDiastolicText)
+        SettingsGroup(
+            header: "Blood pressure",
+            footer: """
+            Enter a reading from a cuff taken at the same time as a ring measurement. We send it to the \
+            ring to correct its sensor and adjust the values shown here.
+            """
+        ) {
+            numberRow("Reference systolic (mmHg)", text: $bpSystolicText)
+            numberRow("Reference diastolic (mmHg)", text: $bpDiastolicText)
+        }
 
         PrimaryButton(title: "Calibrate blood pressure", systemImage: "checkmark") { saveBP() }
         if store.settings.hasBPReference {
@@ -86,15 +86,15 @@ struct CalibrationSettingsView: View {
 
     @ViewBuilder
     private var glucoseSection: some View {
-        SectionHeader(title: "Blood sugar", action: nil)
-        Text("""
-        The ring estimates blood sugar from your profile, not a real sensor. Enter a lab or meter \
-        reading taken alongside a ring measurement to offset the displayed values.
-        """)
-            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-        numberRow("Reference (mg/dL)", text: $glucoseRefText)
+        SettingsGroup(
+            header: "Blood sugar",
+            footer: """
+            The ring estimates blood sugar from your profile, not a real sensor. Enter a lab or meter \
+            reading taken alongside a ring measurement to offset the displayed values.
+            """
+        ) {
+            numberRow("Reference (mg/dL)", text: $glucoseRefText)
+        }
 
         PrimaryButton(title: "Calibrate blood sugar", systemImage: "checkmark") { saveGlucose() }
         if store.settings.isGlucoseCalibrated {
@@ -107,19 +107,13 @@ struct CalibrationSettingsView: View {
     }
 
     private func numberRow(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
+        FormValueRow(title: title) {
             TextField("0", text: text)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
                 .foregroundStyle(PulseColors.textPrimary)
                 .frame(maxWidth: 90)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Load / save

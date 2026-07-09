@@ -37,20 +37,22 @@ struct WearableSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 22) {
                 if ble.state == .connected {
-                    SectionHeader(title: "Connected ring", action: nil)
-                    StatusCopy(title: "Device", body: wearableDisplayName)
-                    StatusCopy(title: "Battery", body: batteryPercent.map { "\($0)%" } ?? "--")
+                    SettingsGroup(header: "Connected ring") {
+                        FormValueRow(title: "Device") { Text(wearableDisplayName).foregroundStyle(PulseColors.textMuted) }
+                        FormValueRow(title: "Battery") { Text(batteryPercent.map { "\($0)%" } ?? "--").foregroundStyle(PulseColors.textMuted) }
+                        FormValueRow(title: "Last synced") { Text(lastSyncedLabel).foregroundStyle(PulseColors.textMuted) }
+                    }
                     BatteryHistorySection()
-                    StatusCopy(title: "Last synced", body: lastSyncedLabel)
                     SecondaryButton(title: "Sync now", systemImage: "clock.arrow.circlepath") { coordinator.syncNow() }
                     SecondaryButton(title: "Find ring", systemImage: "bell.fill") { coordinator.findRing() }
                     SecondaryButton(title: "Disconnect", systemImage: "xmark.circle") { ble.disconnect() }
                     SecondaryButton(title: "Forget ring", systemImage: "trash") { ble.forget() }
                 } else {
-                    SectionHeader(title: "No ring connected", action: nil)
-                    StatusCopy(title: "Status", body: ble.state.rawValue.capitalized)
+                    SettingsGroup(header: "No ring connected") {
+                        FormValueRow(title: "Status") { Text(ble.state.rawValue.capitalized).foregroundStyle(PulseColors.textMuted) }
+                    }
                     PrimaryButton(title: "Add a ring", systemImage: "plus.circle") {
                         path.append(AppRoute.pairing)
                     }
@@ -63,7 +65,7 @@ struct WearableSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Wearable")
+        .pageChrome("Wearable")
     }
 }
 
@@ -87,18 +89,15 @@ private struct BatteryHistorySection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionHeader(title: "Battery history", action: nil)
-                Spacer()
+        SettingsGroup(header: "Battery history") {
+            FormValueRow(title: "Range") {
                 Picker("Range", selection: $range) {
                     ForEach(Self.ranges, id: \.self) { Text(rangeLabel($0)).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
             }
-
-            PulseCard {
+            FormField {
                 if samples.count >= 2 {
                     ZoneLineChart(
                         samples: samples,

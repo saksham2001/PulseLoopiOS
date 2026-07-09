@@ -184,9 +184,9 @@ private struct HiddenRow: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(PulseColors.textPrimary)
                 Spacer(minLength: 8)
+                // A solid disc, not another glass surface: glass inside glass muddies both.
                 ZStack {
                     Circle().fill(PulseColors.card)
-                    Circle().stroke(PulseColors.borderSubtle, lineWidth: 1)
                     Image(systemName: "plus")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(PulseColors.accent)
@@ -195,8 +195,7 @@ private struct HiddenRow: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(PulseColors.card.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .pulseGlass(RoundedRectangle(cornerRadius: 14, style: .continuous), interactive: true)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -216,17 +215,41 @@ private struct RemoveBadge: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle().fill(PulseColors.card)
-                Circle().stroke(PulseColors.borderSubtle, lineWidth: 1)
-                Image(systemName: "minus")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(PulseColors.textPrimary)
-            }
-            .frame(width: 24, height: 24)
-            .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 1)
+            Image(systemName: "minus")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(PulseColors.textPrimary)
+                .frame(width: 24, height: 24)
+                .pulseGlass(Circle(), interactive: true)
+                .shadow(color: .black.opacity(0.18), radius: 3, x: 0, y: 1)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Done bar
+
+/// Floating "Drag to reorder / Done" pill shown at the top of a screen while editing. Shared by
+/// Today and Vitals so the two edit modes can't drift apart.
+struct ReorderDoneBar: View {
+    let done: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.up.arrow.down").font(.system(size: 12, weight: .semibold))
+            Text("Drag to reorder").font(.system(size: 14, weight: .semibold))
+            Spacer(minLength: 12)
+            Button(action: done) {
+                Text("Done").font(.system(size: 14, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(PulseColors.textPrimary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .pulseGlass(Capsule())
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 

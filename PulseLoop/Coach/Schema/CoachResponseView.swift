@@ -11,13 +11,13 @@ struct CoachResponseView: View {
         VStack(alignment: .leading, spacing: 10) {
             if !response.title.isEmpty {
                 Text(coachMarkdown: response.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(PulseFont.subheadline.weight(.semibold))
                     .foregroundStyle(PulseColors.textPrimary)
             }
 
             if !response.summary.isEmpty {
                 Text(coachMarkdown: response.summary)
-                    .font(.system(size: 14))
+                    .font(PulseFont.subheadline.weight(.regular))
                     .lineSpacing(4)
                     .foregroundStyle(PulseColors.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -51,7 +51,7 @@ struct CoachResponseView: View {
                         Text("•").foregroundStyle(PulseColors.accent)
                         Text(coachMarkdown: bullet).foregroundStyle(PulseColors.textSecondary)
                     }
-                    .font(.system(size: 13))
+                    .font(PulseFont.footnote.weight(.regular))
                 }
             }
         }
@@ -62,7 +62,7 @@ struct CoachResponseView: View {
         if !response.sources.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 Text("SOURCES")
-                    .font(.system(size: 9, weight: .semibold)).tracking(1.2)
+                    .font(PulseFont.nano).tracking(1.2)
                     .foregroundStyle(PulseColors.textMuted)
                 ForEach(response.sources) { source in
                     sourceLink(source)
@@ -77,13 +77,13 @@ struct CoachResponseView: View {
         if let url = URL(string: source.url) {
             Link(destination: url) {
                 Text("\(source.title) — \(source.publisher)")
-                    .font(.system(size: 11))
+                    .font(PulseFont.caption2.weight(.regular))
                     .foregroundStyle(PulseColors.info)
                     .underline()
             }
         } else {
             Text("\(source.title) — \(source.publisher)")
-                .font(.system(size: 11))
+                .font(PulseFont.caption2.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
         }
     }
@@ -108,8 +108,8 @@ struct CoachResponseView: View {
 
     private func noteRow(icon: String, text: String, tone: Color) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: icon).font(.system(size: 11)).foregroundStyle(tone)
-            Text(coachMarkdown: text).font(.system(size: 12)).foregroundStyle(tone)
+            Image(systemName: icon).font(PulseFont.caption2.weight(.regular)).foregroundStyle(tone)
+            Text(coachMarkdown: text).font(PulseFont.caption.weight(.regular)).foregroundStyle(tone)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,21 +127,20 @@ struct CoachFollowUpChipLabel: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Text(text)
-                .font(.system(size: 13))
+                .font(PulseFont.footnote.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             Image(systemName: "arrow.up.right")
-                .font(.system(size: 10, weight: .semibold))
+                .font(PulseFont.micro.weight(.semibold))
                 .foregroundStyle(PulseColors.textMuted)
                 .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 12, style: .continuous), interactive: true)
     }
 }
 

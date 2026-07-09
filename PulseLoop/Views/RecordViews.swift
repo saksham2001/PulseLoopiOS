@@ -11,21 +11,19 @@ struct WorkoutStat: View {
     var body: some View {
         VStack(spacing: 6) {
             Text(value)
-                .font(.system(size: 18, weight: .semibold))
+                .font(PulseFont.title3)
                 .monospacedDigit()
                 .foregroundStyle(PulseColors.textPrimary)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .medium))
+                .font(PulseFont.micro)
                 .tracking(0.6)
                 .foregroundStyle(PulseColors.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -37,13 +35,13 @@ private struct LiveStatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(value)
-                .font(.system(size: 28, weight: .semibold))
+                .font(PulseFont.title)
                 .monospacedDigit()
                 .foregroundStyle(muted ? PulseColors.textMuted : PulseColors.textPrimary)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
             Text(label.uppercased())
-                .font(.system(size: 11, weight: .medium))
+                .font(PulseFont.caption2)
                 .tracking(1.0)
                 .foregroundStyle(PulseColors.textMuted)
         }
@@ -51,9 +49,7 @@ private struct LiveStatTile: View {
         .padding(16)
         // Stretch to fill the grid cell so all tiles in a row are the same height.
         .frame(maxWidth: .infinity, minHeight: 92, maxHeight: .infinity, alignment: .topLeading)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -188,7 +184,7 @@ struct ActivityDetailView: View {
                                 .foregroundStyle(PulseColors.textPrimary)
                             Spacer()
                         }
-                        .font(.system(size: 14))
+                        .font(PulseFont.subheadline.weight(.regular))
                         .padding(.horizontal, 4)
                     }
 
@@ -196,7 +192,7 @@ struct ActivityDetailView: View {
                         confirmingDelete = true
                     } label: {
                         Label("Delete workout", systemImage: "trash")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(PulseFont.callout)
                             .foregroundStyle(PulseColors.danger)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
@@ -294,7 +290,7 @@ private struct EditWorkoutSheet: View {
     var body: some View {
         VStack(spacing: 14) {
             Text("Edit workout")
-                .font(.system(size: 20, weight: .bold))
+                .font(PulseFont.title3.weight(.bold))
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 8)
 
@@ -322,12 +318,12 @@ private struct EditWorkoutSheet: View {
 
             if let validationMessage {
                 Text(validationMessage)
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.warning)
                     .multilineTextAlignment(.center)
             } else {
                 Text("Distance, calories, and heart-rate stats are recalculated. Ring data recorded in the new window is pulled in automatically.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .multilineTextAlignment(.center)
             }
@@ -341,7 +337,7 @@ private struct EditWorkoutSheet: View {
                 }
             } label: {
                 Label("Save changes", systemImage: "checkmark")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(PulseFont.bodyEmphasis)
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
                     .foregroundStyle(.white)
@@ -352,13 +348,11 @@ private struct EditWorkoutSheet: View {
 
             Button { dismiss() } label: {
                 Text("Cancel")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(PulseFont.callout.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .foregroundStyle(PulseColors.textPrimary)
-                    .background(PulseColors.cardSoft)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(Capsule(), interactive: true)
             }
         }
         .padding(20)
@@ -370,14 +364,13 @@ private struct EditWorkoutSheet: View {
     private func fieldRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .font(PulseFont.subheadline)
                 .foregroundStyle(PulseColors.textPrimary)
             Spacer()
             content()
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -396,7 +389,7 @@ struct RecordSelectView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Choose activity")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(PulseFont.footnote.weight(.semibold))
                     .textCase(.uppercase)
                     .foregroundStyle(PulseColors.textSecondary)
 
@@ -406,15 +399,15 @@ struct RecordSelectView: View {
                         Button { selected = kind.type } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 Image(systemName: kind.symbol)
-                                    .font(.system(size: 22))
+                                    .font(PulseFont.title2.weight(.regular))
                                     .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
                                     .frame(width: 46, height: 46)
                                     .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
                                 Text(kind.label)
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(PulseFont.bodyEmphasis)
                                     .foregroundStyle(PulseColors.textPrimary)
                                 Text(kind.helper)
-                                    .font(.system(size: 12))
+                                    .font(PulseFont.caption.weight(.regular))
                                     .foregroundStyle(PulseColors.textMuted)
                                     .lineLimit(2)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -431,17 +424,15 @@ struct RecordSelectView: View {
 
                 Toggle(isOn: $useGps) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Use GPS route").font(.system(size: 15, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+                        Text("Use GPS route").font(PulseFont.callout).foregroundStyle(PulseColors.textPrimary)
                         Text(gpsCapable ? "Track your route on a map" : "Not available for this activity")
-                            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                            .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     }
                 }
                 .tint(PulseColors.accent)
                 .disabled(!gpsCapable)
                 .padding(16)
-                .background(PulseColors.card)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     let willUseGps = useGps && gpsCapable
@@ -494,10 +485,10 @@ struct RecordLiveView: View {
                     VStack(spacing: 8) {
                         HStack(spacing: 10) {
                             Image(systemName: ActivityMeta.icon(session.type))
-                                .font(.system(size: 22, weight: .semibold))
+                                .font(PulseFont.title2)
                                 .foregroundStyle(PulseColors.accent)
                             Text(ActivityMeta.label(session.type))
-                                .font(.system(size: 28, weight: .bold))
+                                .font(PulseFont.title.weight(.bold))
                                 .foregroundStyle(PulseColors.textPrimary)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.6)
@@ -544,10 +535,10 @@ struct RecordLiveView: View {
                         )
                     } else if paused {
                         Text("PAUSED")
-                            .font(.system(size: 13, weight: .semibold)).tracking(2)
+                            .font(PulseFont.footnote.weight(.semibold)).tracking(2)
                             .foregroundStyle(PulseColors.textPrimary)
                             .padding(.horizontal, 18).padding(.vertical, 10)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .pulseGlass(Capsule())
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -563,7 +554,7 @@ struct RecordLiveView: View {
                     PrimaryButton(title: "Finish", systemImage: "flag.checkered") { confirmFinish = true }
                 }
                 .padding(16)
-                .background(.ultraThinMaterial)
+                .pulseGlass(Rectangle())
             }
             .navigationBarBackButtonHidden(true)
             .onAppear { liveWorkout.ensureActive(session) }
@@ -672,10 +663,10 @@ private struct ElapsedTimeText: View {
     private func clock(now: Date, muted: Bool) -> some View {
         VStack(spacing: 6) {
             Text(ActivityMeta.duration(max(0, Int(now.timeIntervalSince(startedAt) - totalPauseSeconds))))
-                .font(.system(size: 60, weight: .semibold, design: .rounded))
+                .font(PulseFont.numberHero)
                 .monospacedDigit()
                 .foregroundStyle(muted ? PulseColors.textMuted : PulseColors.textPrimary)
-            Text("DURATION").font(.system(size: 11, weight: .medium)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
+            Text("DURATION").font(PulseFont.caption2).tracking(1.4).foregroundStyle(PulseColors.textMuted)
         }
         .padding(.vertical, 8)
     }
@@ -844,10 +835,10 @@ private struct LiveRouteMapSection: View {
                 .opacity(paused ? 0.55 : 1)
                 if paused {
                     Text("PAUSED")
-                        .font(.system(size: 13, weight: .semibold)).tracking(2)
+                        .font(PulseFont.footnote.weight(.semibold)).tracking(2)
                         .foregroundStyle(PulseColors.textPrimary)
                         .padding(.horizontal, 18).padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .pulseGlass(Capsule())
                 }
             }
 
@@ -872,7 +863,7 @@ struct RecordingStatusPill: View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(paused ? "PAUSED" : "REC")
-                .font(.system(size: 11, weight: .semibold)).tracking(1.0)
+                .font(PulseFont.caption2.weight(.semibold)).tracking(1.0)
                 .foregroundStyle(color)
         }
         .padding(.horizontal, 9).padding(.vertical, 5)
@@ -896,7 +887,7 @@ private struct WorkoutEndSheet: View {
     var body: some View {
         VStack(spacing: 16) {
             Text(title)
-                .font(.system(size: 20, weight: .bold))
+                .font(PulseFont.title3.weight(.bold))
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 8)
 
@@ -907,21 +898,21 @@ private struct WorkoutEndSheet: View {
                     }
                     VStack(spacing: 4) {
                         Text(stats[i].value)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .font(PulseFont.numberM)
                             .monospacedDigit()
                             .foregroundStyle(PulseColors.textPrimary)
                         Text(stats[i].label.uppercased())
-                            .font(.system(size: 10, weight: .medium)).tracking(1.0)
+                            .font(PulseFont.micro).tracking(1.0)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                     .frame(maxWidth: .infinity)
                 }
             }
             .padding(.vertical, 14)
-            .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             Text(message)
-                .font(.system(size: 13))
+                .font(PulseFont.footnote.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
                 .multilineTextAlignment(.center)
 
@@ -930,23 +921,20 @@ private struct WorkoutEndSheet: View {
                 onConfirm()
             } label: {
                 Label(confirmTitle, systemImage: confirmIcon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(PulseFont.bodyEmphasis)
                     .frame(maxWidth: .infinity)
                     .frame(height: 56)
                     .foregroundStyle(.white)
-                    .background(destructive ? PulseColors.danger : PulseColors.accent)
-                    .clipShape(Capsule())
+                    .pulseGlass(Capsule(), interactive: true, tint: destructive ? PulseColors.danger : PulseColors.accent)
             }
 
             Button { dismiss() } label: {
                 Text(cancelTitle)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(PulseFont.callout.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .foregroundStyle(PulseColors.textPrimary)
-                    .background(PulseColors.cardSoft)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                    .pulseGlass(Capsule(), interactive: true)
             }
         }
         .padding(20)

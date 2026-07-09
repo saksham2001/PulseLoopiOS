@@ -58,7 +58,6 @@ struct WorkoutMapView: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
             .overlay(alignment: .bottomLeading) { infoOverlay }
             .overlay(alignment: .topTrailing) { if follow { followControls } }
             .onAppear { recenter() }
@@ -90,25 +89,25 @@ struct WorkoutMapView: View {
     private var infoOverlay: some View {
         let text = latestAccuracy.map { "±\(Int($0))m · \(coordinates.count) pts" } ?? "\(coordinates.count) pts"
         return Text(text)
-            .font(.system(size: 10, weight: .medium)).monospacedDigit()
+            .font(PulseFont.micro).monospacedDigit()
             .foregroundStyle(PulseColors.textSecondary)
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: Capsule())
+            .pulseGlass(Capsule())
             .padding(8)
     }
 
     private var followControls: some View {
         HStack(spacing: 6) {
             Text(following ? "Following" : "Map unlocked")
-                .font(.system(size: 10, weight: .medium))
+                .font(PulseFont.micro)
                 .foregroundStyle(following ? PulseColors.success : PulseColors.textMuted)
             Button { recenter() } label: {
-                Image(systemName: "location.fill").font(.system(size: 11, weight: .semibold))
+                Image(systemName: "location.fill").font(PulseFont.caption2.weight(.semibold))
                     .foregroundStyle(PulseColors.accent)
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(.ultraThinMaterial, in: Capsule())
+        .pulseGlass(Capsule(), interactive: true)
         .padding(8)
     }
 
@@ -125,23 +124,21 @@ struct WorkoutMapView: View {
     private var placeholder: some View {
         VStack(spacing: 6) {
             Image(systemName: "map")
-                .font(.system(size: 24))
+                .font(PulseFont.title2.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
             Text(unavailable ? "GPS route unavailable" : "No route yet")
-                .font(.system(size: 14, weight: .medium))
+                .font(PulseFont.subheadline)
                 .foregroundStyle(PulseColors.textPrimary)
             Text(unavailable
                  ? "Distance uses the ring/app estimate where possible."
                  : "Move outdoors to start tracking your route.")
-                .font(.system(size: 12))
+                .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        .background(PulseColors.cardSoft.opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var region: MKCoordinateRegion {

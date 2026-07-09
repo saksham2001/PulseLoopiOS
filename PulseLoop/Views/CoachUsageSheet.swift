@@ -105,15 +105,16 @@ struct CoachUsageSheet: View {
             )
         }
         .padding(.horizontal, 16).padding(.vertical, 4)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
+    // Inline notice, not a surface: keeps its flat tint so it doesn't stack glass
+    // on top of the glass cards it sits between.
     private var costNote: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(PulseColors.textMuted)
+            Image(systemName: "info.circle").font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             Text("Cost estimates aren't available for on-device or custom models.")
-                .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -132,14 +133,13 @@ struct CoachUsageSheet: View {
                 .padding(.top, 8)
             } label: {
                 Text("Per-message breakdown")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(PulseFont.footnote)
                     .foregroundStyle(PulseColors.textPrimary)
             }
             .tint(PulseColors.textSecondary)
         }
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func messageBreakdownRow(_ message: CoachMessage) -> some View {
@@ -148,16 +148,16 @@ struct CoachUsageSheet: View {
         let cost = message.costUSD.map { String(format: "$%.4f", $0) } ?? "—"
         return VStack(alignment: .leading, spacing: 2) {
             Text(preview.isEmpty ? "(no text)" : String(preview))
-                .font(.system(size: 12))
+                .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textPrimary)
                 .lineLimit(1)
             HStack {
                 Text(tokens)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(PulseFont.caption2.weight(.regular).monospacedDigit())
                     .foregroundStyle(PulseColors.textMuted)
                 Spacer()
                 Text(cost)
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(PulseFont.caption2.weight(.regular).monospacedDigit())
                     .foregroundStyle(PulseColors.textMuted)
             }
         }
@@ -166,11 +166,11 @@ struct CoachUsageSheet: View {
     private func usageRow(label: String, value: String, mono: Bool = false) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 14))
+                .font(PulseFont.subheadline.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
             Spacer(minLength: 12)
             Text(value)
-                .font(mono ? .system(size: 14).monospacedDigit() : .system(size: 14))
+                .font(mono ? PulseFont.subheadline.weight(.regular).monospacedDigit() : PulseFont.subheadline.weight(.regular))
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.trailing)
         }

@@ -99,7 +99,7 @@ private struct OnboardingTopBar: View {
                     if canGoBack {
                         Button(action: onBack) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(PulseFont.callout.weight(.semibold))
                                 .frame(width: 44, height: 44)
                         }
                         .accessibilityLabel("Back")
@@ -107,14 +107,14 @@ private struct OnboardingTopBar: View {
                 }
                 Spacer()
                 Text("Step \(step.index + 1) of \(OnboardingStep.allCases.count)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(PulseFont.caption.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
                     .monospacedDigit()
                 Spacer()
                 topBarSlot {
                     if showsSkip {
                         Button("Skip", action: onSkip)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(PulseFont.subheadline.weight(.semibold))
                             .frame(minWidth: 44, minHeight: 44)
                     }
                 }
@@ -182,17 +182,17 @@ struct OnboardingWelcomeView: View {
                     ForEach(features, id: \.1) { feature in
                         VStack(spacing: 8) {
                             Image(systemName: feature.0)
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(PulseFont.title3)
                                 .foregroundStyle(feature.3)
                                 .frame(width: 38, height: 38)
                                 .background(feature.3.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
                             Text(feature.1)
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(PulseFont.headline)
                                 .foregroundStyle(PulseColors.textPrimary)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
                             Text(feature.2)
-                                .font(.system(size: 13))
+                                .font(PulseFont.footnote.weight(.regular))
                                 .foregroundStyle(PulseColors.textMuted)
                                 .multilineTextAlignment(.center)
                                 .lineLimit(2)
@@ -200,12 +200,7 @@ struct OnboardingWelcomeView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 118, alignment: .center)
                         .padding(.horizontal, 13)
-                        .background(PulseColors.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-                        )
+                        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
 
@@ -359,10 +354,10 @@ struct OnboardingBaselineView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("PulseLoop learns your baseline over time")
-                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            .font(PulseFont.numberM)
                             .foregroundStyle(PulseColors.textPrimary)
                         Text("Wear your ring during the day and sync after sleep. Trends become more personal after a few days.")
-                            .font(.system(size: 14))
+                            .font(PulseFont.subheadline.weight(.regular))
                             .foregroundStyle(PulseColors.textSecondary)
                             .lineSpacing(4)
                     }
@@ -371,9 +366,9 @@ struct OnboardingBaselineView: View {
                         HStack(spacing: 12) {
                             Group {
                                 if milestone.0 == "1" {
-                                    Text("1").font(.system(size: 13, weight: .bold))
+                                    Text("1").font(PulseFont.footnote.weight(.bold))
                                 } else {
-                                    Image(systemName: milestone.0).font(.system(size: 13, weight: .semibold))
+                                    Image(systemName: milestone.0).font(PulseFont.footnote.weight(.semibold))
                                 }
                             }
                             .foregroundStyle(milestone.3)
@@ -382,10 +377,10 @@ struct OnboardingBaselineView: View {
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(milestone.1)
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(PulseFont.subheadline.weight(.semibold))
                                     .foregroundStyle(PulseColors.textPrimary)
                                 Text(milestone.2)
-                                    .font(.system(size: 13))
+                                    .font(PulseFont.footnote.weight(.regular))
                                     .foregroundStyle(PulseColors.textMuted)
                             }
                             Spacer()
@@ -444,12 +439,12 @@ private struct CompactOnboardingHeader: View {
     var body: some View {
         VStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .font(PulseFont.numberXL)
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.center)
             if let subtitle {
                 Text(subtitle)
-                    .font(.system(size: 15))
+                    .font(PulseFont.callout.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
@@ -463,17 +458,13 @@ struct OnboardingActionFooter<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
+        // Transparent footer: the glass button floats over the content (iOS 26 look),
+        // no silver glass bar behind it. Content dissolves under the button when scrolled.
         content
             .frame(maxWidth: 560)
             .padding(.horizontal, 24)
             .padding(.top, 12)
             .padding(.bottom, 8)
             .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(PulseColors.borderSubtle)
-                    .frame(height: 1)
-            }
     }
 }

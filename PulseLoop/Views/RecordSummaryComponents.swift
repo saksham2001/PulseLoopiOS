@@ -153,13 +153,13 @@ struct WorkoutMetricsSections: View {
     private var header: some View {
         VStack(spacing: 8) {
             Image(systemName: ActivityMeta.icon(session.type))
-                .font(.system(size: 34)).foregroundStyle(PulseColors.accent)
+                .font(PulseFont.largeTitle.weight(.regular)).foregroundStyle(PulseColors.accent)
                 .frame(width: 72, height: 72).background(PulseColors.accentSoft, in: Circle())
             if savedBadge {
-                Text("WORKOUT SAVED").font(.system(size: 11, weight: .medium)).tracking(1.8).foregroundStyle(PulseColors.accent)
+                Text("WORKOUT SAVED").font(PulseFont.caption2).tracking(1.8).foregroundStyle(PulseColors.accent)
             }
-            Text(ActivityMeta.label(session.type)).font(.system(size: 24, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-            Text(dateRange).font(.system(size: 13)).foregroundStyle(PulseColors.textMuted)
+            Text(ActivityMeta.label(session.type)).font(PulseFont.title2).foregroundStyle(PulseColors.textPrimary)
+            Text(dateRange).font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -186,18 +186,17 @@ struct WorkoutMetricsSections: View {
     private func chartCard<Content: View>(title: String, footnote: String?, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title).font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text(title).font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 Spacer()
                 if let footnote {
-                    Text(footnote).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(PulseColors.textMuted)
+                    Text(footnote).font(PulseFont.caption2.monospacedDigit()).foregroundStyle(PulseColors.textMuted)
                 }
             }
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .padding(16)
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var hrFootnote: String? {
@@ -289,11 +288,11 @@ private struct SummaryHeroBand: View {
             ForEach(Array(metrics.enumerated()), id: \.offset) { index, m in
                 VStack(spacing: 6) {
                     Text(m.value)
-                        .font(.system(size: 30, weight: .semibold)).monospacedDigit()
+                        .font(PulseFont.greeting).monospacedDigit()
                         .foregroundStyle(m.tint)
                         .minimumScaleFactor(0.5).lineLimit(1)
                     Text(m.label)
-                        .font(.system(size: 10, weight: .medium)).tracking(0.8)
+                        .font(PulseFont.micro).tracking(0.8)
                         .foregroundStyle(PulseColors.textMuted)
                 }
                 .frame(maxWidth: .infinity)
@@ -304,9 +303,7 @@ private struct SummaryHeroBand: View {
         }
         .padding(.vertical, 18).padding(.horizontal, 8)
         .frame(maxWidth: .infinity)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -327,13 +324,13 @@ private struct SplitsTable: View {
             let fastest = splits.min() ?? 0
             let slowest = splits.max() ?? 1
             VStack(alignment: .leading, spacing: 10) {
-                Text("SPLITS").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text("SPLITS").font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(Array(splits.enumerated()), id: \.offset) { index, seconds in
                     let isFastest = seconds == fastest
                     let frac = slowest > fastest ? (seconds - fastest) / (slowest - fastest) : 0
                     HStack(spacing: 12) {
                         Text("\(splitLabel) \(index + 1)")
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(PulseFont.caption.monospacedDigit())
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 44, alignment: .leading)
                         GeometryReader { geo in
@@ -346,16 +343,15 @@ private struct SplitsTable: View {
                         }
                         .frame(height: 8)
                         Text(paceLabel(seconds))
-                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .font(PulseFont.caption.monospacedDigit())
                             .foregroundStyle(isFastest ? PulseColors.accent : PulseColors.textPrimary)
                             .frame(width: 64, alignment: .trailing)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 
@@ -377,13 +373,13 @@ private struct HRZonesCard: View {
         let total = zones.reduce(0) { $0 + $1.seconds }
         if total > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                Text("HEART RATE ZONES").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text("HEART RATE ZONES").font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                 ForEach(zones.reversed()) { zone in
                     let frac = zone.seconds / total
                     let pctText = "\(Int((frac * 100).rounded()))%"
                     HStack(spacing: 10) {
                         Text(zone.name)
-                            .font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
+                            .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 120, alignment: .leading).lineLimit(1)
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
@@ -395,16 +391,15 @@ private struct HRZonesCard: View {
                         .frame(height: 8)
                         // Percentage of the workout spent in this zone.
                         Text(zone.seconds >= 1 ? pctText : "—")
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .font(PulseFont.caption.weight(.semibold).monospacedDigit())
                             .foregroundStyle(zone.seconds >= 1 ? PulseColors.textPrimary : PulseColors.textMuted)
                             .frame(width: 48, alignment: .trailing)
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 }

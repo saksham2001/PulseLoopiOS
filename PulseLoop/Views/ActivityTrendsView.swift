@@ -35,22 +35,21 @@ struct ActivityTrendsView: View {
             .animation(.easeInOut(duration: 0.25), value: period)
         }
         .background(PulseColors.background)
-        .navigationTitle("Activity Trends")
-        .navigationBarTitleDisplayMode(.inline)
+        .pageChrome("Activity Trends")
     }
 
     // MARK: - Explainer
 
     private var explainer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("WHAT THIS MEANS").font(.system(size: 11, weight: .semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+            Text("WHAT THIS MEANS").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
             Text("Each bar is one day's total (or a month's daily average for the year). The dashed line is your daily goal — "
                  + "bars above it are days you hit it. The value up top is your average for the range.")
-                .font(.system(size: 13)).foregroundStyle(PulseColors.textSecondary)
+                .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
@@ -182,17 +181,17 @@ struct ActivityTrendsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
-                    .font(.system(size: 20, weight: .bold))
+                    .font(PulseFont.title3.weight(.bold))
                     .foregroundStyle(color)
                 Spacer()
                 Text(average ?? "— /day")
-                    .font(.system(size: 19, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.title3).monospacedDigit()
                     .foregroundStyle(average == nil ? PulseColors.textMuted : PulseColors.textPrimary)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
             }
             Text(rangeLabel(samples: samples))
-                .font(.system(size: 12))
+                .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
 
             TrendBarChart(
@@ -206,9 +205,7 @@ struct ActivityTrendsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     // MARK: - Derived values
@@ -332,7 +329,7 @@ private struct TrendBarChart: View {
                     .annotation(position: .top, alignment: .trailing) {
                         if let goalLabel {
                             Text(goalLabel)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(PulseFont.micro.weight(.semibold))
                                 .foregroundStyle(color)
                         }
                     }
@@ -345,7 +342,7 @@ private struct TrendBarChart: View {
             AxisMarks(values: orderedKeys) { value in
                 if let k = value.as(String.self), let index = Int(k), let label = axisLabels[index] {
                     AxisValueLabel {
-                        Text(label).font(.system(size: 10)).foregroundStyle(PulseColors.textMuted)
+                        Text(label).font(PulseFont.micro.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     }
                 }
             }
@@ -353,7 +350,7 @@ private struct TrendBarChart: View {
         .overlay(alignment: .center) {
             if values.isEmpty {
                 Text("No data for this period")
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             }
         }
     }

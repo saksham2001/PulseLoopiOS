@@ -50,15 +50,20 @@ struct SettingsView: View {
             VStack(spacing: 20) {
                 DeviceHeroCard(path: $path)
 
-                SettingsSection(title: "Device", rows: deviceRows(caps))
-                SettingsSection(title: "AI Coach", rows: aiCoachRows)
-                SettingsSection(title: "General", rows: generalRows)
-                SettingsSection(title: "Metrics", rows: metricsRows)
-                SettingsSection(title: "Resources", rows: resourcesRows(caps))
+                // Grouped glass sections share one container so their glass renders/
+                // blends consistently (iOS-Settings inset-grouped look).
+                VStack(spacing: 20) {
+                    SettingsSection(title: "Device", rows: deviceRows(caps))
+                    SettingsSection(title: "General", rows: generalRows)
+                    SettingsSection(title: "Metrics", rows: metricsRows)
+                    SettingsSection(title: "Resources", rows: resourcesRows(caps))
+                }
+                .pulseGlassContainer(spacing: 20)
             }
             .padding()
         }
         .background(PulseColors.background)
+        .pulseScrollEdges(.top) // content frosts/dissolves under the top as it scrolls
         .navigationTitle("Settings")
     }
 
@@ -76,10 +81,16 @@ struct SettingsView: View {
         return rows
     }
 
-    /// AI Coach and its notifications live together — the notifications screen only configures coach
-    /// alerts, so it's a sub-feature of the coach, not a peer of the other General items.
-    private var aiCoachRows: [SettingsRowItem] {
+    /// User setup lives in one group: profile + physiology, then the AI Coach and its check-ins
+    /// (the check-ins screen only configures coach alerts, so it's a coach sub-feature).
+    private var generalRows: [SettingsRowItem] {
         var rows: [SettingsRowItem] = [
+            SettingsRowItem(icon: "person.crop.circle", tint: PulseColors.accent, title: "User Profile") {
+                path.append(AppRoute.settingsProfile)
+            },
+            SettingsRowItem(icon: "lungs", tint: PulseColors.hrv, title: "Physiology") {
+                path.append(AppRoute.settingsPhysiology)
+            },
             SettingsRowItem(icon: "sparkles", tint: PulseColors.accent, title: "AI Coach", trailingValue: coachTrailing) {
                 path.append(AppRoute.settingsCoach)
             }
@@ -91,17 +102,6 @@ struct SettingsView: View {
             })
         }
         return rows
-    }
-
-    private var generalRows: [SettingsRowItem] {
-        [
-            SettingsRowItem(icon: "person.crop.circle", tint: PulseColors.accent, title: "User Profile") {
-                path.append(AppRoute.settingsProfile)
-            },
-            SettingsRowItem(icon: "lungs", tint: PulseColors.hrv, title: "Physiology") {
-                path.append(AppRoute.settingsPhysiology)
-            }
-        ]
     }
 
     private var metricsRows: [SettingsRowItem] {

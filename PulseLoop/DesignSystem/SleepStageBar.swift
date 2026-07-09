@@ -52,7 +52,7 @@ struct SleepStageBar: View {
                 HStack(spacing: spacing) {
                     ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
                         Text(showsLabel(segment) ? segment.label : "")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(PulseFont.nano)
                             .foregroundStyle(segment.color)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)

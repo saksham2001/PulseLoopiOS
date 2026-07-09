@@ -15,12 +15,11 @@ struct CapabilityChips: View {
         let row = HStack(spacing: 6) {
             ForEach(chips, id: \.self) { chip in
                 Text(chip)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .foregroundStyle(ChipTone.neutral.foreground)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(ChipTone.neutral.background, in: Capsule())
-                    .overlay(Capsule().strokeBorder(ChipTone.neutral.border, lineWidth: 1))
+                    .pulseGlass(Capsule())
             }
         }
         return ViewThatFits(in: .horizontal) {
@@ -46,19 +45,69 @@ struct SignalStrengthDots: View {
         return 1
     }
 
-    private var filledColor: Color {
-        if rssi >= -65 { return PulseColors.success }
-        if rssi >= -80 { return PulseColors.warning }
-        return PulseColors.danger
-    }
-
     var body: some View {
+        // One filled white dot per strength level (1/2/3), no empty dots. Glass at 6pt
+        // reads too faint here, so use a solid white fill.
         HStack(spacing: 3) {
-            ForEach(0..<3, id: \.self) { i in
+            ForEach(0..<filledCount, id: \.self) { _ in
                 Circle()
-                    .fill(i < filledCount ? filledColor : PulseColors.elevated)
+                    .fill(.white)
                     .frame(width: 6, height: 6)
             }
         }
+    }
+}
+
+// MARK: - GlassScrollIndicator
+
+/// A liquid-glass "scroll bar" page indicator: a faint glass track with an accent
+/// glass thumb sized to `1/count` of the width. The thumb slides to the selected
+/// index and the track can be dragged to scrub between models. Replaces a per-model
+/// dot row so it scales to any catalog size without clipping.
+struct GlassScrollIndicator: View {
+    let count: Int
+    @Binding var index: Int
+    var onScrub: () -> Void = {}
+
+    private let trackHeight: CGFloat = 8
+    private var slide: Animation { .spring(response: 0.34, dampingFraction: 0.85) }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let thumbW = max(w / CGFloat(max(count, 1)), 34) // min thumb so it stays grabbable
+            let maxX = max(w - thumbW, 0)
+            let x = count > 1 ? maxX * CGFloat(index) / CGFloat(count - 1) : 0
+
+            ZStack(alignment: .leading) {
+                // Faint glass track.
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: trackHeight)
+                    .pulseGlass(Capsule())
+                    .opacity(0.5)
+                // Accent glass thumb.
+                Color.clear
+                    .frame(width: thumbW, height: trackHeight)
+                    .pulseGlass(Capsule(), interactive: true, tint: PulseColors.accent)
+                    .offset(x: x)
+                    .animation(slide, value: index)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard count > 1, w > 0 else { return }
+                        let ratio = min(max(value.location.x / w, 0), 1)
+                        let newIndex = Int((ratio * CGFloat(count - 1)).rounded())
+                        if newIndex != index {
+                            withAnimation(slide) { index = newIndex }
+                            onScrub()
+                        }
+                    }
+            )
+        }
+        .frame(height: 44)
     }
 }

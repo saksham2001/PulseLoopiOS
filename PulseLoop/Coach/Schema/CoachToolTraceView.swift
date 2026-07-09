@@ -38,12 +38,12 @@ struct CoachToolTraceDisclosure: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "wrench.and.screwdriver")
-                            .font(.system(size: 10))
+                            .font(PulseFont.micro.weight(.regular))
                         Text(collapsedText)
-                            .font(.system(size: 11))
+                            .font(PulseFont.caption2.weight(.regular))
                             .lineLimit(1)
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(PulseFont.nano)
                     }
                     .foregroundStyle(PulseColors.textMuted)
                 }
@@ -65,16 +65,16 @@ struct CoachToolTraceDisclosure: View {
         let isError = call.statusRaw == "error"
         return HStack(alignment: .top, spacing: 6) {
             Image(systemName: isError ? "xmark.circle" : "checkmark.circle")
-                .font(.system(size: 11))
+                .font(PulseFont.caption2.weight(.regular))
                 .foregroundStyle(isError ? PulseColors.danger : PulseColors.success)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 1) {
                 Text(Self.displayLabel(call))
-                    .font(.system(size: 11))
+                    .font(PulseFont.caption2.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
                 if let summary = call.outputJSON, !summary.isEmpty {
                     Text(summary)
-                        .font(.system(size: 10))
+                        .font(PulseFont.micro.weight(.regular))
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }

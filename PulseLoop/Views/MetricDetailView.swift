@@ -10,6 +10,7 @@ struct MetricDetailView: View {
     let metric: MetricKind
     @Binding var path: NavigationPath
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [UserProfile]
 
     @State private var period: DetailPeriod = .today
@@ -73,8 +74,9 @@ struct MetricDetailView: View {
             .padding(.bottom, 40)
         }
         .background(PulseColors.background)
-        .navigationTitle(metric.title)
-        .navigationBarTitleDisplayMode(.inline)
+        // Shared glass chrome: centered title + glass back button, no system nav
+        // bar (so the zoom transition doesn't reflow the content).
+        .pageChrome(metric.title)
         .task(id: period) { reload() }
     }
 
@@ -97,13 +99,13 @@ struct MetricDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             if !unitLabel.isEmpty {
                 Text(unitLabel)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(PulseFont.caption.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if chart.count < 2 {
                 Text("Not enough data for this period.")
-                    .font(.system(size: 13)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
             } else if metric == .bloodPressure {
                 bloodPressureChart
@@ -128,8 +130,7 @@ struct MetricDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     /// BP shows two series — systolic in the metric accent, diastolic lighter.
@@ -175,18 +176,17 @@ struct MetricDetailView: View {
         .padding(.vertical, 14)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private func stat(_ title: String, _ value: String) -> some View {
         VStack(spacing: 8) {
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .medium)).tracking(0.6)
+                .font(PulseFont.caption2).tracking(0.6)
                 .foregroundStyle(PulseColors.textMuted)
                 .lineLimit(1)
             Text(value)
-                .font(.system(size: 32, weight: .semibold, design: .rounded)).monospacedDigit()
+                .font(PulseFont.numberXL).monospacedDigit()
                 .foregroundStyle(PulseColors.textPrimary)
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
@@ -203,36 +203,34 @@ struct MetricDetailView: View {
     private var legend: some View {
         let zones = VitalsThresholdEngine.zones(for: metric, profile: profile, baseline: baselineForChart)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("REFERENCE ZONES").font(.system(size: 11, weight: .semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+            Text("REFERENCE ZONES").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
             ForEach(zones) { zone in
                 HStack(spacing: 10) {
                     Circle().fill(zone.color).frame(width: 8, height: 8)
-                    Text(zone.label).font(.system(size: 13, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+                    Text(zone.label).font(PulseFont.footnote).foregroundStyle(PulseColors.textPrimary)
                     Spacer()
-                    Text(rangeText(zone)).font(.system(size: 12)).monospacedDigit().foregroundStyle(PulseColors.textMuted)
+                    Text(rangeText(zone)).font(PulseFont.caption.weight(.regular)).monospacedDigit().foregroundStyle(PulseColors.textMuted)
                 }
             }
         }
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var explainer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("WHAT THIS MEANS").font(.system(size: 11, weight: .semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
-            Text(explainerText).font(.system(size: 13)).foregroundStyle(PulseColors.textSecondary)
+            Text("WHAT THIS MEANS").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+            Text(explainerText).font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var disclaimer: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(PulseColors.warning)
-            Text(disclaimerText).font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
+            Text(disclaimerText).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

@@ -32,13 +32,13 @@ struct MeasurementSheet: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MEASURING")
-                        .font(.system(size: 10, weight: .medium)).tracking(1.8)
+                        .font(PulseFont.micro).tracking(1.8)
                         .foregroundStyle(PulseColors.textMuted)
-                    Text(name).font(.system(size: 18, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
+                    Text(name).font(PulseFont.title3).foregroundStyle(PulseColors.textPrimary)
                 }
                 Spacer()
                 Button(phase == .measuring ? "Finish" : "Cancel") { dismiss() }
-                    .font(.system(size: 13))
+                    .font(PulseFont.footnote.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(PulseColors.card, in: Capsule())
@@ -63,12 +63,12 @@ struct MeasurementSheet: View {
                     Circle().fill(color.opacity(0.12)).frame(width: 220, height: 220)
                     VStack(spacing: 4) {
                         if let value, phase != .preparing {
-                            Text("\(value)").font(.system(size: 52, weight: .semibold)).monospacedDigit()
+                            Text("\(value)").font(PulseFont.nano).monospacedDigit()
                                 .foregroundStyle(PulseColors.textPrimary)
-                            Text(unit.uppercased()).font(.system(size: 12)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
+                            Text(unit.uppercased()).font(PulseFont.caption.weight(.regular)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
                         } else {
                             Text(phase == .preparing ? "READY" : "MEASURING")
-                                .font(.system(size: 14, weight: .medium)).tracking(1.8)
+                                .font(PulseFont.subheadline).tracking(1.8)
                                 .foregroundStyle(PulseColors.textMuted)
                         }
                     }
@@ -76,7 +76,7 @@ struct MeasurementSheet: View {
                 .frame(height: 240)
 
                 Text(phaseCopy)
-                    .font(.system(size: 14))
+                    .font(PulseFont.subheadline.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 280)
@@ -87,7 +87,7 @@ struct MeasurementSheet: View {
 
             if phase == .result {
                 Text("Saved")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.success)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -125,16 +125,16 @@ struct MeasurementSheet: View {
     private var errorState: some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark")
-                .font(.system(size: 28, weight: .bold))
+                .font(PulseFont.title.weight(.bold))
                 .foregroundStyle(PulseColors.danger)
                 .frame(width: 80, height: 80)
                 .background(PulseColors.danger.opacity(0.10), in: Circle())
                 .overlay(Circle().stroke(PulseColors.danger.opacity(0.3), lineWidth: 1))
             Text(errorMessage)
-                .font(.system(size: 14)).foregroundStyle(PulseColors.textSecondary)
+                .font(PulseFont.subheadline.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 280)
             Button("Close") { dismiss() }
-                .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                .font(PulseFont.subheadline.weight(.semibold)).foregroundStyle(.white)
                 .padding(.horizontal, 20).padding(.vertical, 10)
                 .background(PulseColors.accent, in: Capsule())
         }

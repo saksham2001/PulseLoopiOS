@@ -10,6 +10,12 @@ import UIKit
 /// device we surface/auto-connect, while `RingBLEClient.coordinators` still does the real matching.
 struct PairingView: View {
     @Environment(RingBLEClient.self) private var ble
+    @Environment(\.dismiss) private var dismiss
+
+    /// Pushed onto the Settings nav stack (no onboarding "Skip"): show our own glass
+    /// back button and hide the system nav bar so it doesn't stack a second, empty
+    /// header above the big "Add your ring" title.
+    private var isPushed: Bool { onSkip == nil }
 
     private var forcePairingUIForTesting: Bool {
         #if DEBUG
@@ -79,6 +85,50 @@ struct PairingView: View {
     }
 
     var body: some View {
+        content
+            .background(PulseColors.background.ignoresSafeArea())
+            .onChange(of: ble.state) { _, state in
+                if state == .connected, !didFireConnected {
+                    didFireConnected = true
+                    isLooking = false
+                    successHaptic.notificationOccurred(.success) // §6 success haptic
+                    onConnected?()
+                }
+            }
+            .onDisappear { isLooking = false; ble.stopScanning() } // reset so a re-appear doesn't show a frozen scan
+    }
+
+    /// Wraps the scroll content with a glass back button + hidden nav bar when pushed
+    /// from Settings; onboarding (no nav stack) uses the bare scroll content.
+    @ViewBuilder
+    private var content: some View {
+        if isPushed {
+            VStack(spacing: 0) {
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(PulseFont.bodyEmphasis)
+                            .foregroundStyle(PulseColors.textPrimary)
+                            .frame(width: 36, height: 36)
+                            .pulseGlass(Circle(), interactive: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
+                scrollContent
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .enablesBackSwipe()
+        } else {
+            scrollContent
+        }
+    }
+
+    private var scrollContent: some View {
         ScrollView {
             VStack(spacing: 24) {
                 OnboardingHeader(
@@ -114,21 +164,11 @@ struct PairingView: View {
         }
         .scrollBounceBehavior(.basedOnSize) // static when it fits; scrolls only if content overflows
                                             // (small devices / scanning list) so nothing clips
-        .background(PulseColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if showsActionFooter {
                 OnboardingActionFooter { pairingFooterContent }
             }
         }
-        .onChange(of: ble.state) { _, state in
-            if state == .connected, !didFireConnected {
-                didFireConnected = true
-                isLooking = false
-                successHaptic.notificationOccurred(.success) // §6 success haptic
-                onConnected?()
-            }
-        }
-        .onDisappear { isLooking = false; ble.stopScanning() } // reset so a re-appear doesn't show a frozen scan
     }
 
     // MARK: - Carousel
@@ -142,7 +182,7 @@ struct PairingView: View {
                     VStack(spacing: 16) {
                         RingArtView(tint: model.tint, imageName: model.imageName)
                         Text(model.displayName)
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(PulseFont.numberL)
                             .foregroundStyle(PulseColors.textPrimary)
                         CapabilityChips(blurb: model.blurb) // §2 replaces blurb Text
                     }
@@ -163,33 +203,22 @@ struct PairingView: View {
         }
     }
 
+    /// Page position shown as a liquid-glass scroll bar: a faint glass track with an
+    /// accent glass thumb that slides to the selected model and can be dragged to scrub.
+    /// Scales to any catalog size — never clips or overflows like a per-model dot row.
     private var modelDotRow: some View {
-        HStack(spacing: 6) {
+        Group {
             if models.count > 1 {
-                ForEach(Array(models.enumerated()), id: \.offset) { index, model in
-                    Button {
-                        selectedIndex = index
-                    } label: {
-                        Capsule()
-                            .fill(selectedIndex == index ? PulseColors.accent : PulseColors.elevated)
-                            .overlay(
-                                Capsule().strokeBorder(PulseColors.borderStrong,
-                                                       lineWidth: selectedIndex == index ? 0 : 1)
-                            )
-                            .frame(width: selectedIndex == index ? 20 : 6, height: 6)
-                            .animation(.spring(response: 0.3), value: selectedIndex)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel("Page \(index + 1) of \(models.count): \(model.displayName)")
+                GlassScrollIndicator(count: models.count, index: $selectedIndex) {
+                    if isLooking { ble.startScanning() } // re-filter scan as selection scrubs
                 }
+                .frame(maxWidth: 220)
+                .accessibilityLabel("Model \(selectedIndex + 1) of \(models.count): \(selectedModel.displayName)")
             }
         }
-        .frame(maxWidth: .infinity) // center dots; keep row from driving column width
-        .frame(height: 44) // reserve a constant 44pt tappable dot area across every brand tab
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity) // center the bar; keep it from driving column width
+        .frame(height: 44)          // constant 44pt area across every brand tab
+        .padding(.vertical, 4)
     }
 
     /// Brand filter: centered when the pills fit on screen, horizontally scrollable when they don't.
@@ -218,12 +247,12 @@ struct PairingView: View {
                     if isLooking { ble.startScanning() }
                 } label: {
                     Text(brand)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(PulseFont.subheadline.weight(.semibold))
                         .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(isSelected ? PulseColors.accent : PulseColors.card, in: Capsule())
-                        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: isSelected ? 0 : 1))
+                        // Selected = accent-tinted interactive glass; others = plain glass.
+                        .pulseGlass(Capsule(), interactive: true, tint: isSelected ? PulseColors.accent : nil)
                         .animation(.spring(response: 0.25, dampingFraction: 0.82), value: selectedBrand)
                 }
                 .buttonStyle(.plain)
@@ -232,6 +261,7 @@ struct PairingView: View {
             }
         }
         .padding(.horizontal, 2)
+        .pulseGlassContainer(spacing: 8) // morph pills as the selection moves
     }
 
     // MARK: - Action area (scan + discovered rings)
@@ -255,7 +285,7 @@ struct PairingView: View {
             if let onSkip {
                 SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
                 Text("You can pair a ring later from Settings.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .multilineTextAlignment(.center)
             }
@@ -279,14 +309,17 @@ struct PairingView: View {
                 .foregroundStyle(PulseColors.textMuted)
                 .frame(maxWidth: .infinity, alignment: .center) // §4 centered
 
-                ForEach(matchingRings) { ring in
-                    Button {
-                        ble.connect(to: ring.id, selectedModelID: selectedModel.id)
-                    } label: {
-                        ringRow(ring)
+                VStack(spacing: 8) {
+                    ForEach(matchingRings) { ring in
+                        Button {
+                            ble.connect(to: ring.id, selectedModelID: selectedModel.id)
+                        } label: {
+                            ringRow(ring)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .pulseGlassContainer(spacing: 8) // discovered glass rows blend/morph together
 
                 if matchingRings.isEmpty {
                     InlineEmptyState(
@@ -302,12 +335,7 @@ struct PairingView: View {
                 }
         }
         .padding(16) // §4 card wrapper
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        )
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func ringRow(_ ring: RingBLEClient.DiscoveredRing) -> some View {
@@ -332,7 +360,8 @@ struct PairingView: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .background(PulseColors.card)
+        // Interactive glass row (it's a tappable connect button).
+        .pulseGlass(RoundedRectangle(cornerRadius: 14, style: .continuous), interactive: true)
         .overlay(alignment: .leading) { // §5 accent left-stripe for likely rings
             if ring.isLikelyRing {
                 Rectangle()
@@ -341,7 +370,6 @@ struct PairingView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous)) // §5 clips stripe
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine) // §5
         .accessibilityLabel(Text( // §5 spoken label with signal level
@@ -385,7 +413,7 @@ struct PairingView: View {
     private var bluetoothOffCard: some View {
         VStack(spacing: 14) { // §6 spacing bumped to 14
             Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                .font(.system(size: 34))
+                .font(PulseFont.largeTitle.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
             Text("Bluetooth is off")
                 .font(.headline)
@@ -400,7 +428,6 @@ struct PairingView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

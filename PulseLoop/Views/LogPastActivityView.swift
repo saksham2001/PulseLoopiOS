@@ -65,8 +65,7 @@ struct LogPastActivityView: View {
             .padding(.bottom, 40)
         }
         .background(PulseColors.background.ignoresSafeArea())
-        .navigationTitle("Log Past Activity")
-        .navigationBarTitleDisplayMode(.inline)
+        .pageChrome("Log Past Activity")
     }
 
     private func save() {
@@ -89,10 +88,10 @@ private struct LogPastActivityHeader: View, Equatable {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("What did you do?")
-                .font(.system(size: 22, weight: .bold))
+                .font(PulseFont.title2.weight(.bold))
                 .foregroundStyle(PulseColors.textPrimary)
             Text("Choose an activity, when it started, and how long it lasted.")
-                .font(.system(size: 14))
+                .font(PulseFont.subheadline.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
         }
     }
@@ -105,7 +104,7 @@ private struct FormSectionLabel: View, Equatable {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .semibold))
+            .font(PulseFont.caption2.weight(.semibold))
             .tracking(1.2)
             .foregroundStyle(PulseColors.textMuted)
     }
@@ -153,22 +152,20 @@ private struct ActivityTypeButton: View, Equatable {
         Button { onSelect(kind.type) } label: {
             HStack(spacing: 10) {
                 Image(systemName: kind.symbol)
-                    .font(.system(size: 18))
+                    .font(PulseFont.title3.weight(.regular))
                     .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
                     .frame(width: 38, height: 38)
                     .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
                 Text(kind.label)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(PulseFont.callout.weight(.semibold))
                     .foregroundStyle(PulseColors.textPrimary)
                 Spacer(minLength: 0)
             }
             .padding(12)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? PulseColors.accentSoft : PulseColors.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isSelected ? PulseColors.accent : PulseColors.borderSubtle, lineWidth: 1)
-            }
+            // Selected = accent-tinted glass; others = plain glass.
+            .pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous),
+                        interactive: true, tint: isSelected ? PulseColors.accent : nil)
         }
         .buttonStyle(.plain)
     }
@@ -195,15 +192,11 @@ private struct PastActivityTimeCard: View {
             Divider().overlay(PulseColors.borderSubtle).padding(.leading, 52)
             row(title: "Ends", systemImage: "clock") {
                 Text(endedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 14, weight: .medium))
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(isValid ? PulseColors.textSecondary : PulseColors.warning)
             }
         }
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        }
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func row<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
@@ -212,7 +205,7 @@ private struct PastActivityTimeCard: View {
                 .foregroundStyle(PulseColors.accent)
                 .frame(width: 24)
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .font(PulseFont.subheadline)
                 .foregroundStyle(PulseColors.textPrimary)
             Spacer()
             content()
@@ -237,11 +230,11 @@ private struct PastActivityDurationCard: View, Equatable {
                 Spacer()
                 VStack(spacing: 2) {
                     Text(durationText)
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(PulseFont.title)
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                     Text("DURATION")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(PulseFont.micro)
                         .tracking(1.1)
                         .foregroundStyle(PulseColors.textMuted)
                 }
@@ -252,7 +245,7 @@ private struct PastActivityDurationCard: View, Equatable {
             HStack(spacing: 8) {
                 ForEach(Self.quickDurations, id: \.self) { value in
                     Button("\(value)m") { onChange(value) }
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(PulseFont.caption.weight(.semibold))
                         .foregroundStyle(minutes == value ? Color.white : PulseColors.textSecondary)
                         .frame(maxWidth: .infinity)
                         .frame(height: 34)
@@ -262,11 +255,7 @@ private struct PastActivityDurationCard: View, Equatable {
             }
         }
         .padding(16)
-        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        }
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func durationButton(systemImage: String, action: @escaping () -> Void) -> some View {
@@ -302,6 +291,6 @@ private struct FormMessages: View, Equatable {
                     .foregroundStyle(PulseColors.danger)
             }
         }
-        .font(.system(size: 13, weight: .medium))
+        .font(PulseFont.footnote)
     }
 }

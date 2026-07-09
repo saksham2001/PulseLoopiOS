@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct VitalsView: View {
     @Binding var path: NavigationPath
@@ -8,6 +9,7 @@ struct VitalsView: View {
     let isActive: Bool
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
     @State private var dataChange = PulseDataChange.shared
@@ -39,8 +41,8 @@ struct VitalsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
         }
-        .background(PulseColors.background)
-        // Tap-outside-to-exit: a catcher behind the cards, live only while editing.
+        // Tap-outside-to-exit: a catcher layered above the opaque background colour — `.background`
+        // stacks back-to-front, so adding it after `PulseColors.background` would bury it.
         .background {
             if editing {
                 Color.clear
@@ -49,8 +51,10 @@ struct VitalsView: View {
                     .accessibilityHidden(true)
             }
         }
+        .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
-        .overlay(alignment: .top) { if editing { editDoneBar } }
+        .pulseScrollEdges()
+        .overlay(alignment: .top) { if editing { ReorderDoneBar { exitEdit() } } }
         .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
         .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
         .onChange(of: isActive) { _, active in if active { store?.updateProfile(profile) } }
@@ -94,18 +98,19 @@ struct VitalsView: View {
             ReorderableForEach(items: keys, isEditing: editing, dragging: $dragging,
                                move: { from, to in move(keys, from, to) },
                                hide: { key in hide(key) },
-                               displayName: { $0.reorderDisplayName }) { key in
+                               displayName: { $0.reorderDisplayName },
+                               content: { key in
                 cardFor(key, store, physiology)
                     // simultaneousGesture so the long-press fires even though each card is a Button.
                     .simultaneousGesture(
                         LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit() }
                     )
-            }
+            })
 
             // Restore tray: only while editing, and only if something is hidden.
             if editing {
                 HiddenMetricsTray(
-                    hidden: hiddenKeys(),
+                    hidden: hiddenKeys(store),
                     restore: { restore($0) },
                     displayName: { $0.reorderDisplayName },
                     symbolName: { $0.reorderSymbolName }
@@ -114,10 +119,12 @@ struct VitalsView: View {
         }
     }
 
-    /// Metrics hidden in the Vitals scope: the full Vitals set filtered by `prefs.isHidden`, so the
-    /// tray stays in lockstep with Settings visibility.
-    private func hiddenKeys() -> [MetricKey] {
-        Self.defaultOrder.filter { prefs.isHidden($0, scope: .vitals) }
+    /// Metrics hidden in the Vitals scope, so the tray stays in lockstep with Settings visibility.
+    /// Device-unsupported metrics stay out of the tray — restoring one could never produce a card.
+    private func hiddenKeys(_ store: VitalsStore) -> [MetricKey] {
+        Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && prefs.isHidden($0, scope: .vitals)
+        }
     }
 
     private func hide(_ key: MetricKey) {
@@ -131,11 +138,11 @@ struct VitalsView: View {
 
     /// Visible Vitals cards in the saved order (falling back to `defaultOrder`).
     private func orderedKeys(_ store: VitalsStore) -> [MetricKey] {
-        // Live hide/restore: filter by `prefs.isHidden` directly (not just the store's cached
-        // snapshot) so the "–" badge / Hidden-tray "+" drop or re-add a card immediately.
-        let visible = store.visibleMetrics
-            .intersection(Set(Self.defaultOrder))
-            .filter { !prefs.isHidden($0, scope: .vitals) }
+        // Capability from the store's snapshot, hidden read live from `prefs` — see the matching note
+        // in `TodayView.orderedKeys` for why `store.visibleMetrics` can't be the gate here.
+        let visible = Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && !prefs.isHidden($0, scope: .vitals)
+        }
         let raws = prefs.resolvedOrder(
             visible: Set(visible.map(\.rawValue)),
             defaultOrder: Self.defaultOrder.map(\.rawValue),
@@ -181,37 +188,19 @@ struct VitalsView: View {
 
     private func exitEdit() {
         guard editing else { return }
+        // A drop outside every cell never reaches a drop delegate, so `dragging` can outlive the drag
+        // and leave that card dimmed. Clear it on the way out.
+        dragging = nil
         withAnimation(.easeInOut(duration: 0.2)) { editing = false }
-    }
-
-    /// Floating "Done" pill shown while reordering.
-    private var editDoneBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.up.arrow.down").font(.system(size: 12, weight: .semibold))
-            Text("Drag to reorder").font(.system(size: 14, weight: .semibold))
-            Spacer(minLength: 12)
-            Button {
-                exitEdit()
-            } label: {
-                Text("Done").font(.system(size: 14, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-        }
-        .foregroundStyle(PulseColors.textPrimary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(PulseColors.card, in: Capsule())
-        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     // MARK: - Card builders
 
+    /// The card model, with no visibility gate of its own: `orderedKeys` already decides which cards
+    /// the grid renders, and re-checking the store's cached `visibleMetrics` here would drop a card
+    /// that was just restored from the Hidden tray, leaving an empty cell behind its remove badge.
     private func card(_ store: VitalsStore, _ metric: MetricKind) -> VitalCardViewModel? {
-        guard store.visibleMetrics.contains(metric.metricKey) else { return nil }
-        return store.cards[metric]
+        store.cards[metric]
     }
 
     @ViewBuilder
@@ -220,6 +209,7 @@ struct VitalsView: View {
         if let model = card(store, metric) {
             let baseline = metric == .hrv ? BaselineStats.compute(store.hrvSamples) : nil
             VitalChartCard(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) { open(metric) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -234,6 +224,7 @@ struct VitalsView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { open(.bloodPressure) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 

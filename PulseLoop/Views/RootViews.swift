@@ -18,6 +18,8 @@ struct RootAppView: View {
         #endif
     }
 
+    @Namespace private var zoomNS
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -31,6 +33,7 @@ struct RootAppView: View {
                 }
             }
             .background(PulseColors.background.ignoresSafeArea())
+            .environment(\.zoomNamespace, zoomNS)
             // Demo data is opt-in: load it from Settings → "Reseed demo data", or via the
             // `-seedDemo YES` launch arg (test tooling only). Normal launches start empty.
             .task {
@@ -68,6 +71,7 @@ struct RootAppView: View {
                     ActivityDetailView(sessionId: id)
                 case let .metricDetail(metric):
                     MetricDetailView(metric: metric, path: $path)
+                        .pulseZoomDestination(route, in: zoomNS)
                 case .activityTrends:
                     ActivityTrendsView(path: $path)
                 case .recordSelect:
@@ -136,59 +140,116 @@ struct MainTabView: View {
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
+    /// Route requested from inside the Coach sheet, pushed once the sheet dismisses.
+    @State private var pendingCoachRoute: AppRoute?
 
     init(path: Binding<NavigationPath>) {
         self._path = path
         // Optional `-startTab vitals` launch arg (parsed into UserDefaults) for screenshot tooling.
         let raw = UserDefaults.standard.string(forKey: "startTab")
         let requested = MainTab.allCases.first { $0.rawValue.lowercased() == raw } ?? .today
-        // If the coach is off, the coach tab doesn't exist — fall back to Today
-        // so a `-startTab coach` arg doesn't strand us on an empty selection.
-        let masterOn = CoachSettingsStore.shared.settings.coachMasterEnabled
-        _selected = State(initialValue: (requested == .coach && !masterOn) ? .today : requested)
+        // Coach is no longer a tab (it opens as a sheet), so `-startTab coach`
+        // just lands on Today.
+        _selected = State(initialValue: requested == .coach ? .today : requested)
     }
 
     private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
     private var visibleTabs: [MainTab] {
-        coachEnabled ? MainTab.allCases : MainTab.allCases.filter { $0 != .coach }
+        // Coach is intentionally NOT a tab — it opens as a sheet. Keeping it a tab
+        // pushed the count to 6 and iOS collapsed everything into a "More" tab.
+        MainTab.allCases.filter { $0 != .coach }
+    }
+
+    /// The screen for a given tab. Shared by the iOS 26 stock `Tab` bar and the
+    /// iOS 18–25 paged fallback so content wiring stays in one place.
+    @ViewBuilder
+    private func tabDestination(_ tab: MainTab) -> some View {
+        switch tab {
+        case .today:    TodayView(path: $path, selectedTab: $selected, isActive: selected == .today)
+        case .vitals:   VitalsView(path: $path, isActive: selected == .vitals)
+        case .activity: ActivityView(path: $path)
+        case .sleep:    SleepView()
+        case .coach:    CoachView()
+        case .settings: SettingsView(path: $path)
+        }
+    }
+
+    /// A workout card tapped inside the chat can't push onto `path` directly: the sheet
+    /// sits outside this NavigationStack, so the detail would slide in behind it. Park
+    /// the route and dismiss; `pushPendingCoachRoute` runs once the sheet is gone.
+    private func requestCoachRoute(_ activityId: UUID) {
+        pendingCoachRoute = .activityDetail(activityId)
+        nav.showCoach = false
+    }
+
+    private func pushPendingCoachRoute() {
+        guard let route = pendingCoachRoute else { return }
+        pendingCoachRoute = nil
+        path.append(route)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             AppHeader(path: $path)
             // Thin sync-progress accent directly under the greeting; only present while the ring
-            // is actively syncing so the user knows wearable data is still streaming in.
-            if coordinator.isSyncing {
-                SyncProgressBar()
-                    .transition(.opacity)
+            // is actively syncing. The always-present container lets iOS 26 materialize the
+            // bar (glass light-bending in/out) instead of a hard opacity cut.
+            Group {
+                if coordinator.isSyncing {
+                    SyncProgressBar()
+                        .pulseMaterialize()
+                }
             }
-            ZStack(alignment: .bottom) {
+            .pulseGlassContainer(spacing: 8)
+            if #available(iOS 26, *) {
+                // iOS 26+: native TabView renders Apple's stock Liquid Glass tab bar —
+                // real lensing, morphing selection, and content diffusing under the bar.
+                // Swipe-between-tabs is intentionally dropped (the stock bar can't swipe).
                 TabView(selection: $selected) {
-                    TodayView(path: $path, selectedTab: $selected, isActive: selected == .today).tag(MainTab.today)
-                    VitalsView(path: $path, isActive: selected == .vitals).tag(MainTab.vitals)
-                    ActivityView(path: $path).tag(MainTab.activity)
-                    SleepView().tag(MainTab.sleep)
-                    if coachEnabled {
-                        CoachView(path: $path).tag(MainTab.coach)
+                    ForEach(visibleTabs) { tab in
+                        Tab(tab.rawValue, systemImage: tab.symbol, value: tab) {
+                            tabDestination(tab)
+                        }
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
+            } else {
+                // iOS 18–25: no stock Liquid Glass, so keep the paged swipe + custom bar.
+                ZStack(alignment: .bottom) {
+                    TabView(selection: $selected) {
+                        ForEach(visibleTabs) { tab in
+                            tabDestination(tab).tag(tab)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
 
-                BottomNavBar(selected: $selected, tabs: visibleTabs)
+                    BottomNavBar(selected: $selected, tabs: visibleTabs)
+                }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
             }
-            // Pin the whole tab layout so the keyboard never shifts the nav bar or
-            // tab content. CoachView lifts its own composer via a keyboard observer.
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-            .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
         .animation(.easeInOut(duration: 0.25), value: coordinator.isSyncing)
-        .onChange(of: nav.requestedConversationId) { _, id in
-            if id != nil && coachEnabled { selected = .coach }  // CoachView opens the thread + resets the flag
+        .animation(PulseMotion.materialize, value: coachEnabled)   // FAB materializes in/out
+        // Floating Coach chat bubble, bottom-right, hovering above the tab bar.
+        .overlay(alignment: .bottomTrailing) {
+            if coachEnabled {
+                CoachFAB { CoachNavigation.shared.openRoot() }
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 72)   // sits just above the tab bar
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
         }
         .onChange(of: coachEnabled) { _, enabled in
-            // Coach was turned off while on the coach tab — bounce home.
-            if !enabled && selected == .coach { selected = .today }
-            if !enabled { nav.requestedConversationId = nil }
+            // Coach turned off — dismiss the sheet and clear any pending deep link.
+            if !enabled { nav.requestedConversationId = nil; nav.showCoach = false }
+        }
+        // Coach opens as a sheet (swipe-to-dismiss) instead of a tab, so it never
+        // crowds the tab bar. All entry points set `nav.showCoach`.
+        .sheet(isPresented: $nav.showCoach, onDismiss: pushPendingCoachRoute) {
+            CoachView(onOpenWorkout: requestCoachRoute)
+                .presentationDragIndicator(.visible) // grabber ("pull tab") at the top of the sheet
         }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -201,32 +262,95 @@ struct AppHeader: View {
     @Binding var path: NavigationPath
     @Environment(RingBLEClient.self) private var ble
     @Query private var devices: [Device]
+    @Query private var profiles: [UserProfile]
+
+    /// Profile's first name (text before the first space), or nil when no name is set.
+    private var firstName: String? {
+        guard let full = profiles.first?.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !full.isEmpty else { return nil }
+        return full.split(separator: " ").first.map(String.init) ?? full
+    }
+
+    /// A rotating, time-of-day greeting. Each variant is a `lead` phrase plus a `suffix`
+    /// (usually "" or "?") so it composes both with a name — "\(lead), \(name)\(suffix)" — and
+    /// without — "\(lead)\(suffix)". The pick advances every 2 hours (and differs day to day),
+    /// so it stays stable within each 2-hour block — no flicker as the view re-renders.
+    private var greeting: (lead: String, suffix: String) {
+        let now = Date()
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: now)
+        let day = cal.ordinality(of: .day, in: .year, for: now) ?? 0
+        // 12 two-hour blocks per day; a global block index rotates the variant every 2 hours.
+        let block = day * 12 + hour / 2
+        let variants = Self.greetingVariants(hour: hour)
+        return variants[block % variants.count]
+    }
+
+    private static func greetingVariants(hour: Int) -> [(lead: String, suffix: String)] {
+        switch hour {
+        case 5..<12: // Morning
+            return [
+                ("Good morning", ""),
+                ("Rise and shine", ""),
+                ("Ready for a run", "?"),
+                ("Ready to seize the day", "?"),
+                ("Fresh start", "")
+            ]
+        case 12..<17: // Afternoon
+            return [
+                ("Good afternoon", ""),
+                ("Keeping the momentum", "?"),
+                ("Staying on track", "?"),
+                ("How's the day treating you", "?"),
+                ("Powering through", "?")
+            ]
+        case 17..<22: // Evening
+            return [
+                ("Good evening", ""),
+                ("How was your day", "?"),
+                ("Time to unwind", ""),
+                ("Winding down", "?"),
+                ("Evening, champ", "")
+            ]
+        default: // Night (22–5)
+            return [
+                ("Good night", ""),
+                ("Time to wind down", ""),
+                ("Ready to rest", "?"),
+                ("Rest well", ""),
+                ("Burning the midnight oil", "?")
+            ]
+        }
+    }
 
     var body: some View {
+        let greeting = self.greeting
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("PulseLoop")
-                    .font(.system(size: 12, weight: .medium))
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-                    .foregroundStyle(PulseColors.textMuted)
-                Text(greetingForHour())
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            HStack(spacing: 10) {
-                ConnectionStatusPill(state: effectiveState, batteryPercent: effectiveBattery)
-                    .onTapGesture { path.append(AppRoute.settings) }
-                Button {
-                    path.append(AppRoute.settings)
-                } label: {
-                    Image(systemName: "gearshape")
+                if let firstName {
+                    // Two lines: greeting on top, name below — avoids truncating a long name.
+                    Text("\(greeting.lead),")
+                        .font(PulseFont.footnote)
+                        .foregroundStyle(PulseColors.textMuted)
+                    Text("\(firstName)\(greeting.suffix)")
+                        .font(PulseFont.title2.weight(.semibold))
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .lineLimit(1)
+                } else {
+                    Text("\(greeting.lead)\(greeting.suffix)")
+                        .font(PulseFont.title3)
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .lineLimit(1)
                 }
             }
-            .font(.system(size: 17))
-            .foregroundStyle(PulseColors.textSecondary)
+            Spacer(minLength: 8)
+            // Clean top bar: just the live connection status. Settings is in the tab
+            // bar; Coach is the floating bubble above the tab bar.
+            ConnectionStatusPill(state: effectiveState, batteryPercent: effectiveBattery)
+                .font(PulseFont.headline.weight(.regular))
+                .foregroundStyle(PulseColors.textSecondary)
+                // Tap the status pill → Wearable settings (add-a-ring / status).
+                .onTapGesture { path.append(AppRoute.settingsWearable) }
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -260,14 +384,15 @@ struct ConnectionStatusPill: View {
                 .frame(width: 8, height: 8)
                 .opacity(isPulsing && pulse ? 0.35 : 1)
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(PulseFont.caption)
                 .foregroundStyle(PulseColors.textSecondary)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(PulseColors.card, in: Capsule())
+        // Interactive glass — the pill is tappable (navigates to Settings).
+        .pulseGlass(Capsule(), interactive: true)
         .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
         .fixedSize(horizontal: true, vertical: false)
         .onAppear {
@@ -317,37 +442,108 @@ func greetingForHour(_ date: Date = Date()) -> String {
     }
 }
 
+/// Floating Coach chat bubble — a circular tinted-glass button that hovers above
+/// the tab bar (bottom-right) and opens the Coach chat sheet. Real Liquid Glass on
+/// iOS 26+, solid accent fallback on older systems / Reduce Transparency.
+struct CoachFAB: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .font(PulseFont.title2)
+                .foregroundStyle(PulseColors.accent)
+                .frame(width: 56, height: 56)
+                .modifier(CoachFABGlass())
+                // Consume every touch inside the circle so taps never fall through
+                // to the content scrolling underneath the bubble.
+                .contentShape(Circle())
+        }
+        .buttonStyle(FABPressStyle())
+        .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+        .accessibilityLabel("Open Coach chat")
+    }
+}
+
+/// Press-in spring for the FAB. A ButtonStyle (not a gesture) so it never leaks
+/// the touch to the view below.
+private struct FABPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.18), value: configuration.isPressed)
+    }
+}
+
+/// Frosted Liquid Glass bubble (no solid fill) so the icon reads as glass. Real
+/// glass on iOS 26+, Material fallback otherwise / under Reduce Transparency.
+private struct CoachFABGlass: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *), !reduceTransparency {
+            content.glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        }
+    }
+}
+
 struct BottomNavBar: View {
     @Binding var selected: MainTab
     var tabs: [MainTab] = MainTab.allCases
+    // Drives the sliding selection lozenge that morphs between tabs.
+    @Namespace private var tabSelection
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(tabs) { tab in
+                let isSelected = selected == tab
                 Button {
-                    selected = tab
+                    // Switch the page instantly (no scroll-through of intermediate
+                    // pages, so rapid taps land reliably). The lozenge still animates
+                    // via the `.animation(value:)` below; manual swipe is unaffected.
+                    var txn = Transaction()
+                    txn.disablesAnimations = true
+                    withTransaction(txn) { selected = tab }
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tab.symbol)
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(PulseFont.headline)
                             .frame(width: 38, height: 28)
-                            .background(selected == tab ? PulseColors.accentSoft : Color.clear)
-                            .clipShape(Capsule())
+                            .background {
+                                // The active lozenge slides between tabs instead of
+                                // hard-cutting — matchedGeometryEffect works on every OS.
+                                if isSelected {
+                                    Capsule()
+                                        .fill(PulseColors.accentSoft)
+                                        .matchedGeometryEffect(id: "tabLozenge", in: tabSelection)
+                                }
+                            }
                         Text(tab.rawValue)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(PulseFont.micro)
                     }
-                    .foregroundStyle(selected == tab ? PulseColors.textPrimary : PulseColors.textMuted)
+                    .foregroundStyle(isSelected ? PulseColors.textPrimary : PulseColors.textMuted)
                     .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.plain)
             }
         }
+        // Slide the selection lozenge smoothly whenever the tab changes.
+        .animation(PulseMotion.spring, value: selected)
         .padding(.horizontal, 8)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle().fill(PulseColors.borderSubtle).frame(height: 1)
-        }
+        .padding(.vertical, 8)
+        // Single interactive glass surface — real Liquid Glass (touch illumination)
+        // on iOS 26+, Material fallback below.
+        .pulseGlass(Capsule(), interactive: true)
+        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        // Consume every touch inside the capsule so taps never fall through to the
+        // scrolling content beneath the floating bar.
+        .contentShape(Capsule())
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
     }
 }
 
@@ -357,11 +553,11 @@ struct OnboardingHeader: View {
     var body: some View {
         VStack(spacing: 10) {
             Text(title)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .font(PulseFont.numberHero)
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.center)
             Text(subtitle)
-                .font(.system(size: 15))
+                .font(PulseFont.callout.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
@@ -377,7 +573,7 @@ struct SectionHeader: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(PulseFont.footnote.weight(.semibold))
                 .foregroundStyle(PulseColors.textSecondary)
                 .textCase(.uppercase)
             Spacer()
@@ -405,7 +601,7 @@ struct StatusCopy: View {
                 Text(title)
                     .font(.headline)
                 Text(text)
-                    .font(.system(size: 14))
+                    .font(PulseFont.subheadline.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -445,8 +641,8 @@ struct InlineEmptyState: View {
     let message: String
     var body: some View {
         VStack(spacing: 4) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            Text(message).font(.system(size: 12)).foregroundStyle(PulseColors.textMuted).multilineTextAlignment(.center)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+            Text(message).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)

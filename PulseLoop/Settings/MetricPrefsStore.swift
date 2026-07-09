@@ -168,14 +168,22 @@ final class MetricPrefsStore {
         }
     }
 
-    /// Resolves the display order for a set of currently-visible card ids: the saved order
-    /// (filtered to visible), then any visible-but-unordered ids in their `defaultOrder`
-    /// position. New/never-reordered metrics thus slot in sensibly.
+    /// Resolves the display order for a set of currently-visible card ids: the saved order (filtered
+    /// to visible), with any visible-but-unordered id slotted into its `defaultOrder` neighbourhood
+    /// rather than appended. A card restored from the Hidden tray, or a metric a newly-paired ring
+    /// just unlocked, therefore reappears where the user expects instead of at the bottom. With no
+    /// saved order this reduces to `defaultOrder` filtered by `visible`.
     func resolvedOrder(visible: Set<String>, defaultOrder: [String], scope: MetricScope) -> [String] {
-        let saved = order(for: scope).filter { visible.contains($0) }
-        let savedSet = Set(saved)
-        let missing = defaultOrder.filter { visible.contains($0) && !savedSet.contains($0) }
-        return saved + missing
+        var result = order(for: scope).filter { visible.contains($0) }
+        let saved = Set(result)
+        for (i, id) in defaultOrder.enumerated() where visible.contains(id) && !saved.contains(id) {
+            // Land just after the nearest metric that precedes `id` by default and already has a slot.
+            // Earlier inserts are visible to later ones, so a run of missing ids keeps its default order.
+            let anchor = defaultOrder[..<i].last { result.contains($0) }
+            let at = anchor.flatMap { result.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+            result.insert(id, at: at)
+        }
+        return result
     }
 
     private func persist() {

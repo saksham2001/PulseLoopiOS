@@ -175,8 +175,7 @@ enum MetricsService {
 
     /// Whether a metric should be shown for the current device.
     static func supports(_ metric: MetricKey, context: ModelContext) -> Bool {
-        guard let required = metric.requiredCapability else { return true }
-        return deviceCapabilities(context).contains(required)
+        metric.isSupported(by: deviceCapabilities(context))
     }
 
     /// Whether a metric should be rendered right now: the device must support it (capability gate

@@ -35,6 +35,14 @@ enum MetricKey: String, CaseIterable {
         case .battery: return .battery
         }
     }
+
+    /// Capability gate against an already-fetched capability set. `MetricsService.supports` reads the
+    /// same answer from the DB; views that hold a cached snapshot use this so a `body` re-render never
+    /// triggers a fetch.
+    func isSupported(by capabilities: Set<WearableCapability>) -> Bool {
+        guard let required = requiredCapability else { return true }
+        return capabilities.contains(required)
+    }
 }
 
 // `MetricRange` lives in ChartSample.swift (shared with the widget extension).

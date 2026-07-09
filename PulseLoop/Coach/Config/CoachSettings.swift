@@ -18,10 +18,10 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .offlineStub: return "Offline"
         case .appleOnDevice: return "On-device (Apple)"
-        case .userOpenAIKey: return "OpenAI (your key)"
-        case .userGeminiKey: return "Gemini (your key)"
-        case .userOpenRouterKey: return "OpenRouter (your key)"
-        case .userMiniMaxKey: return "MiniMax (your key)"
+        case .userOpenAIKey: return "OpenAI"
+        case .userGeminiKey: return "Gemini"
+        case .userOpenRouterKey: return "OpenRouter"
+        case .userMiniMaxKey: return "MiniMax"
         case .backendProxy: return "Backend proxy"
         }
     }

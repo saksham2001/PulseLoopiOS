@@ -23,7 +23,7 @@ struct GoalsSettingsView: View {
             .padding()
         }
         .background(PulseColors.background)
-        .navigationTitle("Goals")
+        .pageChrome("Goals")
         .onAppear(perform: loadIfNeeded)
     }
 

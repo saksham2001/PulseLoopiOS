@@ -34,9 +34,10 @@ enum MainTab: String, CaseIterable, Identifiable {
     case activity = "Activity"
     case sleep = "Sleep"
     case coach = "Coach"
-    
+    case settings = "Settings"
+
     var id: String { rawValue }
-    
+
     var symbol: String {
         switch self {
         case .today: return "circle.circle"
@@ -44,6 +45,7 @@ enum MainTab: String, CaseIterable, Identifiable {
         case .activity: return "waveform.path.ecg"
         case .sleep: return "moon"
         case .coach: return "sparkles"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -139,17 +141,14 @@ extension Color {
 
 struct PulseCard<Content: View>: View {
     var padding: CGFloat = 16
+    var cornerRadius: CGFloat = 20
     @ViewBuilder var content: Content
-    
+
     var body: some View {
         content
             .padding(padding)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(PulseColors.borderSubtle, lineWidth: 1)
-            }
+            // Liquid Glass card surface (glass 26+, Material 18–25, solid on Reduce Transparency).
+            .pulseGlass(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 
@@ -166,21 +165,21 @@ struct MetricTile: View {
                 HStack(spacing: 8) {
                     Circle().fill(color).frame(width: 8, height: 8)
                     Text(title.uppercased())
-                        .font(.system(size: 11, weight: .medium))
+                        .font(PulseFont.caption2)
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }
                 
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(value)
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .font(PulseFont.numberXL)
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)
                     if let unit {
                         Text(unit)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(PulseFont.caption)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
@@ -222,17 +221,33 @@ struct PrimaryButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
-    
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var label: some View {
+        Label(title, systemImage: systemImage ?? "arrow.right")
+            .labelStyle(.titleAndIcon)
+            .font(PulseFont.bodyEmphasis)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+    }
+
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage ?? "arrow.right")
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .foregroundStyle(.white)
-                .background(PulseColors.accent)
-                .clipShape(Capsule())
+        if #available(iOS 26, *), !reduceTransparency {
+            // Primary action = translucent Liquid Glass with an accent tint (real
+            // lensing, not a flat fill). Glass provides the surface; no manual fill.
+            Button(action: action) {
+                label.foregroundStyle(.white)
+            }
+            .buttonStyle(.glass)
+            .tint(PulseColors.accent)
+            .clipShape(Capsule())
+        } else {
+            Button(action: action) {
+                label
+                    .foregroundStyle(.white)
+                    .background(PulseColors.accent)
+                    .clipShape(Capsule())
+            }
         }
     }
 }
@@ -241,19 +256,33 @@ struct SecondaryButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
-    
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var label: some View {
+        Label(title, systemImage: systemImage ?? "circle")
+            .font(PulseFont.callout.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+    }
+
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage ?? "circle")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .foregroundStyle(PulseColors.textPrimary)
-                .background(PulseColors.card)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1)
-                }
+        if #available(iOS 26, *), !reduceTransparency {
+            // Secondary action = neutral interactive Liquid Glass.
+            Button(action: action) {
+                label.foregroundStyle(PulseColors.textPrimary)
+            }
+            .buttonStyle(.glass)
+            .clipShape(Capsule())
+        } else {
+            Button(action: action) {
+                label
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .background(PulseColors.card)
+                    .clipShape(Capsule())
+                    .overlay {
+                        Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1)
+                    }
+            }
         }
     }
 }

@@ -95,7 +95,7 @@ struct ActivityZoneLineChart: View {
                 AxisTick().foregroundStyle(.clear)
                 AxisValueLabel {
                     if let minute = value.as(Double.self) {
-                        Text("\(Int(minute))m").font(.system(size: 10)).foregroundStyle(PulseColors.textMuted)
+                        Text("\(Int(minute))m").font(PulseFont.micro.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     }
                 }
             }
@@ -104,7 +104,7 @@ struct ActivityZoneLineChart: View {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
                 AxisGridLine().foregroundStyle(PulseColors.borderSubtle)
                 AxisTick().foregroundStyle(.clear)
-                AxisValueLabel().font(.system(size: 10)).foregroundStyle(PulseColors.textMuted)
+                AxisValueLabel().font(PulseFont.micro.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             }
         }
         .chartOverlay { proxy in

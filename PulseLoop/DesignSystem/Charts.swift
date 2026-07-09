@@ -85,10 +85,10 @@ struct StressGaugeChart: View {
                 .rotationEffect(.degrees(135))
             VStack(spacing: 2) {
                 Text("\(Int(value))")
-                    .font(.system(size: 38, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.largeTitle).monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                 Text(zone.label.uppercased())
-                    .font(.system(size: 10, weight: .semibold)).tracking(1.2)
+                    .font(PulseFont.micro.weight(.semibold)).tracking(1.2)
                     .foregroundStyle(zone.color)
             }
         }
@@ -414,8 +414,7 @@ struct SleepDurationHistogramChart: View {
         }
         .frame(height: height)
         .padding(8)
-        .background(Color(hex: "#0F141F"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -470,15 +469,11 @@ struct SleepHypnogramView: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(hex: "#0F141F"))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
-
                 // Lane labels on the left.
                 VStack(alignment: .leading) {
                     ForEach(lanes, id: \.self) { stage in
                         Text(stage.rawValue.uppercased())
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(PulseFont.micro.weight(.semibold))
                             .tracking(1.4)
                             .foregroundStyle(SleepStageColors.color(for: stage))
                         if stage != lanes.last { Spacer() }
@@ -525,12 +520,13 @@ struct SleepHypnogramView: View {
                 .padding(.trailing, 16)
             }
             .frame(height: height - 22)
+            .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             // Time ticks.
             HStack {
                 ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
                     Text(tick.label)
-                        .font(.system(size: 10).monospacedDigit())
+                        .font(PulseFont.micro.weight(.regular).monospacedDigit())
                         .foregroundStyle(PulseColors.textMuted)
                     if index != ticks.count - 1 { Spacer() }
                 }

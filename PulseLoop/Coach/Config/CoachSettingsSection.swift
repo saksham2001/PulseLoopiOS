@@ -8,6 +8,13 @@ import UserNotifications
 /// Daily check-in notifications live in `NotificationsSettingsView`. Visuals
 /// reuse the existing design system.
 struct CoachSettingsSection: View {
+    /// Footer for the Capabilities group, explaining what the location & weather
+    /// toggle actually shares with the provider.
+    private static let environmentContextFooter = """
+        Location & weather shares your city name and current weather with the AI provider \
+        so coaching can account for conditions. Never shares your precise location.
+        """
+
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
@@ -22,6 +29,22 @@ struct CoachSettingsSection: View {
 
     /// Picker tag that selects the free-text "Custom" OpenRouter model entry.
     private let customModelTag = "__custom__"
+
+    /// Display label for the currently selected model, mirroring the Model picker's
+    /// per-provider options. Drives the compact single-line value in `SettingsMenuRow`.
+    private var currentModelLabel: String {
+        let selected = modelPickerBinding.wrappedValue
+        switch store.settings.providerMode {
+        case .userGeminiKey:
+            return GeminiModel(rawValue: selected)?.label ?? selected
+        case .userOpenRouterKey:
+            return selected == customModelTag ? "Custom…" : (OpenRouterModel(rawValue: selected)?.label ?? selected)
+        case .userMiniMaxKey:
+            return MiniMaxModel(rawValue: selected)?.label ?? selected
+        default:
+            return CoachModel(rawValue: selected)?.label ?? selected
+        }
+    }
 
     // OpenAI key state
     @State private var keyDraft: String = ""
@@ -84,15 +107,17 @@ struct CoachSettingsSection: View {
     }
 
     var body: some View {
-        SectionHeader(title: "AI Coach", action: nil)
         StatusCopy(title: "Status", body: flags.statusLine)
-        toggleRow("Enable AI Coach", isOn: masterEnabledBinding)
-            .alert("Enable Coach Check-Ins?", isPresented: $askEnableCheckIns) {
-                Button("Enable") { enableCheckIns() }
-                Button("Not now", role: .cancel) {}
-            } message: {
-                Text("Get a daily check-in from your coach. You can change this anytime in Coach Check-Ins.")
-            }
+
+        SettingsGroup(header: "AI Coach") {
+            FormToggleRow(title: "Enable AI Coach", isOn: masterEnabledBinding)
+        }
+        .alert("Enable Coach Check-Ins?", isPresented: $askEnableCheckIns) {
+            Button("Enable") { enableCheckIns() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Get a daily check-in from your coach. You can change this anytime in Coach Check-Ins.")
+        }
 
         if checkInPermissionDenied {
             Text("Notifications are off for PulseLoop. Turn them on in iOS Settings to get check-ins.")
@@ -102,51 +127,49 @@ struct CoachSettingsSection: View {
         }
 
         if store.settings.coachMasterEnabled {
-            labeledRow("Provider") {
-                Picker("Provider", selection: providerBinding) {
-                    ForEach(CoachProviderMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+            SettingsGroup(header: "Provider") {
+                FormMenuRow(title: "Provider", value: store.settings.providerMode.label) {
+                    Picker("Provider", selection: providerBinding) {
+                        ForEach(CoachProviderMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
                     }
                 }
-                .pickerStyle(.menu)
-                .tint(PulseColors.accent)
-            }
 
-            // On-device has a single fixed model and runs only on-device (no
-            // cloud backup) — show a privacy/availability card instead of a
-            // model picker.
-            if store.settings.providerMode == .appleOnDevice {
-                appleOnDeviceCard
-            } else {
-                labeledRow("Model") {
-                    Picker("Model", selection: modelPickerBinding) {
-                        switch store.settings.providerMode {
-                        case .userGeminiKey:
-                            ForEach(GeminiModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                        case .userOpenRouterKey:
-                            ForEach(OpenRouterModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                            Text("Custom…").tag(customModelTag)
-                        case .userMiniMaxKey:
-                            ForEach(MiniMaxModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                        default:
-                            ForEach(CoachModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
+                // On-device has a single fixed model and runs only on-device (no
+                // cloud backup) — show a privacy/availability card instead of a
+                // model picker.
+                if store.settings.providerMode == .appleOnDevice {
+                    appleOnDeviceCard
+                } else {
+                    FormMenuRow(title: "Model", value: currentModelLabel) {
+                        Picker("Model", selection: modelPickerBinding) {
+                            switch store.settings.providerMode {
+                            case .userGeminiKey:
+                                ForEach(GeminiModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                            case .userOpenRouterKey:
+                                ForEach(OpenRouterModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                                Text("Custom…").tag(customModelTag)
+                            case .userMiniMaxKey:
+                                ForEach(MiniMaxModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                            default:
+                                ForEach(CoachModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
                             }
                         }
                     }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
                 }
-            }
 
-            if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
-                customModelField
+                if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
+                    customModelField
+                }
             }
 
             // The key field tracks the *effective* provider — the active cloud
@@ -197,88 +220,88 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            // Web search is provider-hosted. MiniMax's API exposes no web search,
-            // and the on-device model is tool-less — so the toggle is only offered
-            // for providers that can actually search.
-            if store.settings.providerMode != .appleOnDevice,
-               store.settings.providerMode != .userMiniMaxKey {
-                toggleRow("Web search", isOn: webSearchBinding)
-            }
-
             // OpenRouter-only routing controls. OpenRouter exposes a unified
             // reasoning-effort hint plus provider-level privacy and sort options
             // the native OpenAI/Gemini clients don't, so they only appear here.
             if store.settings.providerMode == .userOpenRouterKey {
-                labeledRow("Reasoning") {
-                    Picker("Reasoning", selection: reasoningEffortBinding) {
-                        Text("Default").tag("")
-                        Text("Low").tag("low")
-                        Text("Medium").tag("medium")
-                        Text("High").tag("high")
+                SettingsGroup(header: "Routing") {
+                    FormValueRow(title: "Reasoning") {
+                        Picker("Reasoning", selection: reasoningEffortBinding) {
+                            Text("Default").tag("")
+                            Text("Low").tag("low")
+                            Text("Medium").tag("medium")
+                            Text("High").tag("high")
+                        }
+                        .pickerStyle(.menu)
+                        .tint(PulseColors.accent)
                     }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
-                }
 
-                toggleRow("Privacy routing", isOn: privacyRoutingBinding)
+                    FormToggleRow(title: "Privacy routing", isOn: privacyRoutingBinding)
 
-                labeledRow("Provider sort") {
-                    Picker("Provider sort", selection: providerSortBinding) {
-                        Text("Default").tag("")
-                        Text("Price").tag("price")
-                        Text("Throughput").tag("throughput")
-                        Text("Latency").tag("latency")
+                    FormValueRow(title: "Provider sort") {
+                        Picker("Provider sort", selection: providerSortBinding) {
+                            Text("Default").tag("")
+                            Text("Price").tag("price")
+                            Text("Throughput").tag("throughput")
+                            Text("Latency").tag("latency")
+                        }
+                        .pickerStyle(.menu)
+                        .tint(PulseColors.accent)
                     }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
                 }
             }
 
-            toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
-            toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
-            toggleRow("Use location & weather", isOn: environmentContextBinding)
-            Text("Shares your city name and current weather with the AI provider so coaching can account for conditions. Never shares your precise location.")
-                .font(.caption).foregroundStyle(PulseColors.textMuted)
-                .padding(.horizontal, 16)
-            if showsImageInputToggle {
-                toggleRow("Image input (attach photos)", isOn: imageInputBinding)
+            SettingsGroup(header: "Capabilities", footer: Self.environmentContextFooter) {
+                // Web search is provider-hosted. MiniMax's API exposes no web search,
+                // and the on-device model is tool-less — so the toggle is only offered
+                // for providers that can actually search.
+                if store.settings.providerMode != .appleOnDevice,
+                   store.settings.providerMode != .userMiniMaxKey {
+                    FormToggleRow(title: "Web search", isOn: webSearchBinding)
+                }
+
+                FormToggleRow(title: "AI actions (set goals, log, edit)", isOn: writeToolsBinding)
+                FormToggleRow(title: "Live ring measurements", isOn: liveMeasurementsBinding)
+                FormToggleRow(title: "Use location & weather", isOn: environmentContextBinding)
+                if showsImageInputToggle {
+                    FormToggleRow(title: "Image input (attach photos)", isOn: imageInputBinding)
+                }
             }
 
             if !memories.isEmpty {
-                SectionHeader(title: "Coach memory", action: nil)
-                ForEach(memories) { memory in memoryRow(memory) }
+                SettingsGroup(header: "Coach memory") {
+                    ForEach(memories) { memory in memoryRow(memory) }
+                }
             }
         }
     }
 
     private func memoryRow(_ memory: CoachMemory) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(memory.key)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(PulseColors.textPrimary)
-                Text(memory.value)
-                    .font(.system(size: 12))
-                    .foregroundStyle(PulseColors.textSecondary)
-                Text(memory.memoryType.replacingOccurrences(of: "_", with: " "))
-                    .font(.system(size: 9, weight: .medium)).tracking(0.6)
-                    .foregroundStyle(PulseColors.textMuted)
+        FormField(padding: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(memory.key)
+                        .font(PulseFont.footnote)
+                        .foregroundStyle(PulseColors.textPrimary)
+                    Text(memory.value)
+                        .font(PulseFont.caption.weight(.regular))
+                        .foregroundStyle(PulseColors.textSecondary)
+                    Text(memory.memoryType.replacingOccurrences(of: "_", with: " "))
+                        .font(PulseFont.nano.weight(.medium)).tracking(0.6)
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    modelContext.delete(memory)
+                    try? modelContext.save()
+                } label: {
+                    Image(systemName: "trash").font(PulseFont.subheadline.weight(.regular)).foregroundStyle(PulseColors.danger)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
             }
-            Spacer(minLength: 8)
-            Button {
-                modelContext.delete(memory)
-                try? modelContext.save()
-            } label: {
-                Image(systemName: "trash").font(.system(size: 14)).foregroundStyle(PulseColors.danger)
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Key field (reused for both providers)
@@ -293,51 +316,50 @@ struct CoachSettingsSection: View {
         onSave: @escaping () -> Void,
         onRemove: @escaping () -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Group {
-                    if showRaw.wrappedValue {
-                        TextField(placeholder, text: draft)
-                    } else {
-                        SecureField(placeholder, text: draft)
+        SettingsGroup {
+            FormField {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Group {
+                        if showRaw.wrappedValue {
+                            TextField(placeholder, text: draft)
+                        } else {
+                            SecureField(placeholder, text: draft)
+                        }
+                    }
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(PulseFont.subheadline.weight(.regular).monospaced())
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .pulseGlass(Capsule())
+
+                    Button { showRaw.wrappedValue.toggle() } label: {
+                        Image(systemName: showRaw.wrappedValue ? "eye.slash" : "eye")
+                            .font(PulseFont.callout.weight(.regular))
+                            .foregroundStyle(PulseColors.textMuted)
+                            .frame(width: 40, height: 40)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                HStack(spacing: 8) {
+                    QuickActionButton(label: hasSaved ? "Update key" : "Save key", accent: true) { onSave() }
+                        .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if hasSaved {
+                        QuickActionButton(label: "Remove") { onRemove() }
                     }
                 }
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(size: 14).monospaced())
-                .foregroundStyle(PulseColors.textPrimary)
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(PulseColors.cardSoft, in: Capsule())
-                .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
 
-                Button { showRaw.wrappedValue.toggle() } label: {
-                    Image(systemName: showRaw.wrappedValue ? "eye.slash" : "eye")
-                        .font(.system(size: 15))
-                        .foregroundStyle(PulseColors.textMuted)
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(spacing: 8) {
-                QuickActionButton(label: hasSaved ? "Update key" : "Save key", accent: true) { onSave() }
-                    .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if hasSaved {
-                    QuickActionButton(label: "Remove") { onRemove() }
+                if let error {
+                    Text(error).font(.caption).foregroundStyle(PulseColors.danger)
+                } else {
+                    Text(hint).font(.caption).foregroundStyle(PulseColors.textMuted)
                 }
             }
-
-            if let error {
-                Text(error).font(.caption).foregroundStyle(PulseColors.danger)
-            } else {
-                Text(hint).font(.caption).foregroundStyle(PulseColors.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
         .onAppear(perform: refreshKeyState)
     }
 
@@ -347,82 +369,47 @@ struct CoachSettingsSection: View {
     /// Replaces the model picker (the model is fixed) and explains the v1 limits.
     private var appleOnDeviceCard: some View {
         let availability = AppleOnDeviceAvailability.current
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: availability.isAvailable ? "lock.iphone" : "exclamationmark.triangle")
-                    .font(.system(size: 15))
-                    .foregroundStyle(availability.isAvailable ? PulseColors.accent : PulseColors.danger)
-                Text(availability.isAvailable ? "On-device · private" : "On-device unavailable")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(PulseColors.textPrimary)
+        return FormField {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: availability.isAvailable ? "lock.iphone" : "exclamationmark.triangle")
+                        .font(PulseFont.callout.weight(.regular))
+                        .foregroundStyle(availability.isAvailable ? PulseColors.accent : PulseColors.danger)
+                    Text(availability.isAvailable ? "On-device · private" : "On-device unavailable")
+                        .font(PulseFont.subheadline.weight(.semibold))
+                        .foregroundStyle(PulseColors.textPrimary)
+                }
+                Text(availability.isAvailable
+                     ? "Your health data is analyzed entirely on your iPhone and never leaves the device. No API key, no network — works offline and free of charge."
+                     : availability.statusMessage)
+                    .font(PulseFont.caption.weight(.regular))
+                    .foregroundStyle(PulseColors.textSecondary)
+                Text("On-device coaching gives summaries, check-ins and chat. Charts, AI actions and web search need a cloud provider.")
+                    .font(.caption)
+                    .foregroundStyle(PulseColors.textMuted)
             }
-            Text(availability.isAvailable
-                 ? "Your health data is analyzed entirely on your iPhone and never leaves the device. No API key, no network — works offline and free of charge."
-                 : availability.statusMessage)
-                .font(.system(size: 12))
-                .foregroundStyle(PulseColors.textSecondary)
-            Text("On-device coaching gives summaries, check-ins and chat. Charts, AI actions and web search need a cloud provider.")
-                .font(.caption)
-                .foregroundStyle(PulseColors.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Custom OpenRouter model field
 
     private var customModelField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("vendor/model-slug", text: modelBinding)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(size: 14).monospaced())
-                .foregroundStyle(PulseColors.textPrimary)
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(PulseColors.cardSoft, in: Capsule())
-                .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        FormField {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("vendor/model-slug", text: modelBinding)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .font(PulseFont.subheadline.weight(.regular).monospaced())
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .pulseGlass(Capsule())
 
-            Text("Any model slug from openrouter.ai/models — e.g. anthropic/claude-sonnet-4.6.")
-                .font(.caption).foregroundStyle(PulseColors.textMuted)
+                Text("Any model slug from openrouter.ai/models — e.g. anthropic/claude-sonnet-4.6.")
+                    .font(.caption).foregroundStyle(PulseColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
-    // MARK: - Small layout helpers
-
-    private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 8) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-                .fixedSize()
-            Spacer(minLength: 8)
-            // Let the picker keep its full label and grow the row height if needed,
-            // rather than getting compressed and clipped at the bottom.
-            content()
-                .fixedSize()
-                .layoutPriority(1)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-        }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 6)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Bindings
