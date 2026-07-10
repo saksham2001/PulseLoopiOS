@@ -65,6 +65,7 @@ extension WearableModel {
     static let colmiR03 = colmiFamily("colmi-r03", "Colmi R03", brand: "Colmi", pattern: "^R03_.*")
     static let colmiR06 = colmiFamily("colmi-r06", "Colmi R06", brand: "Colmi", pattern: "^R06_.*")
     static let colmiR07 = colmiFamily("colmi-r07", "Colmi R07", brand: "Colmi", pattern: "^COLMI R07_.*")
+    static let colmiR08 = colmiFamily("colmi-r08", "Colmi R08", brand: "Colmi", pattern: "^R08_.*")
     static let colmiR09 = colmiFamily("colmi-r09", "Colmi R09", brand: "Colmi", pattern: "^R09_.*")
     static let colmiR10 = colmiFamily("colmi-r10", "Colmi R10", brand: "Colmi", pattern: "^COLMI R10_.*")
     static let colmiR11 = colmiFamily(
@@ -105,7 +106,7 @@ extension WearableModel {
     /// alphabetically, so this array's order is not user-visible.
     static let catalog: [WearableModel] = [
         jring,
-        colmiR02, colmiR03, colmiR06, colmiR07, colmiR09, colmiR10, colmiR11, colmiR12,
+        colmiR02, colmiR03, colmiR06, colmiR07, colmiR08, colmiR09, colmiR10, colmiR11, colmiR12,
         yawellR05, yawellR10, yawellR11, h59,
         tk5,
     ]

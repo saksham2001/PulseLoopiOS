@@ -33,6 +33,13 @@ final class TodayStore {
     private(set) var diastolicSamples: [MetricSample]
     /// HRV samples kept so the HRV chart tile can compute a personal baseline (mirrors Vitals).
     private(set) var hrvSamples: [MetricSample]
+    /// The HRV personal baseline, derived once per rebuild. The chart tile used to compute this in
+    /// `body`, which meant a full pass over the samples on every re-render (including every frame of
+    /// a card drag).
+    private(set) var hrvBaseline: BaselineStats?
+    /// Bumped whenever `cards` and the sample series are rebuilt. The reorder grid keys cell equality
+    /// on this so dragging a card doesn't re-render every Swift Charts tile — see `ReorderCell`.
+    private(set) var revision: Int = 0
 
     private let modelContext: ModelContext
     /// Snapshot of the physiology profile used for thresholds; refreshed each rebuild.
@@ -103,6 +110,7 @@ final class TodayStore {
         systolicSamples = systolic
         diastolicSamples = diastolic
         hrvSamples = hrv
+        hrvBaseline = BaselineStats.compute(hrv)
 
         let physiology = UserPhysiologyProfile(profile)
         let calibration = CalibrationStore.shared.settings
@@ -117,6 +125,8 @@ final class TodayStore {
             result[metric] = VitalsCardFactory.card(metric, inputs: inputs, profile: physiology, calibration: calibration)
         }
         cards = result
+        // Sole mutator of `cards` + the series, so "revision changed" is exactly "a tile's data changed".
+        revision &+= 1
     }
 
     /// The Today-scope visible metric set (device capability gate + user Today-scope hidden set).
