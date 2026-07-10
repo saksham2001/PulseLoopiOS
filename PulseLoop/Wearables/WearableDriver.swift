@@ -73,6 +73,13 @@ struct MeasurementSettings: Sendable, Equatable {
         hrEnabled: true, hrIntervalMinutes: 5,
         spo2Enabled: true, stressEnabled: true, hrvEnabled: true, temperatureEnabled: true
     )
+
+    /// The jring's own vendor-app default (30-minute cadence). Used until the user's stored settings
+    /// are pushed in, so a freshly paired ring still arms its background logging at a sane rate.
+    static let jringDefault = MeasurementSettings(
+        hrEnabled: true, hrIntervalMinutes: 30,
+        spo2Enabled: true, stressEnabled: true, hrvEnabled: true, temperatureEnabled: true
+    )
 }
 
 /// The user's profile, projected to the byte-ish shape a ring's user-preferences command expects.
@@ -166,6 +173,11 @@ protocol RingSyncEngine: AnyObject {
     /// Re-request the ring's current battery level over its own protocol (Colmi: 0x03). jring reports
     /// battery via GATT (read separately by the client), so it has nothing to do here — default no-op.
     func requestBattery()
+
+    /// Re-push the device clock after the phone's timezone or wall clock changes. Only rings whose
+    /// firmware keys behaviour off their own RTC need this (jring's sleep detection and day-indexed
+    /// history do). Default no-op.
+    func resyncTime()
 }
 
 extension RingSyncEngine {
@@ -176,10 +188,12 @@ extension RingSyncEngine {
     func startHRV() {}
     func stopHRV() {}
 
-    /// Default: devices that don't expose a configurable interval (e.g. the generic jring) ignore
-    /// measurement settings entirely.
+    /// Default: devices that don't expose a configurable interval ignore measurement settings entirely.
     func setMeasurementSettings(_ settings: MeasurementSettings) {}
     func applyMeasurementSettings(_ settings: MeasurementSettings) {}
+
+    /// Default: devices whose firmware doesn't key off its own RTC have nothing to re-push.
+    func resyncTime() {}
 
     /// Default: devices that don't accept a user profile ignore it.
     func setUserProfile(_ profile: UserProfileValues) {}

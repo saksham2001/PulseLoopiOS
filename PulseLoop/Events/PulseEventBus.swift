@@ -108,6 +108,15 @@ final class EventPersistenceSubscriber {
     /// Hard ceiling so a long continuous stream still flushes periodically (never unbounded latency).
     private let flushMaxPending = 100
 
+    /// Identity of a history sample within one sync run — see `isDuplicateHistory`.
+    private struct HistoryKey: Hashable {
+        let kind: String
+        let epoch: Int
+    }
+    /// History samples already seen this sync. Cleared when a sync completes, so it can't grow
+    /// unbounded across a long-lived session.
+    private var seenHistoryKeys: Set<HistoryKey> = []
+
     /// Battery-history throttle. Battery events arrive on connect and roughly hourly from the watchdog,
     /// sometimes repeating the same percent; we only persist a `BatterySample` when the value changes or
     /// a 30-min floor has elapsed, keeping the history table tiny. State is in-memory, so the first
@@ -317,8 +326,12 @@ final class EventPersistenceSubscriber {
         case let .syncProgress(stage):
             // Stamp the *completion* of a full history sync so the coach freshness gate can tell a
             // finished sync from a bare CONNECT (`lastSyncAt`, re-stamped every connect).
-            if stage == "done", let device = DeviceRepository.current(context: context) {
-                device.lastFullSyncAt = Date()
+            if stage == "done" {
+                if let device = DeviceRepository.current(context: context) {
+                    device.lastFullSyncAt = Date()
+                }
+                // The rows are committed by now; the next sync re-checks against the database.
+                seenHistoryKeys.removeAll(keepingCapacity: true)
             }
         case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
@@ -328,7 +341,12 @@ final class EventPersistenceSubscriber {
     
     /// Persist one live/history measurement, record a derived-update audit row, and link it to
     /// an in-progress workout if one is recording. Mirrors `persistence._on_hr_sample`.
+    ///
+    /// History rows are **upserted** on `(kind, timestamp)`: a ring replays the same log every time we
+    /// re-request a day, and the epochs it stamps are deterministic, so an exact-timestamp match is a
+    /// valid identity. Live samples keep append semantics (two readings a second apart are two events).
     private func persistMeasurement(kind: MeasurementKind, value: Double, timestamp: Date, source: MeasurementSource, kindLabel: String) {
+        if source == .history, isDuplicateHistory(kind: kind, value: value, timestamp: timestamp) { return }
         let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: source)
         context.insert(row)
         context.insert(DerivedUpdateRow(kind: kindLabel, entityType: "measurement", entityId: row.id.uuidString))
@@ -341,6 +359,28 @@ final class EventPersistenceSubscriber {
             confidence: .known,
             context: context
         )
+    }
+
+    /// True when this history sample is already stored (updating the existing row's value in place).
+    /// Two tiers: an in-process key set keeps the hot sync path off the database entirely, and a single
+    /// indexed fetch catches re-syncs across launches. `context.insert` is not visible to `fetch` until
+    /// the batched save lands, which is exactly why the in-memory tier is needed.
+    private func isDuplicateHistory(kind: MeasurementKind, value: Double, timestamp: Date) -> Bool {
+        let key = HistoryKey(kind: kind.rawValue, epoch: Int(timestamp.timeIntervalSince1970))
+        if seenHistoryKeys.contains(key) { return true }
+        seenHistoryKeys.insert(key)
+
+        let kindRaw = kind.rawValue
+        let sourceRaw = MeasurementSource.history.rawValue
+        var descriptor = FetchDescriptor<Measurement>(predicate: #Predicate {
+            $0.kindRaw == kindRaw && $0.timestamp == timestamp && $0.sourceRaw == sourceRaw
+        })
+        descriptor.fetchLimit = 1
+        guard let existing = (try? context.fetch(descriptor))?.first else { return false }
+        // Same slot, possibly refined value (the ring can revise an averaged block). Update in place;
+        // no new audit/link row, because nothing new happened.
+        existing.value = value
+        return true
     }
 
     /// Append a battery reading to the drainage history, throttled to on-change or a 30-min floor so

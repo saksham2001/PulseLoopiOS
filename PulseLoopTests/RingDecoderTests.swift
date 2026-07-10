@@ -101,13 +101,135 @@ final class RingDecoderTests: XCTestCase {
         XCTAssertEqual(event.confidence, .unknown)
     }
 
-    func testTimeSyncCommandLayout() {
+    /// 0x01 carries *local wall-clock* seconds (`utc + offset`), not a UTC epoch — the ring's RTC runs
+    /// on local time, and `JringClock` subtracts the offset back off on decode.
+    func testTimeSyncCommandSendsLocalWallClockEpoch() {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
-        let data = [UInt8](RingEncoder().makeTimeSyncCommand(date: date))
+        // 2023-11-14 is standard time in New York → UTC-5.
+        let tz = TimeZone(identifier: "America/New_York")!
+        let data = [UInt8](RingEncoder().makeTimeSyncCommand(date: date, timeZone: tz))
         XCTAssertEqual(data.count, 20)
         XCTAssertEqual(data[0], 0x01)
         let ts = UInt32(data[1]) | UInt32(data[2]) << 8 | UInt32(data[3]) << 16 | UInt32(data[4]) << 24
-        XCTAssertEqual(ts, 1_700_000_000)
+        XCTAssertEqual(ts, UInt32(1_700_000_000 - 5 * 3600))
+        XCTAssertEqual(Int8(bitPattern: data[5]), -5)
+    }
+
+    /// Half-hour zones truncate byte[5] (IST +5:30 → 5), exactly as the vendor's encoder does. The
+    /// full offset still rides bytes[1..4], so the round-trip through `JringClock` stays exact.
+    func testTimeSyncCommandHalfHourZoneTruncatesOffsetByte() {
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let tz = TimeZone(identifier: "Asia/Kolkata")!
+        let data = [UInt8](RingEncoder().makeTimeSyncCommand(date: date, timeZone: tz))
+        let ts = UInt32(data[1]) | UInt32(data[2]) << 8 | UInt32(data[3]) << 16 | UInt32(data[4]) << 24
+        XCTAssertEqual(ts, UInt32(1_700_000_000 + 5 * 3600 + 30 * 60))   // full +5:30 offset
+        XCTAssertEqual(Int8(bitPattern: data[5]), 5)                     // truncated hours
+    }
+
+    /// The encode/decode halves must cancel: a timestamp the ring echoes back at `now` decodes to `now`.
+    @MainActor
+    func testRingTimestampRoundTripsThroughClock() throws {
+        let tz = TimeZone(identifier: "Asia/Kolkata")!
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = JringClock(timeZone: tz, now: now)
+
+        let sent = [UInt8](RingEncoder().makeTimeSyncCommand(date: now, timeZone: tz))
+        // Pretend the ring echoes its RTC straight back in an 0x01 ack.
+        var frame = [UInt8](repeating: 0, count: 20)
+        frame[0] = 0x01
+        frame[1...4] = sent[1...4]
+
+        let event = RingDecoder(clock: clock).decode(Data(frame))
+        guard case let .timeSyncAck(decoded) = event else {
+            return XCTFail("expected timeSyncAck, got \(event.kind)")
+        }
+        XCTAssertEqual(decoded.timeIntervalSince1970, now.timeIntervalSince1970, accuracy: 1)
+    }
+
+    /// A sleep timeline stamped in the ring's local wall clock must decode back to the true instant.
+    @MainActor
+    func testSleepTimelineSubtractsRingOffset() {
+        let tz = TimeZone(identifier: "America/New_York")!   // UTC-5 on this date
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = JringClock(timeZone: tz, now: now)
+
+        let ringEpoch = UInt32(1_700_000_000 - 5 * 3600)     // what the ring's RTC reads
+        var frame = [UInt8](repeating: 0, count: 20)
+        frame[0] = 0x11
+        frame[1] = UInt8(ringEpoch & 0xff)
+        frame[2] = UInt8((ringEpoch >> 8) & 0xff)
+        frame[3] = UInt8((ringEpoch >> 16) & 0xff)
+        frame[4] = UInt8((ringEpoch >> 24) & 0xff)
+        frame[5] = 0x28   // one light-sleep minute so `stages` is non-empty
+
+        let event = RingDecoder(clock: clock).decode(Data(frame))
+        guard case let .sleepTimeline(timestamp, stages) = event else {
+            return XCTFail("expected sleepTimeline, got \(event.kind)")
+        }
+        XCTAssertEqual(timestamp.timeIntervalSince1970, 1_700_000_000, accuracy: 1)
+        XCTAssertEqual(stages.first, .light)
+    }
+
+    /// A decoder with no clock (the DebugView / legacy path) subtracts nothing.
+    func testDecoderWithoutClockLeavesTimestampsUnshifted() {
+        var frame = [UInt8](repeating: 0, count: 20)
+        frame[0] = 0x01
+        let epoch = UInt32(1_700_000_000)
+        frame[1] = UInt8(epoch & 0xff)
+        frame[2] = UInt8((epoch >> 8) & 0xff)
+        frame[3] = UInt8((epoch >> 16) & 0xff)
+        frame[4] = UInt8((epoch >> 24) & 0xff)
+
+        guard case let .timeSyncAck(decoded) = RingDecoder().decode(Data(frame)) else {
+            return XCTFail("expected timeSyncAck")
+        }
+        XCTAssertEqual(decoded.timeIntervalSince1970, 1_700_000_000, accuracy: 1)
+    }
+
+    // MARK: - Background-monitoring + measurement-mode layouts
+
+    /// 0x19 auto-HR: all-day window, enable flag, cadence minutes, and the constant 0x01 trailer.
+    func testAutomaticHeartRateCommandLayout() {
+        let data = [UInt8](RingEncoder().makeAutomaticHeartRateCommand(enabled: true, cadenceMinutes: 15))
+        XCTAssertEqual(data[0], 0x19)
+        XCTAssertEqual(data[1], 0x00)   // start 00:00
+        XCTAssertEqual(data[2], 0x00)
+        XCTAssertEqual(data[3], 0x17)   // end 23:59
+        XCTAssertEqual(data[4], 0x3b)
+        XCTAssertEqual(data[5], 0x01)   // enabled
+        XCTAssertEqual(data[6], 15)     // cadence minutes
+        XCTAssertEqual(data[7], 0x01)   // constant — the vendor SDK hardcodes this
+    }
+
+    /// 0x23 is a mode selector: SpO₂ is mode 2. Mode 1 would run a *blood-pressure* measurement.
+    func testSpO2StartUsesCombinedModeTwo() {
+        let start = [UInt8](RingEncoder().makeSpO2StartCommand())
+        XCTAssertEqual(start[0], 0x23)
+        XCTAssertEqual(start[1], 0x02)
+
+        let stop = [UInt8](RingEncoder().makeSpO2StopCommand())
+        XCTAssertEqual(stop[0], 0x23)
+        XCTAssertEqual(stop[1], 0x00)
+    }
+
+    func testBloodOxygenModeCommandLayout() {
+        XCTAssertEqual([UInt8](RingEncoder().makeBloodOxygenModeCommand(enabled: true))[0...1], [0x3e, 0x01])
+        XCTAssertEqual([UInt8](RingEncoder().makeBloodOxygenModeCommand(enabled: false))[0...1], [0x3e, 0x00])
+    }
+
+    func testBandFunctionCommandAndDecode() {
+        XCTAssertEqual([UInt8](RingEncoder().makeBandFunctionCommand())[0], 0x20)
+
+        // Payload starts at frame byte[1], so capability bit N lives at payload bit N.
+        var frame = [UInt8](repeating: 0, count: 20)
+        frame[0] = 0x20
+        frame[1 + 10 / 8] = 1 << UInt8(10 % 8)   // bit 10 → temperature
+        guard case let .bandFunction(caps) = RingDecoder().decode(Data(frame)) else {
+            return XCTFail("expected bandFunction")
+        }
+        XCTAssertTrue(caps.hasTemperature)
+        XCTAssertFalse(caps.separateBloodOxygenMode)
+        XCTAssertFalse(caps.hasPressureHistory)
     }
 
     func testGoalCommandLayout() {

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import UIKit
 
 /// The slice of `RingSyncCoordinator` the coach-notification path depends on: is the ring reachable,
 /// is a sync in flight, and the ability to start one and await its completion. A protocol seam so the
@@ -88,6 +89,7 @@ final class RingSyncCoordinator {
     private var engine: RingSyncEngine? { client.syncEngine }
 
     private var streamTask: Task<Void, Never>?
+    private var clockChangeTask: Task<Void, Never>?
 
     init(client: RingBLEClient, context: ModelContext) {
         self.client = client
@@ -101,6 +103,34 @@ final class RingSyncCoordinator {
             for await event in stream {
                 guard let self else { continue }
                 self.handle(event)
+            }
+        }
+        observeClockChanges()
+    }
+
+    /// The jring's RTC runs on local wall-clock time — its sleep detection and day-indexed history
+    /// queries key off it. When the phone crosses a timezone or a DST boundary, push the new clock so
+    /// the ring doesn't keep bucketing days at the old offset. Rings whose firmware ignores its own
+    /// RTC get a default no-op `resyncTime()`.
+    private func observeClockChanges() {
+        guard clockChangeTask == nil else { return }
+        let names: [Notification.Name] = [
+            .NSSystemTimeZoneDidChange,                      // user switched timezone
+            UIApplication.significantTimeChangeNotification, // DST rollover / midnight / clock set
+        ]
+        clockChangeTask = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                for name in names {
+                    group.addTask {
+                        for await _ in NotificationCenter.default.notifications(named: name) {
+                            guard let self else { return }
+                            await MainActor.run {
+                                guard self.client.state == .connected else { return }
+                                self.engine?.resyncTime()
+                            }
+                        }
+                    }
+                }
             }
         }
     }

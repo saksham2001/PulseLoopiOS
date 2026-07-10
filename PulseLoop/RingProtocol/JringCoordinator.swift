@@ -27,6 +27,8 @@ final class JringCoordinator: WearableCoordinator {
         .heartRate, .spo2, .steps, .sleep, .battery,
         .manualHeartRate, .manualSpo2,   // jring supports on-demand HR + SpO2 spot readings
         .realtimeHeartRate, .findDevice,
+        // All-day HR cadence is byte [6] of the 0x19 background-monitoring command.
+        .measurementInterval,
         // 56ff combined-sensor metrics decoded from the 0x24 packet.
         .bloodPressure, .bloodSugar, .fatigue, .stress, .hrv,
     ]

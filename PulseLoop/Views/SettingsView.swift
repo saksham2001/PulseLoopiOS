@@ -71,8 +71,8 @@ struct SettingsView: View {
 
     private func deviceRows(_ caps: Set<WearableCapability>) -> [SettingsRowItem] {
         var rows: [SettingsRowItem] = []
-        // Only rings that expose a configurable measurement interval (Colmi) declare
-        // `.measurementInterval`, so the generic 56ff jring never shows this row.
+        // Shown only for rings that declare `.measurementInterval` (Colmi's 0x16 pref, jring's 0x19
+        // background-monitoring cadence).
         if caps.contains(.measurementInterval) {
             rows.append(SettingsRowItem(icon: "timer", tint: PulseColors.spo2, title: "Measurement Frequency") {
                 path.append(AppRoute.settingsMeasurement)

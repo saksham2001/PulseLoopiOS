@@ -3,8 +3,12 @@ import SwiftData
 
 /// Measurement Frequency detail screen. Lets the user tune how often the ring measures HR (a real
 /// interval, 5–60 min) and which background vitals it records. Persisted per device and pushed to the
-/// ring on Save. Only shown for devices that declare `.measurementInterval` (Colmi); a defensive
-/// empty-state covers the case of arriving here without that capability.
+/// ring on Save. Only shown for devices that declare `.measurementInterval` (Colmi, jring); a
+/// defensive empty-state covers the case of arriving here without that capability.
+///
+/// Note: on the jring only the HR interval maps to a command — SpO₂/stress/HRV/temperature ride its
+/// combined-sensor packet and its background log, with no per-metric opcode to switch them off, so
+/// those toggles are inert there.
 struct MeasurementSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingBLEClient.self) private var ble

@@ -56,9 +56,12 @@ final class MeasurementSettingsTests: XCTestCase {
 
     // MARK: - Capability gating
 
-    func testMeasurementIntervalIsColmiOnly() {
+    /// Colmi configures its interval via the 0x16 pref; jring via byte [6] of its 0x19 background
+    /// monitoring command. TK5 has no interval command.
+    func testMeasurementIntervalCapabilityPerDevice() {
         XCTAssertTrue(ColmiCoordinator().capabilities.contains(.measurementInterval))
-        XCTAssertFalse(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.measurementInterval))
     }
 
     // MARK: - Vital visibility (capability first, then user opt-out)
