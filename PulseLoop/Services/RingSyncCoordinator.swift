@@ -32,6 +32,7 @@ final class RingSyncCoordinator {
 
     private(set) var hrState: MeasureState = .idle
     private(set) var spo2State: MeasureState = .idle
+    private(set) var hrvState: MeasureState = .idle
     private(set) var lastSyncAt: Date?
 
     /// The latest history-sync stage label (e.g. "Syncing sleep…"), or nil when not syncing.
@@ -55,6 +56,7 @@ final class RingSyncCoordinator {
     /// Latest live values, mirrored for UI (e.g. the live workout screen) without a query.
     private(set) var latestHRValue: Int?
     private(set) var latestSpO2Value: Int?
+    private(set) var latestHRVValue: Int?
     private(set) var workoutHRActive = false
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
@@ -74,6 +76,8 @@ final class RingSyncCoordinator {
     /// first sample.
     private let hrSettleSeconds: Int = 4
     private let spo2MeasureSeconds: UInt64 = 40
+    /// HRV needs a stretch of beats to stabilize, so give it a longer on-finger window.
+    private let hrvMeasureSeconds: UInt64 = 45
 
     private let client: RingBLEClient
     private let context: ModelContext
@@ -322,7 +326,32 @@ final class RingSyncCoordinator {
             abort: { false }
         )
         engine?.stopSpO2()
+        // On rings whose live metrics share one stream (TK5: every metric rides `03 2f`, and its stop
+        // is mode-agnostic), stopping SpO2 also tears down a running workout HR stream. Bring it back.
+        restartWorkoutHeartRateIfActive()
         spo2State = result.map { .done($0) } ?? .failed
+        return result
+    }
+
+    /// Spot HRV reading. The engine starts the device's dedicated HRV mode (TK5: `03 2f 010a`), we
+    /// wait for the first live HRV sample, then stop. Capability-gated to `.manualHrv`, so only rings
+    /// whose live protocol has an HRV mode reach this.
+    @discardableResult
+    func measureHRV() async -> Int? {
+        guard hrvState != .measuring else { return nil }
+        guard client.state == .connected else { hrvState = .failed; return nil }
+        hrvState = .measuring
+        latestHRVValue = nil
+        engine?.startHRV()
+        let result = await pollForValue(
+            window: hrvMeasureSeconds,
+            value: { self.latestHRVValue },
+            abort: { false }
+        )
+        engine?.stopHRV()
+        // Same shared-stream teardown as SpO2 above: restore the workout's live HR if one was running.
+        restartWorkoutHeartRateIfActive()
+        hrvState = result.map { .done($0) } ?? .failed
         return result
     }
 
@@ -341,6 +370,8 @@ final class RingSyncCoordinator {
             latestSpO2Value = value
         case let .spo2Progress(percent, _):
             if let percent { latestSpO2Value = percent }
+        case let .hrvSample(value, _):
+            latestHRVValue = value
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was

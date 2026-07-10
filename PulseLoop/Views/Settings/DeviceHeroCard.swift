@@ -16,6 +16,8 @@ struct DeviceHeroStatus: Equatable {
     let batteryText: String?
     let syncText: String?
     let action: Action
+    /// Maturity of the connected/known ring's driver, surfaced as a badge. `.full` renders no badge.
+    var supportLevel: WearableSupportLevel = .full
 
     var actionTitle: String {
         switch action {
@@ -39,7 +41,8 @@ struct DeviceHeroStatus: Equatable {
         knownName: String?,
         batteryPercent: Int?,
         lastSync: Date?,
-        now: Date
+        now: Date,
+        supportLevel: WearableSupportLevel = .full
     ) -> DeviceHeroStatus {
         let title = connectedName ?? knownName ?? "No ring connected"
 
@@ -82,7 +85,8 @@ struct DeviceHeroStatus: Equatable {
 
         return DeviceHeroStatus(
             title: title, statusLine: statusLine, statusTint: statusTint,
-            batteryText: batteryText, syncText: syncText, action: action
+            batteryText: batteryText, syncText: syncText, action: action,
+            supportLevel: supportLevel
         )
     }
 }
@@ -108,7 +112,8 @@ struct DeviceHeroCard: View {
             knownName: wearableModel?.displayName ?? deviceType?.displayName,
             batteryPercent: battery,
             lastSync: coordinator.lastSyncAt,
-            now: Date()
+            now: Date(),
+            supportLevel: deviceType?.supportLevel ?? .full
         )
 
         // The connected card is purely informational and opens Wearable settings, where Disconnect
@@ -134,6 +139,8 @@ struct DeviceHeroCard: View {
                             .font(PulseFont.footnote.weight(.regular))
                             .foregroundStyle(status.statusTint)
                             .lineLimit(1)
+
+                        SupportBadge(level: status.supportLevel) // nothing for fully-supported rings
 
                         if let syncText = status.syncText {
                             Text(syncText)
@@ -202,7 +209,13 @@ struct DeviceHeroCard: View {
     }
 
     private func cardAccessibilityLabel(_ status: DeviceHeroStatus) -> String {
-        [status.title, status.statusLine, status.batteryText.map { "Battery \($0)" }, status.syncText]
+        [
+            status.title,
+            status.statusLine,
+            status.supportLevel.badgeLabel,
+            status.batteryText.map { "Battery \($0)" },
+            status.syncText,
+        ]
             .compactMap { $0 }
             .joined(separator: ", ")
     }
@@ -222,6 +235,7 @@ struct DeviceHeroCard: View {
         switch type {
         case .jring: return "jring"
         case .colmiR02: return nil
+        case .tk5: return "tk5"
         case nil: return nil
         }
     }

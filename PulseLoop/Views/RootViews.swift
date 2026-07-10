@@ -140,6 +140,9 @@ struct MainTabView: View {
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
+    /// Card-reorder edit mode, entered inside a tab but chromed here: the Done bar floats above the
+    /// tab bar and the coach FAB has to step aside.
+    @State private var reorder = CardReorderSession.shared
     /// Route requested from inside the Coach sheet, pushed once the sheet dismisses.
     @State private var pendingCoachRoute: AppRoute?
 
@@ -232,15 +235,28 @@ struct MainTabView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: coordinator.isSyncing)
         .animation(PulseMotion.materialize, value: coachEnabled)   // FAB materializes in/out
-        // Floating Coach chat bubble, bottom-right, hovering above the tab bar.
+        .animation(PulseMotion.materialize, value: reorder.isEditing)
+        // Floating Coach chat bubble, bottom-right, hovering above the tab bar. It steps aside while
+        // reordering: the cards are disabled then anyway, and the Done bar wants the full width.
         .overlay(alignment: .bottomTrailing) {
-            if coachEnabled {
+            if coachEnabled && !reorder.isEditing {
                 CoachFAB { CoachNavigation.shared.openRoot() }
                     .padding(.trailing, 18)
-                    .padding(.bottom, 72)   // sits just above the tab bar
+                    .padding(.bottom, PulseLayout.floatingBottomInset)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
+        // Reorder chrome lives here, not in the tab: only at this level can it clear the tab bar (which
+        // is Apple's own on iOS 26) and coexist with the FAB.
+        .overlay(alignment: .bottom) {
+            if reorder.isEditing {
+                ReorderDoneBar { reorder.end() }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, PulseLayout.floatingBottomInset)
+            }
+        }
+        // Leaving the tab abandons its edit mode; the tab's own observer persists the order.
+        .onChange(of: selected) { _, _ in reorder.end() }
         .onChange(of: coachEnabled) { _, enabled in
             // Coach turned off — dismiss the sheet and clear any pending deep link.
             if !enabled { nav.requestedConversationId = nil; nav.showCoach = false }

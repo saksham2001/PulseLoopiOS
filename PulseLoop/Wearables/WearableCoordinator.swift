@@ -6,12 +6,14 @@ import Foundation
 enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     case jring
     case colmiR02
+    case tk5
 
     /// Human-facing default name when no advertised name is available.
     var displayName: String {
         switch self {
         case .jring: return "SMART_RING"
         case .colmiR02: return "Colmi / Yawell ring"
+        case .tk5: return "TK5 ring"
         }
     }
 }

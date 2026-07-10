@@ -32,6 +32,32 @@ struct CapabilityChips: View {
     }
 }
 
+// MARK: - SupportBadge
+
+/// A "Limited support" pill for experimental ring families. Warn-toned rather than glass, because a
+/// tinted glass capsule reads as a *selected control* everywhere else in this app. Renders nothing
+/// for `.full` families, so call sites can place it unconditionally.
+struct SupportBadge: View {
+    let level: WearableSupportLevel
+
+    var body: some View {
+        if let label = level.badgeLabel {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(label)
+            }
+            .font(PulseFont.caption2.weight(.semibold))
+            .foregroundStyle(ChipTone.warn.foreground)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(ChipTone.warn.background, in: Capsule())
+            .overlay(Capsule().stroke(ChipTone.warn.border, lineWidth: 1))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+        }
+    }
+}
+
 // MARK: - SignalStrengthDots
 
 /// Three small circles indicating BLE signal strength for a discovered ring.

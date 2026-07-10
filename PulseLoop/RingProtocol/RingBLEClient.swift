@@ -30,6 +30,7 @@ final class RingBLEClient: NSObject {
     static let coordinators: [WearableCoordinator.Type] = [
         JringCoordinator.self,
         ColmiCoordinator.self,
+        TK5Coordinator.self,
     ]
 
     struct DiscoveredRing: Identifiable, Equatable {
@@ -598,17 +599,21 @@ extension RingBLEClient: CBPeripheralDelegate {
         MainActor.assumeIsolated {
             guard let driver = activeDriver else { return }
             for characteristic in service.characteristics ?? [] {
-                if characteristic.uuid == driver.writeUUID {
-                    writeChar = characteristic
-                } else if characteristic.uuid == driver.commandUUID {
-                    commandChar = characteristic
-                } else if driver.notifyUUIDs.contains(characteristic.uuid) {
-                    notifyChars[characteristic.uuid] = characteristic
+                let uuid = characteristic.uuid
+                // Write / command / notify are checked independently (not mutually exclusive) because a
+                // device can expose one characteristic that is *both* the write target and a notify
+                // source — the TK5's `be940001` receives command replies on the same char it's written
+                // to. jring/Colmi keep these on distinct UUIDs, so their behavior is unchanged.
+                if uuid == driver.writeUUID { writeChar = characteristic }
+                if uuid == driver.commandUUID { commandChar = characteristic }
+                if driver.notifyUUIDs.contains(uuid) {
+                    notifyChars[uuid] = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)
-                } else if characteristic.uuid == driver.batteryCharUUID {
+                }
+                if uuid == driver.batteryCharUUID {
                     batteryCharacteristic = characteristic
                     peripheral.readValue(for: characteristic)
-                } else if firmwareCharUUIDs.contains(characteristic.uuid) {
+                } else if firmwareCharUUIDs.contains(uuid) {
                     peripheral.readValue(for: characteristic)
                 }
             }

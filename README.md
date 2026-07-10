@@ -141,6 +141,12 @@ declares exactly what it can do and the app shows only those features.
 | --- | --- | --- | --- |
 | jring (generic smart ring) | `56ff` | `SMART_RING` | $7–12 |
 | Colmi / Yawell ring family | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
+| TK5 ring — 🧪 **limited support** | `be940` (SmartHealth) | `TK5 …` (e.g. `TK5 24AA`) | ❓ |
+
+> 🧪 **TK5 support is experimental.** Its driver was reverse-engineered from a single packet
+> capture: some readings are unverified and may be missing or wrong, skin temperature and stress
+> aren't decoded, and the ring's encrypted login isn't implemented. The app labels it "Limited
+> support" when you pair it. See the [TK5 page](https://saksham2001.github.io/PulseLoopiOS/hardware/tk5/).
 
 > 📚 **Full hardware specs, per-model capability matrix, and buying guidance:
 > [Supported hardware docs](https://saksham2001.github.io/PulseLoopiOS/hardware/).**

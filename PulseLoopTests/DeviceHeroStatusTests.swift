@@ -48,4 +48,18 @@ final class DeviceHeroStatusTests: XCTestCase {
             lastSync: now.addingTimeInterval(-120), now: now)
         XCTAssertEqual(s.syncText?.hasPrefix("Synced") == true, true)
     }
+
+    /// Support level defaults to `.full` (so the badge never shows for a shipped ring) and is carried
+    /// through `make` when the caller knows the family is experimental.
+    func testSupportLevelDefaultsToFullAndPropagates() {
+        let full = DeviceHeroStatus.make(state: .connected, connectedName: "Colmi R11",
+            knownName: "Colmi R11", batteryPercent: 50, lastSync: nil, now: now)
+        XCTAssertEqual(full.supportLevel, .full)
+        XCTAssertNil(full.supportLevel.badgeLabel)
+
+        let limited = DeviceHeroStatus.make(state: .connected, connectedName: "TK5",
+            knownName: "TK5", batteryPercent: 50, lastSync: nil, now: now, supportLevel: .limited)
+        XCTAssertEqual(limited.supportLevel, .limited)
+        XCTAssertEqual(limited.supportLevel.badgeLabel, "Limited support")
+    }
 }

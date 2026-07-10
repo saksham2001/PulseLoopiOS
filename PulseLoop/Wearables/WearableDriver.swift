@@ -122,6 +122,10 @@ protocol RingSyncEngine: AnyObject {
     func measureHeartRateSpot()
     func startSpO2()
     func stopSpO2()
+    /// Start/stop an on-demand HRV stream. Only devices whose live protocol has a dedicated HRV mode
+    /// (TK5) implement these; the default is a no-op (see the extension below).
+    func startHRV()
+    func stopHRV()
     func findDevice()
     func setGoal(steps: Int)
 
@@ -167,6 +171,10 @@ protocol RingSyncEngine: AnyObject {
 extension RingSyncEngine {
     /// Default: a spot measurement is just the live start (jring has no separate manual command).
     func measureHeartRateSpot() { startHeartRate() }
+
+    /// Default: devices without a dedicated HRV mode (jring/Colmi) don't stream on-demand HRV.
+    func startHRV() {}
+    func stopHRV() {}
 
     /// Default: devices that don't expose a configurable interval (e.g. the generic jring) ignore
     /// measurement settings entirely.

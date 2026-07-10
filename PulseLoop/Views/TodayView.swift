@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
@@ -17,6 +18,26 @@ struct TodayView: View {
     /// Owns the prepared dashboard state. Created lazily in `.task` (never in `body`) so a `body`
     /// re-render never triggers DB work — it just reads the already-prepared store.
     @State private var store: TodayStore?
+    // Tile reorder ("edit mode"): long-press a tile to enter, drag to reorder, Done to exit. The
+    // Done bar itself is rendered by `MainTabView`, which is why edit state lives in a shared session.
+    @State private var reorder = CardReorderSession.shared
+    @State private var dragging: MetricKey?
+    @State private var prefs = MetricPrefsStore.shared
+    /// The order being dragged. While editing this — not `prefs` — drives the grid, so a hover only
+    /// mutates view state instead of encoding the whole prefs blob to `UserDefaults` on the drag loop.
+    /// Persisted once, on drop and on exit.
+    @State private var liveKeys: [MetricKey] = []
+    /// Whether the user actually moved a card. Entering edit mode and leaving it again must not write
+    /// an order they never chose — an unsaved order is meaningful (it means "use the screen default").
+    @State private var orderDirty = false
+
+    private var editing: Bool { reorder.editingScope == .today }
+
+    /// Canonical Today tile order (used until the user reorders). Tile id = `MetricKey`.
+    private static let defaultOrder: [MetricKey] = [
+        .steps, .sleep, .heartRate, .spo2, .hrv, .temperature,
+        .stress, .fatigue, .bloodSugar, .bloodPressureSystolic
+    ]
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
     private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
@@ -72,13 +93,48 @@ struct TodayView: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     tiles(activeStore)
                 }
+
+                // Restore tray: only while editing, and only if something is hidden.
+                if editing {
+                    HiddenMetricsTray(
+                        hidden: hiddenKeys(activeStore),
+                        restore: { restore($0, activeStore) },
+                        displayName: { $0.reorderDisplayName },
+                        symbolName: { $0.reorderSymbolName }
+                    )
+                }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 96)
+            // Extra clearance while editing so the last tile stays draggable above the Done bar.
+            .padding(.bottom, editing ? PulseLayout.scrollBottomInsetEditing : PulseLayout.scrollBottomInset)
+        }
+        // Tap-outside-to-exit: a catcher behind the cards, live only while editing. It must be layered
+        // *above* the opaque background colour — `.background` stacks back-to-front, so a catcher added
+        // after `PulseColors.background` would sit behind it and never see a touch.
+        .background {
+            if editing {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { exitEdit() }
+                    .accessibilityHidden(true)
+            }
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .pulseScrollEdges()
+        // A sync can rebuild the store mid-edit. Fold the new card set into the order on screen rather
+        // than re-deriving it, and never while a drag is in flight — that would yank the card away.
+        .onChange(of: activeStore.revision) { _, _ in
+            guard editing, dragging == nil else { return }
+            liveKeys = CardOrder.reconcile(current: liveKeys, target: orderedKeys(activeStore))
+        }
+        // Edit mode can end from anywhere — the Done bar in `MainTabView`, a tab switch, tap-outside.
+        // Persist whenever this scope stops being the edited one.
+        .onChange(of: reorder.editingScope) { old, new in
+            guard old == .today, new != .today else { return }
+            dragging = nil
+            persistOrder()
+        }
         .task {
             ensureStore()
             if isActive { store?.updateProfile(profile) }
@@ -95,44 +151,136 @@ struct TodayView: View {
 
     // MARK: - Tile grid
 
-    /// The half-width tiles, gated by the Today-scope visibility set prepared in the store. Each metric
-    /// uses its own visual language (activity loop, sleep bar, zone chart, gauge, dual BP gauge).
+    /// The half-width tiles, in the user's saved order, gated by the Today-scope visibility set.
+    /// Each metric uses its own visual language. Long-press any tile → reorder mode.
     @ViewBuilder
     private func tiles(_ store: TodayStore) -> some View {
         let physiology = UserPhysiologyProfile(profile)
-        let visible = store.visibleMetrics
+        // While editing the grid follows the in-flight drag order; otherwise it follows the saved one.
+        let keys = editing ? liveKeys : orderedKeys(store)
 
-        // Activity: the single combined loop, gated by the Today "Activity" toggle (`.steps` key).
-        if visible.contains(.steps) {
+        ReorderableForEach(items: keys, isEditing: editing, revision: store.revision, dragging: $dragging,
+                           move: { from, to in move(from, to) },
+                           commit: { persistOrder() },
+                           hide: { key in hide(key, store) },
+                           displayName: { $0.reorderDisplayName },
+                           symbolName: { $0.reorderSymbolName },
+                           content: { key in
+            cardFor(key, store, physiology)
+                // simultaneousGesture so the long-press fires even though each tile is a Button
+                // (a plain .onLongPressGesture is swallowed by the button's own tap gesture).
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.45).onEnded { _ in enterEdit(store) }
+                )
+        })
+    }
+
+    /// Metrics hidden in the Today scope, so the restore tray stays in lockstep with Settings
+    /// visibility. Device-unsupported metrics stay out of the tray — restoring one could never
+    /// produce a tile.
+    private func hiddenKeys(_ store: TodayStore) -> [MetricKey] {
+        Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && prefs.isHidden($0, scope: .today)
+        }
+    }
+
+    /// Hide and restore both change which keys belong on screen, so they capture the drag order first
+    /// and then re-derive it — reusing `resolvedOrder`, which knows where a restored card should land.
+    /// One encode per tap is irrelevant; it was the per-hover encode that hurt.
+    private func hide(_ key: MetricKey, _ store: TodayStore) {
+        ReorderHaptics.selection.selectionChanged()
+        persistOrder()
+        prefs.setHidden(key, true, scope: .today)
+        liveKeys = orderedKeys(store)
+    }
+
+    private func restore(_ key: MetricKey, _ store: TodayStore) {
+        persistOrder()
+        prefs.setHidden(key, false, scope: .today)
+        liveKeys = orderedKeys(store)
+    }
+
+    /// The one place the drag order reaches `UserDefaults`: on drop, on exit, and around a hide.
+    private func persistOrder() {
+        guard orderDirty, !liveKeys.isEmpty else { return }
+        prefs.setOrder(liveKeys.map(\.rawValue), for: .today)
+        orderDirty = false
+    }
+
+    /// Visible Today tiles in the saved order (falling back to `defaultOrder`).
+    private func orderedKeys(_ store: TodayStore) -> [MetricKey] {
+        // Visibility is decided here, not read from `store.visibleMetrics`: that snapshot bakes in the
+        // hidden set at its last rebuild, and a rebuild is never triggered by a hide/restore. Composing
+        // it with a live `prefs.isHidden` would strand a card — hide it, let a sync rebuild the store,
+        // and the tray's "+" could no longer bring it back. Capability comes from `store.capabilities`
+        // (changes only with the paired device, and a device change *does* rebuild); hidden is read
+        // live from `prefs`, which the view observes, so the grid updates on the tap.
+        let visible = Self.defaultOrder.filter {
+            $0.isSupported(by: store.capabilities) && !prefs.isHidden($0, scope: .today)
+        }
+        let raws = prefs.resolvedOrder(
+            visible: Set(visible.map(\.rawValue)),
+            defaultOrder: Self.defaultOrder.map(\.rawValue),
+            scope: .today
+        )
+        return raws.compactMap { MetricKey(rawValue: $0) }
+    }
+
+    @ViewBuilder
+    private func cardFor(_ key: MetricKey, _ store: TodayStore, _ physiology: UserPhysiologyProfile) -> some View {
+        switch key {
+        case .steps:
             ActivityTileView(
                 summary: store.summary, units: units,
                 caloriesAvailable: MetricsService.isVisible(.calories, context: modelContext, scope: .today),
                 onTap: { selectedTab = .activity }
             )
-        }
-
-        // Sleep: duration + stage distribution bar + score.
-        if visible.contains(.sleep) {
+        case .sleep:
             SleepTileView(sleep: store.summary.sleep) { selectedTab = .sleep }
+        case .heartRate: chartTile(store, .heartRate, physiology)
+        case .spo2: chartTile(store, .spo2, physiology, showPoints: true)
+        case .hrv: chartTile(store, .hrv, physiology)
+        case .temperature: chartTile(store, .temperature, physiology)
+        case .stress: gaugeTile(store, .stress)
+        case .fatigue: gaugeTile(store, .fatigue)
+        case .bloodSugar: gaugeTile(store, .glucose)
+        case .bloodPressureSystolic: bpTile(store, physiology)
+        default: EmptyView()
         }
+    }
 
-        if visible.contains(.heartRate) { chartTile(store, .heartRate, physiology) }
-        if visible.contains(.spo2) { chartTile(store, .spo2, physiology, showPoints: true) }
-        if visible.contains(.hrv) { chartTile(store, .hrv, physiology) }
-        if visible.contains(.temperature) { chartTile(store, .temperature, physiology) }
+    /// Fires on every cell a dragged tile crosses — view state only, no persistence.
+    private func move(_ from: Int, _ to: Int) {
+        liveKeys = CardOrder.moving(liveKeys, from: from, to: to)
+        orderDirty = true
+    }
 
-        if visible.contains(.stress) { gaugeTile(store, .stress) }
-        if visible.contains(.fatigue) { gaugeTile(store, .fatigue) }
-        if visible.contains(.bloodSugar) { gaugeTile(store, .glucose) }
+    private func enterEdit(_ store: TodayStore) {
+        guard !editing else { return }
+        liveKeys = orderedKeys(store)   // seed before flipping, or the first frame renders an empty grid
+        orderDirty = false
+        ReorderHaptics.selection.prepare()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeInOut(duration: 0.2)) { reorder.begin(.today) }
+        // Drag is invisible to VoiceOver — tell VO users how to reorder without it.
+        AccessibilityNotification.Announcement(
+            "Editing layout. Double-tap and hold to drag, or use actions to move cards."
+        ).post()
+    }
 
-        if visible.contains(.bloodPressureSystolic) { bpTile(store, physiology) }
+    /// Ends edit mode. The order is persisted by the `editingScope` observer, which also covers Done
+    /// and tab switches; `dragging` is cleared there too, since a drop outside every cell never
+    /// reaches a drop delegate and would otherwise leave that tile dimmed.
+    private func exitEdit() {
+        guard editing else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { reorder.end() }
     }
 
     @ViewBuilder
     private func chartTile(_ store: TodayStore, _ metric: MetricKind,
                            _ physiology: UserPhysiologyProfile, showPoints: Bool = false) -> some View {
         if let model = store.cards[metric] {
-            let baseline = metric == .hrv ? BaselineStats.compute(store.hrvSamples) : nil
+            let baseline = metric == .hrv ? store.hrvBaseline : nil
             TodayChartTile(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) {
                 path.append(AppRoute.metricDetail(metric))
             }
