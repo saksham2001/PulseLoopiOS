@@ -189,6 +189,16 @@ final class JringSyncEngine: RingSyncEngine {
         writer?.enqueue(encoder.makeSpO2StopCommand())
     }
 
+    /// Spot blood-pressure reading: mode 1 of the 0x23 selector. The reading comes back in the 0x24
+    /// combined packet. Any on-device calibration pushed via 0x33 is already applied by the ring.
+    func startBloodPressure() {
+        writer?.enqueue(encoder.makeBloodPressureStartCommand())
+    }
+
+    func stopBloodPressure() {
+        writer?.enqueue(encoder.makeBloodPressureStopCommand())
+    }
+
     func findDevice() {
         writer?.enqueue(encoder.makeFindRingCommand())
     }

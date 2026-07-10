@@ -64,6 +64,15 @@ final class MeasurementSettingsTests: XCTestCase {
         XCTAssertFalse(TK5Coordinator().capabilities.contains(.measurementInterval))
     }
 
+    /// Only the jring can be *asked* for a blood-pressure reading (0x23 mode 1). The TK5 reports BP
+    /// from its live stream but has no on-demand BP command, and Colmi has no BP sensor at all.
+    func testManualBloodPressureIsJringOnly() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.bloodPressure))
+    }
+
     // MARK: - Vital visibility (capability first, then user opt-out)
 
     func testHiddenVitalIsNotVisibleButUnsupportedStillFalse() throws {

@@ -83,6 +83,24 @@ final class JringSyncEngineTests: XCTestCase {
         XCTAssertEqual([UInt8](writer.sent[1])[0...1], [0x23, 0x00])
     }
 
+    /// Blood pressure is mode 1 of the same 0x23 selector — the mode the app used to send for SpO₂.
+    func testBloodPressureUsesCombinedModeOne() {
+        let (engine, writer) = makeEngine()
+        engine.startBloodPressure()
+        engine.stopBloodPressure()
+        XCTAssertEqual([UInt8](writer.sent[0])[0...1], [0x23, 0x01])
+        XCTAssertEqual([UInt8](writer.sent[1])[0...1], [0x23, 0x00])
+    }
+
+    /// SpO₂ and BP must never collide on the same mode byte.
+    func testSpO2AndBloodPressureUseDistinctModes() {
+        let spo2 = [UInt8](RingEncoder().makeSpO2StartCommand())[1]
+        let bp = [UInt8](RingEncoder().makeBloodPressureStartCommand())[1]
+        XCTAssertNotEqual(spo2, bp)
+        XCTAssertEqual(spo2, 0x02)
+        XCTAssertEqual(bp, 0x01)
+    }
+
     /// The capability reply is recorded for the offline-history chain, but nothing branches on it yet
     /// — in particular SpO₂ must keep using 0x23 regardless (the vendor never sends 0x3E).
     func testBandFunctionIsRecordedWithoutChangingSpO2Routing() {

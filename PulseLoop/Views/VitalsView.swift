@@ -85,22 +85,21 @@ struct VitalsView: View {
 
     @ViewBuilder
     private func measureRow(_ store: VitalsStore) -> some View {
-        // On-demand spot measurements are capability-gated. A combined "Measure now" button (BP + SpO₂
-        // + stress) needs a new BLE command and is deferred; for now we surface the supported spot
-        // readings the ring can do today.
-        // TODO(combined-measure): replace these with a single "Measure now" pill once the combined
-        // measurement command lands.
+        // On-demand spot measurements are capability-gated. Each maps to one mode of the ring's
+        // measurement command, so they're surfaced individually rather than as a single "Measure now".
         let caps = store.capabilities
-        if caps.contains(.manualHeartRate) || caps.contains(.manualSpo2) || caps.contains(.manualHrv) {
-            HStack(spacing: 8) {
-                if caps.contains(.manualHeartRate) {
-                    QuickActionButton(label: "Measure HR", accent: true) { measuring = .hr }
-                }
-                if caps.contains(.manualSpo2) {
-                    QuickActionButton(label: "Measure SpO₂") { measuring = .spo2 }
-                }
-                if caps.contains(.manualHrv) {
-                    QuickActionButton(label: "Measure HRV") { measuring = .hrv }
+        let spots: [(WearableCapability, String, MeasurementSheet.Kind)] = [
+            (.manualHeartRate, "Measure HR", .hr),
+            (.manualSpo2, "Measure SpO₂", .spo2),
+            (.manualHrv, "Measure HRV", .hrv),
+            (.manualBloodPressure, "Measure BP", .bloodPressure),
+        ]
+        let available = spots.filter { caps.contains($0.0) }
+        if !available.isEmpty {
+            // More than three pills don't fit side by side on a narrow phone.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(available.count, 3)), spacing: 8) {
+                ForEach(available, id: \.2) { _, label, kind in
+                    QuickActionButton(label: label, accent: kind == .hr) { measuring = kind }
                 }
             }
         }
@@ -278,5 +277,5 @@ struct VitalsView: View {
 
 private struct VitalsMeasuringItem: Identifiable {
     let kind: MeasurementSheet.Kind
-    var id: Int { kind == .hr ? 0 : 1 }
+    var id: MeasurementSheet.Kind { kind }
 }

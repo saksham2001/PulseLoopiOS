@@ -129,6 +129,10 @@ protocol RingSyncEngine: AnyObject {
     func measureHeartRateSpot()
     func startSpO2()
     func stopSpO2()
+    /// Start/stop an on-demand blood-pressure measurement. Only rings whose live protocol has a BP
+    /// mode (jring: 0x23 mode 1) implement these; the default is a no-op (see the extension below).
+    func startBloodPressure()
+    func stopBloodPressure()
     /// Start/stop an on-demand HRV stream. Only devices whose live protocol has a dedicated HRV mode
     /// (TK5) implement these; the default is a no-op (see the extension below).
     func startHRV()
@@ -187,6 +191,10 @@ extension RingSyncEngine {
     /// Default: devices without a dedicated HRV mode (jring/Colmi) don't stream on-demand HRV.
     func startHRV() {}
     func stopHRV() {}
+
+    /// Default: devices without a blood-pressure sensor (Colmi/TK5) have nothing to measure.
+    func startBloodPressure() {}
+    func stopBloodPressure() {}
 
     /// Default: devices that don't expose a configurable interval ignore measurement settings entirely.
     func setMeasurementSettings(_ settings: MeasurementSettings) {}

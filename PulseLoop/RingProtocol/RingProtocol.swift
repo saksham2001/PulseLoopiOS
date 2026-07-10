@@ -423,6 +423,11 @@ struct RingEncoder {
     func makeSpO2StartCommand() -> Data { makeCombinedModeCommand(.spo2) }
     func makeSpO2StopCommand() -> Data { makeCombinedModeCommand(.off) }
 
+    /// Blood pressure is mode 1 of the same selector. The result arrives in the 0x24 combined packet
+    /// (bytes [2]/[3]), not a dedicated reply.
+    func makeBloodPressureStartCommand() -> Data { makeCombinedModeCommand(.bloodPressure) }
+    func makeBloodPressureStopCommand() -> Data { makeCombinedModeCommand(.off) }
+
     /// Periodic background blood-oxygen monitoring (0x3E). Only present on firmware that reports the
     /// "BP/SpO₂ separate mode" capability bit; otherwise SpO₂ rides the 0x23 mode selector.
     func makeBloodOxygenModeCommand(enabled: Bool) -> Data {

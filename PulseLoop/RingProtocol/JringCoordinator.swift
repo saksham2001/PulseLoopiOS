@@ -25,7 +25,8 @@ final class JringCoordinator: WearableCoordinator {
 
     let capabilities: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .sleep, .battery,
-        .manualHeartRate, .manualSpo2,   // jring supports on-demand HR + SpO2 spot readings
+        // On-demand spot readings: HR (0x14), SpO₂ (0x23 mode 2), BP (0x23 mode 1).
+        .manualHeartRate, .manualSpo2, .manualBloodPressure,
         .realtimeHeartRate, .findDevice,
         // All-day HR cadence is byte [6] of the 0x19 background-monitoring command.
         .measurementInterval,

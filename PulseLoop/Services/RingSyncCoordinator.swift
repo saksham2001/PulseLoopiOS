@@ -31,9 +31,17 @@ final class RingSyncCoordinator {
         case failed
     }
 
+    /// A blood-pressure reading is a pair, so it can't ride `MeasureState.done(Int)` alone.
+    struct BloodPressureReading: Equatable, Sendable {
+        let systolic: Int
+        let diastolic: Int
+    }
+
     private(set) var hrState: MeasureState = .idle
     private(set) var spo2State: MeasureState = .idle
     private(set) var hrvState: MeasureState = .idle
+    /// `.done` carries the systolic value; read `latestBloodPressureValue` for the full pair.
+    private(set) var bpState: MeasureState = .idle
     private(set) var lastSyncAt: Date?
 
     /// The latest history-sync stage label (e.g. "Syncing sleep…"), or nil when not syncing.
@@ -58,6 +66,7 @@ final class RingSyncCoordinator {
     private(set) var latestHRValue: Int?
     private(set) var latestSpO2Value: Int?
     private(set) var latestHRVValue: Int?
+    private(set) var latestBloodPressureValue: BloodPressureReading?
     private(set) var workoutHRActive = false
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
@@ -79,6 +88,8 @@ final class RingSyncCoordinator {
     private let spo2MeasureSeconds: UInt64 = 40
     /// HRV needs a stretch of beats to stabilize, so give it a longer on-finger window.
     private let hrvMeasureSeconds: UInt64 = 45
+    /// BP rides the same PPG warm-up as SpO2 and the ring's estimator settles slowly.
+    private let bpMeasureSeconds: UInt64 = 45
 
     private let client: RingBLEClient
     private let context: ModelContext
@@ -385,6 +396,29 @@ final class RingSyncCoordinator {
         return result
     }
 
+    /// Spot blood-pressure reading. The engine starts the ring's BP mode (jring: `0x23 01`); the
+    /// systolic/diastolic pair arrives together in the ring's combined-sensor packet, so we poll on
+    /// the systolic value and read the pair. Capability-gated to `.manualBloodPressure`.
+    @discardableResult
+    func measureBloodPressure() async -> BloodPressureReading? {
+        guard bpState != .measuring else { return nil }
+        guard client.state == .connected else { bpState = .failed; return nil }
+        bpState = .measuring
+        latestBloodPressureValue = nil
+        engine?.startBloodPressure()
+        _ = await pollForValue(
+            window: bpMeasureSeconds,
+            value: { self.latestBloodPressureValue?.systolic },
+            abort: { false }
+        )
+        let result = latestBloodPressureValue
+        engine?.stopBloodPressure()
+        // Same shared-stream teardown as SpO2/HRV above: restore the workout's live HR if one ran.
+        restartWorkoutHeartRateIfActive()
+        bpState = result.map { .done($0.systolic) } ?? .failed
+        return result
+    }
+
     // MARK: - Event handling
 
     private func handle(_ event: PulseEvent) {
@@ -402,6 +436,8 @@ final class RingSyncCoordinator {
             if let percent { latestSpO2Value = percent }
         case let .hrvSample(value, _):
             latestHRVValue = value
+        case let .bloodPressureSample(systolic, diastolic, _):
+            latestBloodPressureValue = BloodPressureReading(systolic: systolic, diastolic: diastolic)
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was

@@ -5,7 +5,7 @@ import SwiftData
 /// Drives the existing `RingSyncCoordinator` measure flow when the ring is connected; otherwise
 /// simulates a reading and saves a mock `Measurement` so the demo charts update.
 struct MeasurementSheet: View {
-    enum Kind { case hr, spo2, hrv }
+    enum Kind: Hashable { case hr, spo2, hrv, bloodPressure }
     enum Phase { case preparing, measuring, result, error }
 
     let kind: Kind
@@ -16,6 +16,8 @@ struct MeasurementSheet: View {
 
     @State private var phase: Phase = .preparing
     @State private var value: Int?
+    /// Diastolic, for blood pressure — the only reading that is a pair.
+    @State private var secondaryValue: Int?
     @State private var animate = false
 
     private var color: Color {
@@ -23,6 +25,7 @@ struct MeasurementSheet: View {
         case .hr: return PulseColors.heartRate
         case .spo2: return PulseColors.spo2
         case .hrv: return PulseColors.hrv
+        case .bloodPressure: return PulseColors.bloodPressure
         }
     }
     private var name: String {
@@ -30,6 +33,7 @@ struct MeasurementSheet: View {
         case .hr: return "Heart Rate"
         case .spo2: return "Blood Oxygen"
         case .hrv: return "Heart Rate Variability"
+        case .bloodPressure: return "Blood Pressure"
         }
     }
     private var unit: String {
@@ -37,6 +41,7 @@ struct MeasurementSheet: View {
         case .hr: return "bpm"
         case .spo2: return "%"
         case .hrv: return "ms"
+        case .bloodPressure: return "mmHg"
         }
     }
     private var instruction: String {
@@ -44,7 +49,15 @@ struct MeasurementSheet: View {
         case .hr: return "Keep your hand still and rest your wrist on a flat surface."
         case .spo2: return "Breathe normally. Keep the sensor pressed firmly to your skin."
         case .hrv: return "Sit still and breathe normally — HRV needs a steady stretch of beats."
+        case .bloodPressure: return "Sit upright, rest your hand at heart height, and stay still."
         }
+    }
+
+    /// The big number in the ring. Blood pressure shows the systolic/diastolic pair.
+    private var readingText: String? {
+        guard let value else { return nil }
+        if kind == .bloodPressure, let secondaryValue { return "\(value)/\(secondaryValue)" }
+        return "\(value)"
     }
 
     var body: some View {
@@ -82,8 +95,8 @@ struct MeasurementSheet: View {
                     }
                     Circle().fill(color.opacity(0.12)).frame(width: 220, height: 220)
                     VStack(spacing: 4) {
-                        if let value, phase != .preparing {
-                            Text("\(value)").font(PulseFont.nano).monospacedDigit()
+                        if let readingText, phase != .preparing {
+                            Text(readingText).font(PulseFont.nano).monospacedDigit()
                                 .foregroundStyle(PulseColors.textPrimary)
                             Text(unit.uppercased()).font(PulseFont.caption.weight(.regular)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
                         } else {
@@ -135,13 +148,20 @@ struct MeasurementSheet: View {
             return "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again."
         case .hrv:
             return "Couldn't get an HRV reading. Wear the ring snugly, keep still, and try again."
+        case .bloodPressure:
+            return "Couldn't get a blood-pressure reading. Wear the ring snugly, rest your hand at heart height, and try again."
         }
     }
 
     private var phaseCopy: String {
         switch phase {
         case .preparing: return instruction
-        case .measuring: return kind == .spo2 ? "Measuring SpO₂… keep your hand still." : "Measuring… stay still."
+        case .measuring:
+            switch kind {
+            case .spo2: return "Measuring SpO₂… keep your hand still."
+            case .bloodPressure: return "Measuring blood pressure… stay still."
+            default: return "Measuring… stay still."
+            }
         case .result: return "Reading saved."
         case .error: return ""
         }
@@ -176,23 +196,39 @@ struct MeasurementSheet: View {
             case .hr: result = await coordinator.measureHR()
             case .spo2: result = await coordinator.measureSpO2()
             case .hrv: result = await coordinator.measureHRV()
+            case .bloodPressure:
+                let reading = await coordinator.measureBloodPressure()
+                secondaryValue = reading?.diastolic
+                result = reading?.systolic
             }
         } else {
             // Demo mode: simulate the measurement window, then persist a mock reading.
             try? await Task.sleep(for: .seconds(kind == .hr ? 2.2 : 3.0))
-            let measurementKind: MeasurementKind = {
-                switch kind {
-                case .hr: return .heartRate
-                case .spo2: return .spo2
-                case .hrv: return .hrv
-                }
-            }()
-            MetricsService.insertMockMeasurement(kind: measurementKind, context: modelContext)
-            result = MetricsService.fetchMeasurements(modelContext)
-                .first(where: { $0.kind == measurementKind })
-                .map { Int($0.value) }
+            if kind == .bloodPressure {
+                // BP is stored as two rows so each trends independently — mock both.
+                MetricsService.insertMockMeasurement(kind: .bloodPressureSystolic, context: modelContext)
+                MetricsService.insertMockMeasurement(kind: .bloodPressureDiastolic, context: modelContext)
+                let rows = MetricsService.fetchMeasurements(modelContext)
+                secondaryValue = rows.first { $0.kind == .bloodPressureDiastolic }.map { Int($0.value) }
+                result = rows.first { $0.kind == .bloodPressureSystolic }.map { Int($0.value) }
+            } else {
+                let measurementKind: MeasurementKind = {
+                    switch kind {
+                    case .hr: return .heartRate
+                    case .spo2: return .spo2
+                    case .hrv: return .hrv
+                    case .bloodPressure: return .bloodPressureSystolic   // handled above
+                    }
+                }()
+                MetricsService.insertMockMeasurement(kind: measurementKind, context: modelContext)
+                result = MetricsService.fetchMeasurements(modelContext)
+                    .first(where: { $0.kind == measurementKind })
+                    .map { Int($0.value) }
+            }
         }
         guard let result else { phase = .error; return }
+        // A BP reading without its diastolic half is not a usable reading.
+        if kind == .bloodPressure, secondaryValue == nil { phase = .error; return }
         value = result
         phase = .result
         try? await Task.sleep(for: .seconds(1.3))

@@ -17,7 +17,7 @@ final class WorkoutVitalsPlanTests: XCTestCase {
     private let jringCaps: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .sleep, .battery,
         .bloodPressure, .bloodSugar, .fatigue, .stress, .hrv,
-        .manualHeartRate, .manualSpo2, .realtimeHeartRate, .findDevice,
+        .manualHeartRate, .manualSpo2, .manualBloodPressure, .realtimeHeartRate, .findDevice,
         .measurementInterval,
     ]
 
