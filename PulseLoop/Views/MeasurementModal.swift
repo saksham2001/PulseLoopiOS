@@ -5,7 +5,7 @@ import SwiftData
 /// Drives the existing `RingSyncCoordinator` measure flow when the ring is connected; otherwise
 /// simulates a reading and saves a mock `Measurement` so the demo charts update.
 struct MeasurementSheet: View {
-    enum Kind { case hr, spo2 }
+    enum Kind { case hr, spo2, hrv }
     enum Phase { case preparing, measuring, result, error }
 
     let kind: Kind
@@ -18,13 +18,33 @@ struct MeasurementSheet: View {
     @State private var value: Int?
     @State private var animate = false
 
-    private var color: Color { kind == .hr ? PulseColors.heartRate : PulseColors.spo2 }
-    private var name: String { kind == .hr ? "Heart Rate" : "Blood Oxygen" }
-    private var unit: String { kind == .hr ? "bpm" : "%" }
+    private var color: Color {
+        switch kind {
+        case .hr: return PulseColors.heartRate
+        case .spo2: return PulseColors.spo2
+        case .hrv: return PulseColors.hrv
+        }
+    }
+    private var name: String {
+        switch kind {
+        case .hr: return "Heart Rate"
+        case .spo2: return "Blood Oxygen"
+        case .hrv: return "Heart Rate Variability"
+        }
+    }
+    private var unit: String {
+        switch kind {
+        case .hr: return "bpm"
+        case .spo2: return "%"
+        case .hrv: return "ms"
+        }
+    }
     private var instruction: String {
-        kind == .hr
-            ? "Keep your hand still and rest your wrist on a flat surface."
-            : "Breathe normally. Keep the sensor pressed firmly to your skin."
+        switch kind {
+        case .hr: return "Keep your hand still and rest your wrist on a flat surface."
+        case .spo2: return "Breathe normally. Keep the sensor pressed firmly to your skin."
+        case .hrv: return "Sit still and breathe normally — HRV needs a steady stretch of beats."
+        }
     }
 
     var body: some View {
@@ -108,9 +128,14 @@ struct MeasurementSheet: View {
         guard ble.state == .connected else {
             return "Your ring isn't connected. Reconnect it and try again."
         }
-        return kind == .hr
-            ? "Couldn't get a heart-rate reading. Make sure the ring is snug and worn on your finger, then try again."
-            : "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again. SpO₂ also builds up over a while of wear."
+        switch kind {
+        case .hr:
+            return "Couldn't get a heart-rate reading. Make sure the ring is snug and worn on your finger, then try again."
+        case .spo2:
+            return "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again."
+        case .hrv:
+            return "Couldn't get an HRV reading. Wear the ring snugly, keep still, and try again."
+        }
     }
 
     private var phaseCopy: String {
@@ -147,11 +172,21 @@ struct MeasurementSheet: View {
         phase = .measuring
         let result: Int?
         if ble.state == .connected {
-            result = kind == .hr ? await coordinator.measureHR() : await coordinator.measureSpO2()
+            switch kind {
+            case .hr: result = await coordinator.measureHR()
+            case .spo2: result = await coordinator.measureSpO2()
+            case .hrv: result = await coordinator.measureHRV()
+            }
         } else {
             // Demo mode: simulate the measurement window, then persist a mock reading.
             try? await Task.sleep(for: .seconds(kind == .hr ? 2.2 : 3.0))
-            let measurementKind: MeasurementKind = kind == .hr ? .heartRate : .spo2
+            let measurementKind: MeasurementKind = {
+                switch kind {
+                case .hr: return .heartRate
+                case .spo2: return .spo2
+                case .hrv: return .hrv
+                }
+            }()
             MetricsService.insertMockMeasurement(kind: measurementKind, context: modelContext)
             result = MetricsService.fetchMeasurements(modelContext)
                 .first(where: { $0.kind == measurementKind })

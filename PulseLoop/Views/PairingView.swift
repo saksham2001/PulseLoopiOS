@@ -1,9 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// The dedicated, modern ring-pairing screen. Swipe a carousel of supported ring models (stylized
-/// vector art + name), pick yours, then scan and connect to a matching nearby device. Reused in two
-/// contexts: the onboarding pair step (with a "Skip for now") and pushed from Settings → "Add a ring".
+/// The dedicated, modern ring-pairing screen. Swipe a carousel of supported ring models (product art,
+/// name, capability chips, and a "Limited support" badge for experimental families), pick yours, then
+/// scan and connect to a matching nearby device. Reused in two contexts: the onboarding pair step
+/// (with a "Skip for now") and pushed from Settings → "Add a ring".
 ///
 /// All scan/discover/connect UI lives here so Settings stays a clean device card. Pairing logic is
 /// just orchestration over `RingBLEClient`; the chosen model's `family` biases which discovered
@@ -130,10 +131,13 @@ struct PairingView: View {
 
     private var scrollContent: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            // Tight vertical rhythm so the whole picker — carousel *and* its scrub bar — clears the
+            // pinned footer without scrolling. When it didn't, the scrub bar sat behind the footer,
+            // whose glass sampled the accent thumb as a purple smear under "Connect ring".
+            VStack(spacing: 16) {
                 OnboardingHeader(
                     title: "Add your ring",
-                    subtitle: "Swipe to find your model, then tap to connect.\nYou can also explore first and pair later."
+                    subtitle: "Swipe to find your model, then tap to connect."
                 )
                 .frame(maxWidth: .infinity) // full-width anchor: forces the column full so the button
                                             // never hugs to the (variable-width) dot row
@@ -158,7 +162,8 @@ struct PairingView: View {
                 }
 
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
             .containerRelativeFrame(.horizontal) // size the column to the screen exactly (not to its
                                                  // content), so the button is full-width on every tab
         }
@@ -174,16 +179,17 @@ struct PairingView: View {
     // MARK: - Carousel
 
     private var carousel: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 6) {
             brandTabs
 
             TabView(selection: $selectedIndex) {
                 ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
-                    VStack(spacing: 16) {
+                    VStack(spacing: 10) {
                         RingArtView(tint: model.tint, imageName: model.imageName)
                         Text(model.displayName)
                             .font(PulseFont.numberL)
                             .foregroundStyle(PulseColors.textPrimary)
+                        SupportBadge(level: model.supportLevel) // nothing for fully-supported models
                         CapabilityChips(blurb: model.blurb) // §2 replaces blurb Text
                     }
                     .frame(maxWidth: .infinity) // constant page width so content doesn't drive reflow
@@ -192,7 +198,9 @@ struct PairingView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never)) // §2 Fix #2 — dots moved to modelDotRow
-            .frame(height: 300) // §2 Fix #2
+            // Hugs the tallest page (art + name + support badge + chips). Slack here shows up as dead
+            // space between the chips and the scrub bar below, so keep it tight.
+            .frame(height: 292)
             .id(selectedBrand) // recreate on brand change so pages swap instantly (no page-slide)
 
             modelDotRow // §2 fixed-height dot area keeps layout stable across tabs
@@ -217,8 +225,7 @@ struct PairingView: View {
             }
         }
         .frame(maxWidth: .infinity) // center the bar; keep it from driving column width
-        .frame(height: 44)          // constant 44pt area across every brand tab
-        .padding(.vertical, 4)
+        .frame(height: 20)          // constant area across every brand tab; the bar centres inside it
     }
 
     /// Brand filter: centered when the pills fit on screen, horizontally scrollable when they don't.
@@ -342,15 +349,21 @@ struct PairingView: View {
         let signalLevel: String = ring.rssi >= -65 ? "Strong signal"
             : ring.rssi >= -80 ? "Medium signal"
             : "Weak signal"
+        // Identity wins when the advertisement resolved a model; otherwise fall back to the family.
+        let support = WearableModel.model(id: ring.wearableModelID)?.supportLevel
+            ?? ring.deviceType?.supportLevel ?? .full
         return HStack {
             Image(systemName: ring.isLikelyRing ? "circle.hexagongrid.circle.fill" : "dot.radiowaves.left.and.right")
                 .foregroundStyle(ring.isLikelyRing ? PulseColors.accent : PulseColors.textMuted)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ring.name).font(.subheadline.weight(.medium)).foregroundStyle(PulseColors.textPrimary)
                 if let type = ring.deviceType {
-                    Text(WearableModel.model(id: ring.wearableModelID)?.displayName ?? type.displayName)
-                        .font(.caption2)
-                        .foregroundStyle(PulseColors.accent)
+                    HStack(spacing: 6) {
+                        Text(WearableModel.model(id: ring.wearableModelID)?.displayName ?? type.displayName)
+                            .font(.caption2)
+                            .foregroundStyle(PulseColors.accent)
+                        SupportBadge(level: support) // renders nothing for fully-supported families
+                    }
                 }
             }
             Spacer()
@@ -373,7 +386,9 @@ struct PairingView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine) // §5
         .accessibilityLabel(Text( // §5 spoken label with signal level
-            "\(ring.name)\(ring.deviceType.map { ", \($0.displayName)" } ?? ""), \(signalLevel)"
+            "\(ring.name)\(ring.deviceType.map { ", \($0.displayName)" } ?? "")"
+                + (support == .limited ? ", limited support" : "")
+                + ", \(signalLevel)"
         ))
     }
 

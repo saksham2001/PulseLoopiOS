@@ -5,8 +5,8 @@ import SwiftUI
 /// `family`/driver; this catalog just gives each a name, tint, and one-line capability blurb so the
 /// user can swipe and say "this is my ring."
 ///
-/// `family` decides which coordinator/driver the scan should accept. Swapping the stylized vector art
-/// for real product photos later only needs an added `imageName` consumed by `RingArtView`.
+/// `family` decides which coordinator/driver the scan should accept, and — via `supportLevel` — how
+/// mature that driver is, which the pairing screen surfaces as a "Limited support" badge.
 struct WearableModel: Identifiable {
     let id: String
     let displayName: String
@@ -18,9 +18,38 @@ struct WearableModel: Identifiable {
     /// Bluetooth local-name patterns that identify this exact product model. Protocol-family
     /// matching remains the coordinator's job; these patterns are only for user-facing identity.
     let advertisedNamePatterns: [String]
-    /// Asset-catalog image name for this ring's product art. When nil, `RingArtView` falls back to
-    /// the stylized vector torus. Set this per model once real ring images are added to the catalog.
+    /// Asset-catalog image name for this ring's product art. When nil, `RingArtView` falls back to a
+    /// generic ring photo. Set this per model once real ring images are added to the catalog.
     var imageName: String? = nil
+
+    /// Maturity of this model's driver, mirrored from its `family` (the real source of truth).
+    var supportLevel: WearableSupportLevel { family.supportLevel }
+}
+
+/// How proven PulseLoop's driver for a wearable *family* is. Drives the "Limited support" badge in
+/// pairing/onboarding/Settings. Families we've shipped and tested are `.full` and render no badge at
+/// all; a family reconstructed from thin evidence is `.limited`.
+enum WearableSupportLevel: Equatable {
+    case full
+    case limited
+
+    /// Short pill text, or nil for `.full` so no badge renders.
+    var badgeLabel: String? {
+        switch self {
+        case .full: return nil
+        case .limited: return "Limited support"
+        }
+    }
+}
+
+extension RingDeviceType {
+    /// How proven this family's driver is. Exhaustive on purpose: a new family must state its level.
+    var supportLevel: WearableSupportLevel {
+        switch self {
+        case .jring, .colmiR02: return .full
+        case .tk5: return .limited
+        }
+    }
 }
 
 extension WearableModel {
@@ -36,12 +65,21 @@ extension WearableModel {
     static let colmiR03 = colmiFamily("colmi-r03", "Colmi R03", brand: "Colmi", pattern: "^R03_.*")
     static let colmiR06 = colmiFamily("colmi-r06", "Colmi R06", brand: "Colmi", pattern: "^R06_.*")
     static let colmiR07 = colmiFamily("colmi-r07", "Colmi R07", brand: "Colmi", pattern: "^COLMI R07_.*")
+    static let colmiR08 = colmiFamily("colmi-r08", "Colmi R08", brand: "Colmi", pattern: "^R08_.*")
     static let colmiR09 = colmiFamily("colmi-r09", "Colmi R09", brand: "Colmi", pattern: "^R09_.*")
     static let colmiR10 = colmiFamily("colmi-r10", "Colmi R10", brand: "Colmi", pattern: "^COLMI R10_.*")
     static let colmiR11 = colmiFamily(
         "colmi-r11", "Colmi R11", brand: "Colmi", pattern: "^R11C_[0-9A-F]{4}$", imageName: "yawell-r11"
     )
     static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi", pattern: "^COLMI R12_.*")
+
+    // TK5 — its own protocol (be940 service, SmartHealth app). Advertises as "TK5 <4 hex>".
+    // Blurb mirrors `TK5Coordinator.capabilities`; the driver is `.limited` (see `supportLevel`).
+    static let tk5 = WearableModel(
+        id: "tk5", displayName: "TK5", brand: "TK", family: .tk5,
+        tint: PulseColors.spo2, blurb: "HR · SpO₂ · HRV · BP · Sleep",
+        advertisedNamePatterns: ["^TK5 ?[0-9A-Fa-f]{0,4}$"], imageName: "tk5"
+    )
 
     // Yawell-branded variants of the same hardware.
     static let yawellR05 = colmiFamily("yawell-r05", "Yawell R05", brand: "Yawell", pattern: "^R05_[0-9A-F]{4}$")
@@ -68,8 +106,9 @@ extension WearableModel {
     /// alphabetically, so this array's order is not user-visible.
     static let catalog: [WearableModel] = [
         jring,
-        colmiR02, colmiR03, colmiR06, colmiR07, colmiR09, colmiR10, colmiR11, colmiR12,
+        colmiR02, colmiR03, colmiR06, colmiR07, colmiR08, colmiR09, colmiR10, colmiR11, colmiR12,
         yawellR05, yawellR10, yawellR11, h59,
+        tk5,
     ]
 
     static func model(id: String?) -> WearableModel? {
