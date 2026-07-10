@@ -102,7 +102,6 @@ struct RecordSummaryView: View {
             .safeAreaInset(edge: .bottom) {
                 PrimaryButton(title: "Done", systemImage: "checkmark") { done(session) }
                     .padding(16)
-                    .pulseGlass(Rectangle())
             }
             .onAppear { effort = session.perceivedEffort; note = session.notes ?? "" }
             .onChange(of: samples.count) { _, _ in
