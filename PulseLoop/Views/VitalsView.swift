@@ -91,13 +91,16 @@ struct VitalsView: View {
         // TODO(combined-measure): replace these with a single "Measure now" pill once the combined
         // measurement command lands.
         let caps = store.capabilities
-        if caps.contains(.manualHeartRate) || caps.contains(.manualSpo2) {
+        if caps.contains(.manualHeartRate) || caps.contains(.manualSpo2) || caps.contains(.manualHrv) {
             HStack(spacing: 8) {
                 if caps.contains(.manualHeartRate) {
                     QuickActionButton(label: "Measure HR", accent: true) { measuring = .hr }
                 }
                 if caps.contains(.manualSpo2) {
                     QuickActionButton(label: "Measure SpO₂") { measuring = .spo2 }
+                }
+                if caps.contains(.manualHrv) {
+                    QuickActionButton(label: "Measure HRV") { measuring = .hrv }
                 }
             }
         }
