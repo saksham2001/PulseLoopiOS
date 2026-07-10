@@ -71,6 +71,11 @@ enum RingEventBridge {
 
         case let .historyMeasurement(kind, value, timestamp):
             if kind == .heartRate, !hrRange.contains(Int(value)) { return [] }
+            // A ring's on-device log can still hold records stamped under a *previous* clock — e.g. a
+            // jring that logged against a UTC RTC before the app started setting it to local time. Those
+            // decode hours into the future. Drop anything outside the history horizon rather than
+            // persisting a sample that poisons "today", peak HR and the 24h trends.
+            guard isWithinHistoryWindow(timestamp, now: now) else { return [] }
             return [.historyMeasurement(kind: kind, value: value, timestamp: timestamp)]
 
         case let .stressSample(value, timestamp):

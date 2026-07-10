@@ -3,6 +3,38 @@ import XCTest
 
 /// The pure `RingDecodedEvent → [PulseEvent]` mapping, including its sanity gates.
 final class EventBridgeTests: XCTestCase {
+
+    // MARK: - History-measurement plausibility
+
+    func testHistoryMeasurementInWindowMapsThrough() {
+        let now = Date()
+        let events = RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(-900)),
+            now: now
+        )
+        XCTAssertEqual(events.count, 1)
+    }
+
+    /// A jring's on-ring log can still hold records stamped under an older *UTC* clock. Once the app
+    /// sets the ring's RTC to local time, those decode hours into the future — observed at +3.7 h on a
+    /// real device. They must be dropped, not persisted (they would poison "today" and peak HR).
+    func testFutureHistoryMeasurementDropped() {
+        let now = Date()
+        XCTAssertTrue(RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(3.7 * 3600)),
+            now: now
+        ).isEmpty)
+    }
+
+    /// Anything older than the ~8-day history horizon is a misdecoded frame.
+    func testAncientHistoryMeasurementDropped() {
+        let now = Date()
+        XCTAssertTrue(RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(-9 * 24 * 3600)),
+            now: now
+        ).isEmpty)
+    }
+
     func testHeartRateSampleMapsThrough() {
         let events = RingEventBridge.events(for: .heartRateSample(bpm: 72, timestamp: Date()))
         XCTAssertEqual(events.count, 1)

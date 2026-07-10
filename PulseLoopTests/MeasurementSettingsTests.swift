@@ -73,6 +73,14 @@ final class MeasurementSettingsTests: XCTestCase {
         XCTAssertFalse(ColmiCoordinator().capabilities.contains(.bloodPressure))
     }
 
+    /// Only the jring's PPG sweep returns every vital in one packet, so only it collapses the Vitals
+    /// measure row into a single "Measure Vitals" action.
+    func testCombinedVitalsMeasurementIsJringOnly() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.combinedVitalsMeasurement))
+    }
+
     // MARK: - Vital visibility (capability first, then user opt-out)
 
     func testHiddenVitalIsNotVisibleButUnsupportedStillFalse() throws {

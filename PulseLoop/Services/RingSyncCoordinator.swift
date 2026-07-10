@@ -37,11 +37,30 @@ final class RingSyncCoordinator {
         let diastolic: Int
     }
 
+    /// Everything a single combined sweep produced. Fields the ring didn't compute stay `nil` — on the
+    /// jring, stress/HRV/blood sugar come back as zero and are simply not shown.
+    struct VitalsReading: Equatable, Sendable {
+        var heartRate: Int? = nil
+        var bloodPressure: BloodPressureReading? = nil
+        var spo2: Int? = nil
+        var fatigue: Int? = nil
+        var stress: Int? = nil
+        var hrv: Int? = nil
+        var bloodSugarMgdl: Double? = nil
+
+        var isEmpty: Bool {
+            heartRate == nil && bloodPressure == nil && spo2 == nil
+                && fatigue == nil && stress == nil && hrv == nil && bloodSugarMgdl == nil
+        }
+    }
+
     private(set) var hrState: MeasureState = .idle
     private(set) var spo2State: MeasureState = .idle
     private(set) var hrvState: MeasureState = .idle
     /// `.done` carries the systolic value; read `latestBloodPressureValue` for the full pair.
     private(set) var bpState: MeasureState = .idle
+    /// Combined sweep (all vitals at once). `.done` carries HR; the caller keeps the full reading.
+    private(set) var vitalsState: MeasureState = .idle
     private(set) var lastSyncAt: Date?
 
     /// The latest history-sync stage label (e.g. "Syncing sleep…"), or nil when not syncing.
@@ -67,6 +86,9 @@ final class RingSyncCoordinator {
     private(set) var latestSpO2Value: Int?
     private(set) var latestHRVValue: Int?
     private(set) var latestBloodPressureValue: BloodPressureReading?
+    private(set) var latestFatigueValue: Int?
+    private(set) var latestStressValue: Int?
+    private(set) var latestBloodSugarValue: Double?
     private(set) var workoutHRActive = false
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
@@ -90,6 +112,9 @@ final class RingSyncCoordinator {
     private let hrvMeasureSeconds: UInt64 = 45
     /// BP rides the same PPG warm-up as SpO2 and the ring's estimator settles slowly.
     private let bpMeasureSeconds: UInt64 = 45
+    /// The combined sweep computes every metric, so give it the longest window (observed: the ring
+    /// streams empty packets for ~20s before the populated burst).
+    private let vitalsMeasureSeconds: UInt64 = 60
 
     private let client: RingBLEClient
     private let context: ModelContext
@@ -419,6 +444,53 @@ final class RingSyncCoordinator {
         return result
     }
 
+    /// One PPG sweep that returns every vital the ring computes. The `0x24` packet carries HR, blood
+    /// pressure, SpO₂ and fatigue together, so we start the sweep, wait for the first metric to land,
+    /// then let the rest of the packet's fan-out settle before snapshotting.
+    ///
+    /// Capability-gated to `.combinedVitalsMeasurement`.
+    @discardableResult
+    func measureVitals() async -> VitalsReading? {
+        guard vitalsState != .measuring else { return nil }
+        guard client.state == .connected else { vitalsState = .failed; return nil }
+        vitalsState = .measuring
+        latestHRValue = nil
+        latestSpO2Value = nil
+        latestBloodPressureValue = nil
+        latestFatigueValue = nil
+        latestStressValue = nil
+        latestHRVValue = nil
+        latestBloodSugarValue = nil
+
+        engine?.startCombinedVitals()
+        // The ring streams empty packets while the PPG warms up, then a burst of populated ones. Wait
+        // for the first metric of that burst rather than a specific one — which arrives first depends
+        // on how the decoder fans the packet out.
+        _ = await pollForValue(
+            window: vitalsMeasureSeconds,
+            value: { self.latestSpO2Value ?? self.latestBloodPressureValue?.systolic ?? self.latestHRValue },
+            abort: { false }
+        )
+        // The remaining fields of the same packet are published right behind the first; give them a
+        // moment to land so a reading isn't reported as partial.
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        engine?.stopCombinedVitals()
+        restartWorkoutHeartRateIfActive()
+
+        let reading = VitalsReading(
+            heartRate: latestHRValue,
+            bloodPressure: latestBloodPressureValue,
+            spo2: latestSpO2Value,
+            fatigue: latestFatigueValue,
+            stress: latestStressValue,
+            hrv: latestHRVValue,
+            bloodSugarMgdl: latestBloodSugarValue
+        )
+        guard !reading.isEmpty else { vitalsState = .failed; return nil }
+        vitalsState = .done(reading.heartRate ?? reading.spo2 ?? 0)
+        return reading
+    }
+
     // MARK: - Event handling
 
     private func handle(_ event: PulseEvent) {
@@ -438,6 +510,12 @@ final class RingSyncCoordinator {
             latestHRVValue = value
         case let .bloodPressureSample(systolic, diastolic, _):
             latestBloodPressureValue = BloodPressureReading(systolic: systolic, diastolic: diastolic)
+        case let .fatigueSample(value, _):
+            latestFatigueValue = value
+        case let .stressSample(value, _):
+            latestStressValue = value
+        case let .bloodSugarSample(mgdl, _):
+            latestBloodSugarValue = mgdl
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was

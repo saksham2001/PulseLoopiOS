@@ -199,6 +199,23 @@ final class JringSyncEngine: RingSyncEngine {
         writer?.enqueue(encoder.makeBloodPressureStopCommand())
     }
 
+    /// One PPG sweep, every vital. Confirmed on hardware: a `0x23 02` measurement returns a `0x24`
+    /// packet carrying HR, systolic, diastolic, SpO₂ *and* fatigue together — the mode byte selects
+    /// the ring's primary algorithm, not which sensor runs. This matches the vendor's own behaviour on
+    /// firmware that reports `separateBloodOxygenMode == false` (where it hides its BP card entirely,
+    /// because measuring oxygen already yields blood pressure).
+    ///
+    /// On separate-mode firmware (capability bit 65) the two are genuinely distinct measurements; we
+    /// have not seen such a ring, so this still sends the SpO₂ mode and simply surfaces whatever the
+    /// packet contains.
+    func startCombinedVitals() {
+        writer?.enqueue(encoder.makeSpO2StartCommand())
+    }
+
+    func stopCombinedVitals() {
+        writer?.enqueue(encoder.makeSpO2StopCommand())
+    }
+
     func findDevice() {
         writer?.enqueue(encoder.makeFindRingCommand())
     }

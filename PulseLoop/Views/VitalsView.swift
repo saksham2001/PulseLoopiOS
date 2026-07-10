@@ -85,21 +85,24 @@ struct VitalsView: View {
 
     @ViewBuilder
     private func measureRow(_ store: VitalsStore) -> some View {
-        // On-demand spot measurements are capability-gated. Each maps to one mode of the ring's
-        // measurement command, so they're surfaced individually rather than as a single "Measure now".
+        // On-demand spot measurements are capability-gated. Rings whose PPG sweep computes every metric
+        // at once (jring: one `0x23` measurement returns HR + BP + SpO₂ + fatigue in a single `0x24`
+        // packet) get a single "Measure Vitals" action. Everything else measures one metric at a time.
         let caps = store.capabilities
-        let spots: [(WearableCapability, String, MeasurementSheet.Kind)] = [
-            (.manualHeartRate, "Measure HR", .hr),
-            (.manualSpo2, "Measure SpO₂", .spo2),
-            (.manualHrv, "Measure HRV", .hrv),
-            (.manualBloodPressure, "Measure BP", .bloodPressure),
-        ]
-        let available = spots.filter { caps.contains($0.0) }
-        if !available.isEmpty {
-            // More than three pills don't fit side by side on a narrow phone.
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(available.count, 3)), spacing: 8) {
-                ForEach(available, id: \.2) { _, label, kind in
-                    QuickActionButton(label: label, accent: kind == .hr) { measuring = kind }
+        if caps.contains(.combinedVitalsMeasurement) {
+            QuickActionButton(label: "Measure Vitals", accent: true) { measuring = .vitals }
+        } else {
+            let spots: [(WearableCapability, String, MeasurementSheet.Kind)] = [
+                (.manualHeartRate, "Measure HR", .hr),
+                (.manualSpo2, "Measure SpO₂", .spo2),
+                (.manualHrv, "Measure HRV", .hrv),
+            ]
+            let available = spots.filter { caps.contains($0.0) }
+            if !available.isEmpty {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: available.count), spacing: 8) {
+                    ForEach(available, id: \.2) { _, label, kind in
+                        QuickActionButton(label: label, accent: kind == .hr) { measuring = kind }
+                    }
                 }
             }
         }

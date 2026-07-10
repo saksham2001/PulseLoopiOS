@@ -92,6 +92,16 @@ final class JringSyncEngineTests: XCTestCase {
         XCTAssertEqual([UInt8](writer.sent[1])[0...1], [0x23, 0x00])
     }
 
+    /// The combined sweep sends the SpO₂ mode — confirmed on hardware to return HR, BP, SpO₂ and
+    /// fatigue in one 0x24 packet.
+    func testCombinedVitalsUsesCombinedModeTwo() {
+        let (engine, writer) = makeEngine()
+        engine.startCombinedVitals()
+        engine.stopCombinedVitals()
+        XCTAssertEqual([UInt8](writer.sent[0])[0...1], [0x23, 0x02])
+        XCTAssertEqual([UInt8](writer.sent[1])[0...1], [0x23, 0x00])
+    }
+
     /// SpO₂ and BP must never collide on the same mode byte.
     func testSpO2AndBloodPressureUseDistinctModes() {
         let spo2 = [UInt8](RingEncoder().makeSpO2StartCommand())[1]
