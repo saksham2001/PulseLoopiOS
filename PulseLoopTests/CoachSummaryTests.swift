@@ -35,6 +35,9 @@ final class CoachSummaryServiceTests: XCTestCase {
         let store = CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         // The coach is opt-out by default; turn the master switch on so summaries actually generate.
         store.settings.coachMasterEnabled = true
+        // Pin the keyed provider (paired with the stub key) so `coachEnabled` resolves via `hasAPIKey`
+        // rather than the product default `.appleOnDevice`, which is unavailable in CI.
+        store.settings.providerMode = .userOpenAIKey
         return CoachSummaryService(
             modelContext: c,
             keyStore: SummaryStubKeyStore(key: key),

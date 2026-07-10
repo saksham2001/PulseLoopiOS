@@ -18,6 +18,10 @@ enum TestSupport {
     static func enabledCoachSettings() -> CoachSettings {
         var settings = CoachSettings.default
         settings.coachMasterEnabled = true
+        // Pin the keyed provider so these tests exercise the LLM-backed path (paired with
+        // `hasAPIKey: true`) rather than riding on the product default, which is `.appleOnDevice`
+        // and resolves to disabled/scripted when no on-device model is available (e.g. CI).
+        settings.providerMode = .userOpenAIKey
         return settings
     }
 

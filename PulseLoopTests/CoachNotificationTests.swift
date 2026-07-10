@@ -172,10 +172,13 @@ private final class FakeSyncGate: RingSyncGating {
 final class CoachNotificationSyncGatingTests: XCTestCase {
 
     /// A settings store with the coach master switch on so a non-forced `runDueSlot` reaches the
-    /// freshness gate (default provider `.userOpenAIKey` + a stub key ⇒ `coachEnabled`).
+    /// freshness gate (provider `.userOpenAIKey` + a stub key ⇒ `coachEnabled`).
     private func enabledStore() -> CoachSettingsStore {
         let store = CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         store.settings.coachMasterEnabled = true
+        // Pin the keyed provider explicitly; the product default is now `.appleOnDevice`, which is
+        // unavailable in CI and would gate the coach off.
+        store.settings.providerMode = .userOpenAIKey
         return store
     }
 
