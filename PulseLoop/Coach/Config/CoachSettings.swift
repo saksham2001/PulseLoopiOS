@@ -149,8 +149,13 @@ struct CoachSettings: Codable, Equatable {
     /// Master switch for all AI Coach features (tab, summaries, notifications).
     /// Off by default — users who only want metrics get a coach-free app.
     var coachMasterEnabled: Bool = false
-    var providerMode: CoachProviderMode = .userOpenAIKey
-    /// Default matches the web app; user-configurable (never hard-coded in the client).
+    /// Default to Apple's on-device foundation model: it needs no API key and runs locally, so the
+    /// coach works out of the box for everyone. Users who want a more powerful hosted model can switch
+    /// provider and plug in their own key. (Only applies to fresh installs / unset settings; a user's
+    /// saved choice is preserved via the tolerant decode below.)
+    var providerMode: CoachProviderMode = .appleOnDevice
+    /// Fallback model string used when the user switches to a keyed provider; user-configurable
+    /// (never hard-coded in the client). Unused while on the Apple on-device model.
     var model: String = CoachModel.gpt54.rawValue
     /// Optional reasoning effort hint ("low"/"medium"/"high") when the model supports it.
     var reasoningEffort: String? = nil
