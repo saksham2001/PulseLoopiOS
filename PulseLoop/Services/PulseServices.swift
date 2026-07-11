@@ -829,13 +829,15 @@ enum ActivityService {
         let spo2 = spo2Rows.map(\.value)
         let distance = gpsDistance(session: session, context: context) ?? session.distanceMeters
         let duration = max(0, Int(endedAt.timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
-        let estimated = WorkoutMetricsEngine.calories(
-            type: session.type,
-            durationSeconds: duration,
-            distanceMeters: distance,
-            hrSamples: hrRows.map { (timestamp: $0.timestamp, bpm: $0.value) },
-            profile: MetricsProfileValues(profile: ProfileRepository.profile(context: context))
-        )
+        let estimated = WorkoutPrefsStore.shared.settings.useAdvancedCalories
+            ? WorkoutMetricsEngine.calories(
+                type: session.type,
+                durationSeconds: duration,
+                distanceMeters: distance,
+                hrSamples: hrRows.map { (timestamp: $0.timestamp, bpm: $0.value) },
+                profile: MetricsProfileValues(profile: ProfileRepository.profile(context: context))
+            )
+            : WorkoutMetricsEngine.flatRateCalories(durationSeconds: duration)
         let calories = preserveProvidedCalories ? (session.calories ?? estimated) : estimated
 
         session.distanceMeters = distance
@@ -901,6 +903,7 @@ enum ActivityService {
         let summary = refreshSummary(for: session, context: context)
         creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
         try? context.save()
+        PulseDataChange.shared.notify()
         return true
     }
 
@@ -1078,6 +1081,7 @@ enum ManualActivityService {
         context.insert(session)
         _ = ActivityService.finishSummary(for: session, endedAt: endedAt, context: context)
         try context.save()
+        PulseDataChange.shared.notify()
         return session
     }
 }
@@ -1117,6 +1121,7 @@ enum ActivityRecorderService {
         context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
         context.insert(ActivityEvent(sessionId: session.id, kind: "finished"))
         try? context.save()
+        PulseDataChange.shared.notify()
     }
     
     static func cancel(_ session: ActivitySession, context: ModelContext) {
@@ -1143,6 +1148,8 @@ enum ActivityRecorderService {
         polls.forEach(context.delete)
         context.delete(session)
         try? context.save()
+        HealthSyncService.shared.deleteExportedWorkout(sessionId: id)
+        PulseDataChange.shared.notify()
     }
 
     static func recoverStaleSession(context: ModelContext) -> [ActivitySession] {

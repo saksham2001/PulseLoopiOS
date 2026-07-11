@@ -47,6 +47,9 @@ struct WorkoutPrefs: Codable, Equatable {
     var spo2PollIntervalSeconds = 300       // 120 / 300 / 600
     var useGpsByDefault = true
     var gpsAccuracy: GpsAccuracy = .best
+    /// Personalized Keytel-HR / MET calorie model (`WorkoutMetricsEngine`). Off falls back to a flat
+    /// 8 kcal/min estimate. Default on — main ships the advanced model as the only behavior.
+    var useAdvancedCalories = true
 
     static let `default` = WorkoutPrefs()
 
@@ -62,6 +65,7 @@ struct WorkoutPrefs: Codable, Equatable {
         spo2PollIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .spo2PollIntervalSeconds) ?? d.spo2PollIntervalSeconds
         useGpsByDefault = try c.decodeIfPresent(Bool.self, forKey: .useGpsByDefault) ?? d.useGpsByDefault
         gpsAccuracy = try c.decodeIfPresent(GpsAccuracy.self, forKey: .gpsAccuracy) ?? d.gpsAccuracy
+        useAdvancedCalories = try c.decodeIfPresent(Bool.self, forKey: .useAdvancedCalories) ?? d.useAdvancedCalories
     }
 }
 

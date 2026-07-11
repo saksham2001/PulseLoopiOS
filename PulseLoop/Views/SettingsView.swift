@@ -131,6 +131,9 @@ struct SettingsView: View {
                 path.append(AppRoute.debug)
             })
         }
+        rows.append(SettingsRowItem(icon: "heart.fill", tint: PulseColors.heartRate, title: "Apple Health") {
+            path.append(AppRoute.settingsHealth)
+        })
         rows.append(SettingsRowItem(icon: "lock.shield", tint: PulseColors.success, title: "Privacy & Data") {
             path.append(AppRoute.settingsPrivacyData)
         })

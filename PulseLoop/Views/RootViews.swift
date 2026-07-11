@@ -106,6 +106,8 @@ struct RootAppView: View {
                     TodaySettingsView()
                 case .settingsCalibration:
                     CalibrationSettingsView()
+                case .settingsHealth:
+                    AppleHealthSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
                 case .settingsAbout:
