@@ -65,6 +65,48 @@ final class HistoryDedupTests: XCTestCase {
         XCTAssertEqual(try heartRateRows(context).count, 2)
     }
 
+    /// One expected SwiftData row for a history kind.
+    private struct StoredSample {
+        let kind: MeasurementKind
+        let value: Double
+        let unit: String
+    }
+
+    /// The YCBT history types A3 added feed `.historyMeasurement`, which persists generically over
+    /// `MeasurementKind` — this proves each new kind actually reaches SwiftData (with its unit) rather
+    /// than falling off an unrouted branch somewhere between the bridge and the store.
+    func testNewHistoryKindsReachSwiftDataWithTheirUnit() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        let ts = Date(timeIntervalSince1970: 1_700_000_000)
+        let samples = [
+            StoredSample(kind: .respiratoryRate, value: 14, unit: "brpm"),
+            StoredSample(kind: .vo2max, value: 42, unit: "mL/kg/min"),
+            StoredSample(kind: .temperature, value: 36.6, unit: "°C"),
+            StoredSample(kind: .stress, value: 34.25, unit: ""),
+            StoredSample(kind: .fatigue, value: 18, unit: ""),
+            StoredSample(kind: .bloodSugar, value: 99.088, unit: "mg/dL"),
+            StoredSample(kind: .bloodPressureSystolic, value: 118, unit: "mmHg"),
+            StoredSample(kind: .bloodPressureDiastolic, value: 79, unit: "mmHg"),
+            StoredSample(kind: .spo2, value: 97, unit: "%"),
+        ]
+        for sample in samples {
+            subscriber.persist(.historyMeasurement(kind: sample.kind, value: sample.value, timestamp: ts))
+        }
+        subscriber.flush()
+
+        for sample in samples {
+            let kindRaw = sample.kind.rawValue
+            let rows = try context.fetch(FetchDescriptor<PulseLoop.Measurement>(
+                predicate: #Predicate<PulseLoop.Measurement> { $0.kindRaw == kindRaw }
+            ))
+            XCTAssertEqual(rows.count, 1, "\(sample.kind) never reached SwiftData")
+            XCTAssertEqual(rows.first?.value ?? .nan, sample.value, accuracy: 0.001)
+            XCTAssertEqual(rows.first?.unit, sample.unit)
+            XCTAssertEqual(rows.first?.sourceRaw, MeasurementSource.history.rawValue)
+        }
+    }
+
     /// Live samples are events, not log slots: two readings at the same instant both persist.
     func testLiveSamplesAreNotDeduplicated() throws {
         let context = try TestSupport.makeContext()

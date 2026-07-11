@@ -46,6 +46,18 @@ protocol WearableDriver: AnyObject {
     /// checksum verification and reassembly is hidden here.
     func ingest(_ data: Data, from characteristic: CBUUID) -> [RingDecodedEvent]
 
+    /// A GATT link has just come up. Auto-reconnect re-uses the *same* driver instance (only a fresh
+    /// pairing rebuilds it), so any partially-reassembled frame or in-flight transfer left over from
+    /// the dropped link must be discarded here or it corrupts the first frames of the new one.
+    /// Default: no-op (jring/Colmi carry no cross-connection reassembly state).
+    func connectionDidStart()
+
+    /// The GATT link has dropped. Clearing on the *next* connect is not enough for a driver whose state
+    /// machine has its own timers: they keep firing across the reconnect gap and enqueue commands into a
+    /// write queue that the new link will happily flush *before* the handshake. Anything self-driving
+    /// must be stopped here. Default: no-op.
+    func connectionDidEnd()
+
     /// The stateful brain: startup sequence + (for Colmi) the response-driven history machine.
     func makeSyncEngine() -> RingSyncEngine
 }
@@ -54,6 +66,8 @@ extension WearableDriver {
     /// Most devices have a single write characteristic.
     var commandUUID: CBUUID? { nil }
     func usesCommandChannel(for frame: Data) -> Bool { false }
+    func connectionDidStart() {}
+    func connectionDidEnd() {}
 }
 
 /// User-chosen all-day measurement configuration, passed as a plain value from the app layer into a
@@ -139,7 +153,7 @@ protocol RingSyncEngine: AnyObject {
     func startCombinedVitals()
     func stopCombinedVitals()
     /// Start/stop an on-demand HRV stream. Only devices whose live protocol has a dedicated HRV mode
-    /// (TK5) implement these; the default is a no-op (see the extension below).
+    /// (YCBT) implement these; the default is a no-op (see the extension below).
     func startHRV()
     func stopHRV()
     func findDevice()
@@ -179,6 +193,12 @@ protocol RingSyncEngine: AnyObject {
     /// vitals log do nothing (default no-op below).
     func syncVitalsHistory()
 
+    /// Re-run the ring's history pass **without** re-sending the connect handshake — the periodic
+    /// top-up while connected (`RingSyncCoordinator`'s 30-minute timer). Only devices whose history is a
+    /// standalone, re-runnable transfer implement it (YCBT); on the others it is a no-op and the
+    /// timer costs nothing, rather than them re-handshaking on a timer they never asked for.
+    func syncHistory()
+
     /// Re-request the ring's current battery level over its own protocol (Colmi: 0x03). jring reports
     /// battery via GATT (read separately by the client), so it has nothing to do here — default no-op.
     func requestBattery()
@@ -197,7 +217,7 @@ extension RingSyncEngine {
     func startHRV() {}
     func stopHRV() {}
 
-    /// Default: devices without a blood-pressure sensor (Colmi/TK5) have nothing to measure.
+    /// Default: devices without a blood-pressure sweep (Colmi) have nothing to measure.
     func startBloodPressure() {}
     func stopBloodPressure() {}
 
@@ -225,6 +245,10 @@ extension RingSyncEngine {
 
     /// Default: devices without a readable vitals log have nothing to backfill.
     func syncVitalsHistory() {}
+
+    /// Default: devices whose history only comes down as part of the connect handshake have no
+    /// standalone pass to re-run.
+    func syncHistory() {}
 
     /// Default: devices that report battery over GATT (e.g. jring) have no in-band battery command.
     func requestBattery() {}

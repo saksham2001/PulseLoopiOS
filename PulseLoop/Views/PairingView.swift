@@ -45,6 +45,11 @@ struct PairingView: View {
     @State private var isLooking = false
     @State private var didFireConnected = false
     @State private var connectedAppeared = false
+    /// The app variant the user picked, or nil while they haven't touched the picker — which is what
+    /// lets the discovery hint supply the default without ever overriding a deliberate choice.
+    @State private var pickedVariant: RingAppVariant?
+    /// The ring the user last tapped, so the wrong-variant recovery can re-dial the same one.
+    @State private var lastAttemptedRingID: UUID?
 
     private static let allBrandsTab = "All"
     private let allModels = WearableModel.catalog
@@ -71,11 +76,62 @@ struct PairingView: View {
         return models[min(selectedIndex, models.count - 1)]
     }
 
-    /// Discovered rings whose matched family equals the selected model's family (recognized first),
-    /// falling back to all named devices if nothing matches yet so the user is never stuck.
+    // MARK: - App variant (which native app the selected ring shipped with)
+
+    /// The app the *advertisement* hints at, from the family the scan tagged a discovered row with. Only
+    /// ever a default: a QRing- and a SmartHealth-Colmi can advertise the identical local name, so the
+    /// hint is provisional by construction (`ColmiSmartHealthCoordinator.Advertisement`) and the user's
+    /// pick is the authority.
+    private var hintedVariant: RingAppVariant? {
+        ble.discovered.lazy.compactMap(\.deviceType).compactMap(selectedModel.variant(for:)).first
+    }
+
+    /// The card's current variant — what the picker shows and what the blurb/badge describe. Row-free:
+    /// a *connect* resolves the variant against the tapped row instead (`connectingVariant(for:)`).
+    /// nil for a single-firmware card (no picker, no override — auto-detection as before).
+    private var effectiveVariant: RingAppVariant? {
+        selectedModel.variant(picked: pickedVariant, rowFamily: nil, hinted: hintedVariant)
+    }
+
+    private var variantBinding: Binding<RingAppVariant> {
+        Binding(
+            get: { effectiveVariant ?? .qring },
+            set: { pickedVariant = $0 }
+        )
+    }
+
+    /// The app a tap on this row would connect as (see `WearableModel.variant(picked:rowFamily:hinted:)`).
+    private func connectingVariant(for ring: RingBLEClient.DiscoveredRing) -> RingAppVariant? {
+        selectedModel.variant(picked: pickedVariant, rowFamily: ring.deviceType, hinted: hintedVariant)
+    }
+
+    /// Connect to a tapped row, driving the app *that row* resolves to.
+    ///
+    /// The picker is parked on that same app first, so everything the screen then says about the attempt
+    /// — the blurb, the "Limited support" badge, and the one-tap `variantRetry` — describes the driver
+    /// actually in flight, rather than a hint that may have come from a different ring in the scan.
+    private func connect(to ring: RingBLEClient.DiscoveredRing) {
+        lastAttemptedRingID = ring.id
+        let variant = connectingVariant(for: ring)
+        pickedVariant = variant
+        ble.connect(
+            to: ring.id,
+            selectedModelID: selectedModel.id,
+            preferredFamily: selectedModel.preferredFamily(
+                picked: variant,
+                rowFamily: ring.deviceType,
+                hinted: hintedVariant
+            )
+        )
+    }
+
+    /// Discovered rings whose matched family is one the selected model can resolve to (recognized
+    /// first), falling back to all named devices if nothing matches yet so the user is never stuck.
+    /// Matching on *every* family the card can be — not just its default — is what keeps a row the scan
+    /// tagged `.colmiSmartHealth` visible under the Colmi card.
     private var matchingRings: [RingBLEClient.DiscoveredRing] {
-        let family = selectedModel.family
-        let matches = ble.discovered.filter { $0.deviceType == family }
+        let families = selectedModel.families
+        let matches = ble.discovered.filter { $0.deviceType.map(families.contains) ?? false }
         return matches.isEmpty ? ble.discovered : matches
     }
 
@@ -154,11 +210,14 @@ struct PairingView: View {
                 if let error = ble.lastError,
                    ble.state != .connected,
                    !forcePairingUIForTesting {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(PulseColors.danger)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 10) {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(PulseColors.danger)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                        variantRetry
+                    }
                 }
 
             }
@@ -184,13 +243,15 @@ struct PairingView: View {
 
             TabView(selection: $selectedIndex) {
                 ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
+                    // The picker only applies to the card in front; every other page shows its default.
+                    let variant = model.id == selectedModel.id ? effectiveVariant : nil
                     VStack(spacing: 10) {
                         RingArtView(tint: model.tint, imageName: model.imageName)
                         Text(model.displayName)
                             .font(PulseFont.numberL)
                             .foregroundStyle(PulseColors.textPrimary)
-                        SupportBadge(level: model.supportLevel) // nothing for fully-supported models
-                        CapabilityChips(blurb: model.blurb) // §2 replaces blurb Text
+                        SupportBadge(level: model.supportLevel(for: variant)) // nothing when fully supported
+                        CapabilityChips(blurb: model.blurb(for: variant)) // §2 replaces blurb Text
                     }
                     .frame(maxWidth: .infinity) // constant page width so content doesn't drive reflow
                     .tag(index)
@@ -204,10 +265,22 @@ struct PairingView: View {
             .id(selectedBrand) // recreate on brand change so pages swap instantly (no page-slide)
 
             modelDotRow // §2 fixed-height dot area keeps layout stable across tabs
+
+            // Below the carousel, not on the page: the app variant is a property of the *selection*, and
+            // pages that have no variants (jring, TK5) must not grow a gap where the picker would be.
+            if !selectedModel.appVariants.isEmpty {
+                AppVariantPicker(options: selectedModel.appVariants, selection: variantBinding)
+                    .padding(.top, 2)
+            }
         }
         .onChange(of: selectedIndex) { _, _ in
             // Re-scan/filter as the user changes their selected model.
             if isLooking { ble.startScanning() }
+        }
+        .onChange(of: selectedModel.id) { _, _ in
+            // A different ring is a different question: drop the previous card's answer so the new one
+            // starts from its own discovery hint.
+            pickedVariant = nil
         }
     }
 
@@ -319,7 +392,7 @@ struct PairingView: View {
                 VStack(spacing: 8) {
                     ForEach(matchingRings) { ring in
                         Button {
-                            ble.connect(to: ring.id, selectedModelID: selectedModel.id)
+                            connect(to: ring)
                         } label: {
                             ringRow(ring)
                         }
@@ -345,13 +418,36 @@ struct PairingView: View {
         .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
+    /// The wrong-pick escape hatch. A user-initiated connect that dies in `.failed` on a two-app card is,
+    /// far more often than not, the other app's driver — the ring never answered because we were speaking
+    /// the wrong protocol at it. One tap flips the picker and re-dials the same ring, which is the whole
+    /// reason `RingBLEClient` bothers to time the attempt out instead of spinning forever.
+    @ViewBuilder
+    private var variantRetry: some View {
+        if ble.state == .failed,
+           let variant = effectiveVariant,
+           let other = selectedModel.otherVariant(than: variant),
+           let ringID = lastAttemptedRingID {
+            SecondaryButton(title: "Try as \(other.displayName)", systemImage: "arrow.triangle.2.circlepath") {
+                pickedVariant = other
+                ble.connect(
+                    to: ringID,
+                    selectedModelID: selectedModel.id,
+                    preferredFamily: selectedModel.family(for: other)
+                )
+            }
+        }
+    }
+
     private func ringRow(_ ring: RingBLEClient.DiscoveredRing) -> some View {
         let signalLevel: String = ring.rssi >= -65 ? "Strong signal"
             : ring.rssi >= -80 ? "Medium signal"
             : "Weak signal"
-        // Identity wins when the advertisement resolved a model; otherwise fall back to the family.
-        let support = WearableModel.model(id: ring.wearableModelID)?.supportLevel
-            ?? ring.deviceType?.supportLevel ?? .full
+        // Maturity is a property of the family we would actually drive, so the matched family wins over
+        // the model card: a Colmi tagged `.colmiSmartHealth` is an unproven driver even though the same
+        // card, on QRing, is a fully-supported one. Falls back to the model when the scan matched nothing.
+        let support = ring.deviceType?.supportLevel
+            ?? WearableModel.model(id: ring.wearableModelID)?.supportLevel ?? .full
         return HStack {
             Image(systemName: ring.isLikelyRing ? "circle.hexagongrid.circle.fill" : "dot.radiowaves.left.and.right")
                 .foregroundStyle(ring.isLikelyRing ? PulseColors.accent : PulseColors.textMuted)

@@ -214,13 +214,24 @@ final class EventPersistenceSubscriber {
             let device = MetricsService.fetchDevices(context).first ?? Device()
             device.deviceType = deviceType
             device.wearableModelID = wearableModelID
-            if let advertisedName { device.advertisedName = advertisedName }
+            if let advertisedName {
+                device.advertisedName = advertisedName
+            }
             device.capabilities = capabilities
+            adoptDeviceName(advertised: advertisedName, deviceType: deviceType, on: device)
             context.insert(device)
         case .deviceForgotten:
             guard let device = MetricsService.fetchDevices(context).first else { break }
             device.wearableModelID = nil
             device.advertisedName = nil
+            // The name goes with them. This single row is *reused* by the next ring paired
+            // (`fetchDevices(context).first ?? Device()`), so a name adopted from the ring being
+            // forgotten would otherwise outlive it — and, being neither empty nor a placeholder,
+            // `adoptDeviceName` would read it as a name the user chose and defend it against the new
+            // ring's own advertisement forever. Forget an R99, pair a TK5, and the coach's `device_name`
+            // and the diagnostics export's `wearableName` would both still say "R99 54DC": worse than the
+            // old placeholder, because it reads as authoritative.
+            device.name = ""
             context.insert(device)
         case let .batteryLevel(percent):
             let device = MetricsService.fetchDevices(context).first ?? Device()
@@ -394,6 +405,36 @@ final class EventPersistenceSubscriber {
         context.insert(BatterySample(percent: percent, timestamp: now))
         lastBatteryPercent = percent
         lastBatteryLogAt = now
+    }
+
+    /// Names nobody chose: the `Device()` initializer's default (`"SMART_RING"`, which is also the jring's
+    /// display name) and every other family's fallback. A `Device.name` still holding one of these has
+    /// never been told what the ring is actually called.
+    private static let placeholderDeviceNames: Set<String> = Set(RingDeviceType.allCases.map(\.displayName))
+
+    /// Give the device the best name available for the ring **now on the other end of the link** — its
+    /// advertised name, or its family's placeholder when the advertisement carried none — without ever
+    /// overwriting a name a human chose.
+    ///
+    /// `Device.name` is what the human-facing surfaces read (the coach's device context, the diagnostics
+    /// export's `wearableName`), and nothing ever wrote it: a paired Colmi R99 exported as `SMART_RING`,
+    /// the jring's default, which is a misleading thing to hand someone debugging a Colmi. `advertisedName`
+    /// alone was set and nothing read it.
+    ///
+    /// The placeholder check is the whole of the "don't clobber" rule. No screen renames a device today,
+    /// so in practice this only ever fills a blank — but when one does, the user's name must survive the
+    /// next connect, which re-publishes `.deviceIdentified` on every handshake.
+    ///
+    /// Falling back to `deviceType.displayName` is what keeps the row's name in the *current* ring's family
+    /// when a connect brings no advertisement to adopt (state restoration, a cached peripheral): the row is
+    /// shared across pairings, so without it a fresh TK5 could keep answering to the name of the Colmi that
+    /// used to be in this slot. `.deviceForgotten` clears the name to `""` precisely so this path can run.
+    private func adoptDeviceName(advertised: String?, deviceType: RingDeviceType, on device: Device) {
+        let current = device.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current.isEmpty || Self.placeholderDeviceNames.contains(current) else { return }
+        let adopted = advertised ?? deviceType.displayName
+        guard device.name != adopted else { return }
+        device.name = adopted
     }
 
     /// Record the ring's firmware version on the current Device row (idempotent — no-op if unchanged).

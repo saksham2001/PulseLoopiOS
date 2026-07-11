@@ -211,6 +211,10 @@ enum MetricsService {
             value = Double(Int.random(in: 20...70))
         case .bloodSugar:
             value = Double(Int.random(in: 85...110))
+        case .respiratoryRate:
+            value = Double(Int.random(in: 12...18))
+        case .vo2max:
+            value = Double(Int.random(in: 35...50))
         }
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,
