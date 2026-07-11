@@ -51,8 +51,6 @@ btsnoop HCI capture, which is why it is the only ring here that isn't marked as 
 | **Epoch** | Seconds since 2000-01-01, in the ring's **local wall-clock** (no timezone concept) |
 | **Encryption** | Data channels are cleartext; a separate `AE00` login exists but is **not implemented** |
 
-Full byte-level teardown: [TK5 protocol notes](tk5-protocol.md).
-
 ## Capabilities
 
 Everything PulseLoop reads from the TK5 is 🧪 — implemented from one capture, needs testing on
@@ -97,5 +95,4 @@ claim it rather than show an empty card.
 
 ---
 
-See the [hardware overview](index.md) for the cross-manufacturer comparison, or the
-[TK5 protocol notes](tk5-protocol.md) for framing, commands, and GATT handles.
+See the [hardware overview](index.md) for the cross-manufacturer comparison.

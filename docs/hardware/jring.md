@@ -109,11 +109,11 @@ teardown and how the packet formats were decoded.
 
 ## Firmware
 
-- Firmware check: `http://download.keeprapid.com/apps/smartband/jring/autoupdater/{device_id}/update.json`
-- Binary download: `http://download.keeprapid.com:8181/docs/jring/an_{p1}_{p2}1`
-- Flashing: Renesas SUOTA (`0xFEF5` service) to DA14531
-- Version format: `"003A002AV138"` (status hex + V + version number)
-- **All API traffic is HTTP (not HTTPS) — unencrypted**
+- Version format: `003A002AV138` — an 8-hex **family code** (`003A002A`) + `V` + version number. The family code identifies the specific hardware variant.
+- Update manifest: `http://download.keeprapid.com/apps/smartband/keepfit/fwupdater/{en|zh}/{family}/update.json` — returns the latest version, the binary URL, and its MD5.
+- Binary: `http://download.keeprapid.com/apps/smartband/keepfit/fwrelease/{family}/V{n}.bin` — a Renesas/Dialog SUOTA image.
+- Flashing: Renesas SUOTA (`0xFEF5` service) to the DA14531.
+- **All firmware traffic is plain HTTP with no token or signature — integrity is an MD5 only.**
 
 ## Background behavior
 
