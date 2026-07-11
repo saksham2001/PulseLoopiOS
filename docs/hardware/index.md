@@ -40,8 +40,8 @@ section breaks the hardware down by manufacturer.
 
     ---
 
-    The $15–30 R02/R0x/R1x/H59 family. Sold with **two different firmwares**:
-    QRing (Nordic-UART, ✅ supported) or SmartHealth (Yucheng **YCBT**, 🧪 limited).
+    ✅ Supported. The $15–30 R02/R0x/R1x/H59 family, sold with **two different
+    firmwares**: QRing (Nordic-UART) or SmartHealth (Yucheng **YCBT**). Both work —
     PulseLoop asks which app your ring came with.
 
     [:octicons-arrow-right-24: Colmi / Yawell](colmi.md)
@@ -51,8 +51,8 @@ section breaks the hardware down by manufacturer.
     ---
 
     🧪 Limited. Yucheng **YCBT** protocol (SmartHealth app), rebuilt from the
-    vendor SDK — the broadest metric set here, awaiting on-device confirmation.
-    Shares its driver with the SmartHealth-app Colmi rings.
+    vendor SDK — the broadest metric set here. The protocol is proven on a
+    SmartHealth-app Colmi, which shares its driver; the TK5 itself is untested.
 
     [:octicons-arrow-right-24: TK5 / SmartHealth](tk5.md)
 

@@ -7,43 +7,40 @@ description: >-
 
 # TK5 / SmartHealth
 
-**PulseLoop support: 🧪 Limited — built from the vendor SDK, not yet confirmed on hardware**
+**PulseLoop support: 🧪 Limited — the protocol is confirmed on hardware, this ring isn't**
 
 The TK5 pairs with the **SmartHealth** app (`com.zhuoting.healthyucheng`) and speaks the **Yucheng
 YCBT** protocol on a `be940` service — nothing in common at the wire level with the
 [56ff / Jring](jring.md) or [Colmi / Yawell QRing](colmi.md) families.
 
 PulseLoop's driver is reconstructed from the **decompiled Yucheng YCBT SDK** (`com.yucheng.ycbtsdk`,
-v4.0.10) that ships inside the SmartHealth Android app, corroborated by an Android btsnoop capture of
-one TK5 session. The byte-level reference is [YCBT protocol](../YCBT-Protocol.md).
+v4.0.10) that ships inside the SmartHealth Android app. The byte-level reference is
+[YCBT protocol](../YCBT-Protocol.md).
 
-!!! warning "Limited support — pending an on-device checkpoint"
-    Every layout below is read from the vendor SDK, so this is no longer guesswork from a single
-    capture. But *"decoded correctly from the SDK"* is not the same claim as *"verified against the
-    hardware"*, and the badge should mean the latter. A handful of scales and payloads (blood sugar,
-    temperature, find-device) still need one confirmed reading from a real ring — see
-    **[Needs on-device confirmation](#needs-on-device-confirmation)**.
+!!! warning "Limited support — the protocol is proven, the TK5 hasn't been re-tested"
+    The YCBT stack is confirmed working on real hardware — but on a *sibling* ring, the
+    [Colmi R09](colmi.md#smarthealth-app-colmi-rings), not on a TK5. Pairing, the handshake, history
+    sync and live measurements all check out there, and both rings run the identical driver.
 
-    Every decoded metric is range-gated before it's stored, so a misdecode is dropped rather than
-    saved as garbage. Treat TK5 readings as approximate until the checkpoint clears.
+    What's still open here is TK5-*specific*: a few scales and payloads (blood sugar, temperature,
+    find-device) need one confirmed reading — see
+    **[Needs on-device confirmation](#needs-on-device-confirmation)**. Every decoded metric is
+    range-gated before storage, so a misdecode is dropped rather than saved as garbage.
 
 ## Not the only ring that speaks it
 
 The TK5 is one of **two** ring families PulseLoop drives over YCBT. The other is
-**[Colmi rings that ship with SmartHealth](colmi.md#smarthealth-app-colmi-rings)** instead of QRing
-(R09 / R10 confirmed) — byte-identical protocol, so they run the *same* driver, encoder, decoder,
-history transfer and sync engine (the device-neutral `YCBT*` core in `PulseLoop/RingProtocol/`). Each
-family adds only a small coordinator with its advertisement matcher and its capability set, and they
-differ in exactly three ways:
+**[Colmi rings that ship with SmartHealth](colmi.md#smarthealth-app-colmi-rings)** instead of QRing.
+The protocol is byte-identical, so they share the whole driver (the device-neutral `YCBT*` core); each
+family adds only a coordinator with its advertisement matcher and capability set. They differ in two
+ways:
 
 | | TK5 | SmartHealth-Colmi |
 |---|---|---|
-| **Advertisement** | `TK5 <4 hex>` + manufacturer prefix `10786501` — unambiguous, so it auto-detects | a Colmi-line name a *QRing* Colmi can advertise too, so PulseLoop asks the user which app their ring came with |
-| **SupportFunction bitmap** (`02 01`) | **gates the per-SKU sensors**: temperature, BP, stress, fatigue, blood sugar. HRV is *not* gated — it was observed working on this ring | **gates the per-SKU sensors**: temperature, BP, stress, blood sugar — *and* HRV, which the owner's R99 denies |
-| **chipScheme** (`02 1b`) | JieLi | ❓ unknown — it selects the OTA stack only, which PulseLoop doesn't implement |
+| **Advertisement** | `TK5 <4 hex>` — unambiguous, so it auto-detects | a Colmi-line name, which a *QRing* Colmi can also carry, so PulseLoop asks which app the ring came with |
+| **SupportFunction bitmap** (`02 01`) | gates temperature, BP, stress, fatigue, blood sugar. HRV is **not** gated — it was observed working on this ring | gates those *and* HRV, which the tested R09 denies |
 
-The practical consequence for the TK5: a fix to any `YCBT*` file fixes both rings, and a regression in
-one breaks both. See [YCBT protocol §0](../YCBT-Protocol.md#0-the-two-families-that-speak-it).
+A fix to any `YCBT*` file fixes both rings; a regression in one breaks both.
 
 ## At a glance
 
@@ -130,36 +127,36 @@ demonstrably works.
 The open items, in priority order. Each is range-gated in code, so a wrong guess degrades to "no
 reading", never to a wrong reading:
 
-1. **AE00 gating** — do the `05 xx` history queries answer before any RCSP auth? (Evidence says yes;
-   see [below](#the-ae00-service).)
-2. **Blood-sugar scale** — the tenths-of-mmol/L reading is inferred from SmartHealth's database
+1. **Blood-sugar scale** — the tenths-of-mmol/L reading is inferred from SmartHealth's database
    column and chart filter, not from an observed non-zero record. Cross-check one reading.
-3. **Temperature scale** — the int/fraction pair is *string-concatenated* (`5` → `.5`, `25` → `.25`),
+2. **Temperature scale** — the int/fraction pair is *string-concatenated* (`5` → `.5`, `25` → `.25`),
    not divided. Confirm a real reading lands at ~36.x °C.
-4. **Find-device payload** — `{1, 5, 2}` replays the app's own button; the SDK never names the
+3. **Find-device payload** — `{1, 5, 2}` replays the app's own button; the SDK never names the
    arguments. First suspect if the ring doesn't buzz.
-5. **Per-mode stop** — an SpO₂/HRV sweep is stopped with its *own* mode byte. If the LED stays on
+4. **Per-mode stop** — an SpO₂/HRV sweep is stopped with its *own* mode byte. If the LED stays on
    afterwards, this is the line to look at.
-6. **HRV monitor tail bytes** — `01 45 {enable, interval, 0, 0, 0}`; only the first two arguments are
+5. **HRV monitor tail bytes** — `01 45 {enable, interval, 0, 0, 0}`; only the first two arguments are
    named in the SDK, so the rest are zero-filled rather than guessed.
+6. **Sleep** — the multi-session timeline is decoded from the SDK and unit-tested, but no YCBT ring has
+   been worn overnight yet.
 
 ## The AE00 service
 
 The ring exposes a second service, `AE00`, carrying an encrypted `FE DC BA …` / `02 "pass"`
-handshake. It looks like a login gating the health data. **It is not.**
+handshake. It looks like a login gating the health data. **It is not** — and that is now settled on
+hardware, not just from the SDK.
 
 It is **JieLi RCSP** — the chipset vendor's challenge-response auth, an entirely separate subsystem
 from the Yucheng health protocol. It authorizes the **JieLi feature set only: OTA / firmware update,
-watch-face upload, and log extraction.** The YC health commands on `be940001` are plaintext,
-CRC-framed and carry no auth of any kind; they are an independent code path in the SDK. The AES key
-lives in a native library (`libjl_rcsp.so`) and is not recoverable from the decompile.
+watch-face upload, and log extraction.** The health commands on `be940001` are plaintext, CRC-framed
+and carry no auth of any kind. The AES key lives in a native library (`libjl_rcsp.so`) and is not
+recoverable from the decompile.
 
-**PulseLoop deliberately implements none of it** — it does no firmware updates and no watch faces, so
-there is nothing behind that handshake it wants. The one residual risk: the SDK proves the two paths
-are independent, but cannot prove a given *firmware* doesn't refuse YC commands until RCSP auth
-completes. The capture showed plaintext health traffic with no AE00 exchange, so the evidence points
-the right way — but if a unit NAKs every `05 xx` until `02 "pass"`, that is a hard stop, and it is
-item 1 on the checkpoint.
+This was the project's one potential hard stop: the SDK proves the two code paths are independent, but
+it cannot prove a given *firmware* doesn't refuse health commands until RCSP auth completes. The
+[Colmi R09](colmi.md#smarthealth-app-colmi-rings) answered that — it reports **chip scheme 4 (JieLi)**
+and every health command, history query and measurement still answered **in plaintext, with no AE00
+exchange at all**. PulseLoop implements none of RCSP, and doesn't need to.
 
 ## How PulseLoop diverges from SmartHealth
 
@@ -178,9 +175,10 @@ are the delete opcodes. The real enables are the five `01 xx {enable, interval}`
 
 ## Known limitations
 
-- **Not yet confirmed on hardware.** The layouts come from the vendor SDK rather than guesswork, but
-  the items in [Needs on-device confirmation](#needs-on-device-confirmation) are still open, which is
-  why support stays "Limited". See [Contributing](../project/contributing.md) if you own one.
+- **No TK5 has run this driver yet.** The protocol is confirmed on a [sibling YCBT ring](colmi.md#smarthealth-app-colmi-rings)
+  and the layouts come from the vendor SDK, but the TK5-specific items in
+  [Needs on-device confirmation](#needs-on-device-confirmation) are still open, which is why support
+  stays "Limited". See [Contributing](../project/contributing.md) if you own one.
 - **~8-day history horizon.** `RingEventBridge` drops any history sample, sleep session or activity
   timestamp outside `now − 8 days … now + 1 hour`. A ring's log can hold records stamped under a
   *previous* clock, which decode hours or days out of place — and because history rows upsert, one
