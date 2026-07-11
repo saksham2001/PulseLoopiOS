@@ -49,6 +49,10 @@ enum HealthKitTypeMappings {
             return nil   // No native HealthKit equivalent.
         case .bloodPressureSystolic, .bloodPressureDiastolic, .bloodSugar:
             return nil   // BP needs HKCorrelation pairing + new share types; blood sugar needs its own. Follow-up.
+        case .respiratoryRate, .vo2max:
+            // HealthKit has both (`respiratoryRate`, `vo2Max`), but exporting them needs new share
+            // types plus their own per-type toggles to keep the sync opt-in per metric. Follow-up.
+            return nil
         }
     }
 
