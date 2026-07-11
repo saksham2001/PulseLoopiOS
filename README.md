@@ -139,13 +139,20 @@ declares exactly what it can do and the app shows only those features.
 | Ring | BLE Family | Advertised name | Price |
 | --- | --- | --- | --- |
 | jring (generic smart ring) | `56ff` | `SMART_RING` | $7–12 |
-| Colmi / Yawell ring family | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
-| TK5 ring — 🧪 **limited support** | `be940` (SmartHealth) | `TK5 …` (e.g. `TK5 24AA`) | ❓ |
+| Colmi / Yawell ring family — **QRing app** | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
+| Colmi / Yawell ring family — **SmartHealth app** | `be940` (Yucheng YCBT) | `R99 54DC` and similar | $15–30 |
+| TK5 ring — 🧪 **limited support** | `be940` (Yucheng YCBT) | `TK5 …` (e.g. `TK5 24AA`) | ❓ |
 
-> 🧪 **TK5 support is experimental.** Its driver was reverse-engineered from a single packet
-> capture: some readings are unverified and may be missing or wrong, skin temperature and stress
-> aren't decoded, and the ring's encrypted login isn't implemented. The app labels it "Limited
-> support" when you pair it. See the [TK5 page](https://saksham2001.github.io/PulseLoopiOS/hardware/tk5/).
+> ⚠️ **A Colmi ring ships with *either* the QRing or the SmartHealth app** — two completely different
+> BLE protocols — and its Bluetooth name doesn't reliably say which. So PulseLoop asks you when you
+> pair. Pick the wrong one and it simply won't connect; the app then offers a one-tap "try the other
+> app" retry. Both are supported. See the
+> [Colmi page](https://saksham2001.github.io/PulseLoopiOS/hardware/colmi/#smarthealth-app-colmi-rings).
+>
+> 🧪 **The TK5 is still experimental.** It shares its driver with the SmartHealth-app Colmi rings, and
+> that driver is confirmed working on one — but no TK5 has run it, and a few value scales still need a
+> confirmed reading. The app labels it "Limited support" when you pair it. See the
+> [TK5 page](https://saksham2001.github.io/PulseLoopiOS/hardware/tk5/).
 
 > 📚 **Full hardware specs, per-model capability matrix, and buying guidance:
 > [Supported hardware docs](https://saksham2001.github.io/PulseLoopiOS/hardware/).**

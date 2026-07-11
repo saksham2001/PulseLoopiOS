@@ -109,8 +109,9 @@ nav:
   - Hardware:
       - Overview: hardware/index.md
       - Jring / 56ff: hardware/jring.md
-      - Colmi / Yawell: hardware/colmi.md
+      - Colmi / Yawell (QRing + SmartHealth): hardware/colmi.md
       - TK5 / SmartHealth: hardware/tk5.md
+      - YCBT protocol (TK5 · SmartHealth-Colmi): YCBT-Protocol.md
       - SIMSONLAB: hardware/simsonlab.md
       - Premium Rings: hardware/premium.md
   - Platforms:

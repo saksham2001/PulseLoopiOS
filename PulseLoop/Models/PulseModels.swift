@@ -23,6 +23,10 @@ enum MeasurementKind: String, Codable, CaseIterable {
     case bloodPressureDiastolic = "bp_dia"
     case fatigue
     case bloodSugar = "glucose"
+    // YCBT/TK5 history metrics: respiratory rate rides the "All" record (byte 10), VO₂max the
+    // body-data record (byte 16). Append only — raw values persisted.
+    case respiratoryRate = "resp_rate"
+    case vo2max
 
     /// Display unit for a measurement of this kind.
     var unit: String {
@@ -35,6 +39,8 @@ enum MeasurementKind: String, Codable, CaseIterable {
         case .bloodPressureSystolic, .bloodPressureDiastolic: return "mmHg"
         case .fatigue: return ""
         case .bloodSugar: return "mg/dL"
+        case .respiratoryRate: return "brpm"    // breaths per minute
+        case .vo2max: return "mL/kg/min"
         }
     }
 }
