@@ -43,6 +43,9 @@ struct GoalsSettingsView: View {
         }
         draft.apply(to: goal, units: units, includeWeeklyWorkouts: true)
         try? modelContext.save()
+        // Goal targets aren't part of Today's data signature, so the summary won't rebuild on its
+        // own — nudge dependents so the rings re-fill against the new goal immediately.
+        PulseDataChange.shared.notify()
         coordinator.setGoal(steps: Int(draft.steps))
         dismiss()
     }
