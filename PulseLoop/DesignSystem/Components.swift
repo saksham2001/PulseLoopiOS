@@ -483,6 +483,10 @@ struct QuickActionButton: View {
     private var text: some View {
         Text(label)
             .font(PulseFont.subheadline.weight(.semibold))
+            // Several of these can share one row (the Vitals measure pills), so a longer label like
+            // "Measure SpO₂" shrinks to fit rather than wrapping or truncating.
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
     }

@@ -554,7 +554,6 @@ struct RecordLiveView: View {
                     PrimaryButton(title: "Finish", systemImage: "flag.checkered") { confirmFinish = true }
                 }
                 .padding(16)
-                .pulseGlass(Rectangle())
             }
             .navigationBarBackButtonHidden(true)
             .onAppear { liveWorkout.ensureActive(session) }

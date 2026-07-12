@@ -13,10 +13,12 @@ final class WorkoutVitalsPlanTests: XCTestCase {
         .measurementInterval, .spo2History,
     ]
 
+    /// Mirrors `JringCoordinator.capabilities`.
     private let jringCaps: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .sleep, .battery,
         .bloodPressure, .bloodSugar, .fatigue, .stress, .hrv,
-        .manualHeartRate, .manualSpo2, .realtimeHeartRate, .findDevice,
+        .manualHeartRate, .manualSpo2, .manualBloodPressure, .combinedVitalsMeasurement,
+        .realtimeHeartRate, .findDevice, .measurementInterval,
     ]
 
     func testColmiStreamsWithRingLogSpO2AndIntervalBump() {
@@ -27,11 +29,13 @@ final class WorkoutVitalsPlanTests: XCTestCase {
         XCTAssertEqual(plan.vitalsModeRaw, "stream")
     }
 
-    func testJringStreamsWithSpotSpO2NoBump() {
+    /// jring spot-polls SpO₂ (it has an instant reading) but, like Colmi, does tighten its background
+    /// HR log for the workout — its 0x19 cadence is what `syncVitalsHistory` later backfills from.
+    func testJringStreamsWithSpotSpO2AndIntervalBump() {
         let plan = WorkoutVitalsPlan.plan(for: jringCaps, prefs: prefs)
         XCTAssertEqual(plan.hrMode, .stream)
         XCTAssertEqual(plan.spo2Mode, .spotPoll)
-        XCTAssertFalse(plan.bumpRingInterval, "jring has no interval config command")
+        XCTAssertTrue(plan.bumpRingInterval, "jring configures its HR interval via 0x19")
     }
 
     func testUnknownDeviceFallsBackToSpotPolling() {

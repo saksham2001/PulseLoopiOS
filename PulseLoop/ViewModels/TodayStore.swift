@@ -158,13 +158,19 @@ final class TodayStore {
 
         func stamp(_ date: Date?) -> String { date.map { String(Int($0.timeIntervalSince1970)) } ?? "·" }
 
+        // Include the Today-scope visibility + chart-detail prefs so a Settings toggle changes the
+        // signature and the next refresh rebuilds — otherwise a hide/show or chart-detail change
+        // wouldn't take effect on the tab until an unrelated sync bumped the signature.
+        let p = MetricPrefsStore.shared.settings
+        let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)"
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             activity.map { "\($0.steps)/\(Int($0.distanceMeters))/\($0.activeMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             sleep.map { "\($0.totalMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)@\(stamp($0.lastSyncAt))" } ?? "·",
-            calSig, profileSig,
+            calSig, profileSig, prefSig,
         ].joined(separator: "|")
     }
 }

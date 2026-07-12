@@ -234,7 +234,9 @@ struct DeviceHeroCard: View {
     private func ringImageName(for type: RingDeviceType?) -> String? {
         switch type {
         case .jring: return "jring"
-        case .colmiR02: return nil
+        // Both Colmi families are the same physical ring line (they differ only in firmware), and the
+        // line has no single representative image — fall back to the generic ring.
+        case .colmiR02, .colmiSmartHealth: return nil
         case .tk5: return "tk5"
         case nil: return nil
         }

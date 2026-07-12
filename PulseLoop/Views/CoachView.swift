@@ -50,7 +50,7 @@ struct CoachView: View {
     /// nav bar), so the idle gap is small; when the keyboard is up the composer rises
     /// just above it. Computed manually because we pin the keyboard safe area below.
     private var composerBottomInset: CGFloat {
-        guard keyboardHeight > 0 else { return 8 }
+        guard keyboardHeight > 0 else { return 0 }
         return max(8, keyboardHeight - bottomSafeInset + 8)
     }
 

@@ -21,6 +21,7 @@ enum AppRoute: Hashable {
     case settingsVitals
     case settingsToday
     case settingsCalibration
+    case settingsHealth
     case settingsPrivacyData
     case settingsAbout
     case pairing

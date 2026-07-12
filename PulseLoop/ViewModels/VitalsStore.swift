@@ -142,11 +142,17 @@ final class VitalsStore {
         let cal = CalibrationStore.shared.settings
         let calSig = "\(cal.bpSystolicOffset)/\(cal.bpDiastolicOffset)/\(cal.glucoseOffsetMgdl)/\(cal.hasBPReference)/\(cal.isGlucoseCalibrated)"
         let profileSig = profile.map { "\(Int($0.updatedAt.timeIntervalSince1970))" } ?? "·"
+        // Include the Vitals-scope visibility + chart-detail prefs so a Settings toggle changes the
+        // signature and the next refresh rebuilds — otherwise it wouldn't take effect on the tab until
+        // an unrelated sync bumped the signature.
+        let p = MetricPrefsStore.shared.settings
+        let prefSig = "\(p.hiddenMetrics.sorted().joined(separator: ","))/\(p.resolution.rawValue)"
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)" } ?? "·",
-            calSig, profileSig,
+            calSig, profileSig, prefSig,
         ].joined(separator: "|")
     }
 }

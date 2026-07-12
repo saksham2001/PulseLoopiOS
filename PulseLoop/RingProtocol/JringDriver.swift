@@ -12,10 +12,15 @@ final class JringDriver: WearableDriver {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
     private weak var writer: RingCommandWriter?
-    private let decoder = RingDecoder()
+    /// One clock per connection, shared by the decoder and the sync engine: the engine latches the
+    /// UTC offset when it sends 0x01, and the decoder subtracts that same offset off every
+    /// ring-stamped history timestamp. See `JringClock`.
+    private let clock = JringClock()
+    private let decoder: RingDecoder
 
     init(writer: RingCommandWriter) {
         self.writer = writer
+        self.decoder = RingDecoder(clock: clock)
     }
 
     // MARK: BLE topology
@@ -33,6 +38,6 @@ final class JringDriver: WearableDriver {
     }
 
     func makeSyncEngine() -> RingSyncEngine {
-        JringSyncEngine(writer: writer)
+        JringSyncEngine(writer: writer, clock: clock)
     }
 }

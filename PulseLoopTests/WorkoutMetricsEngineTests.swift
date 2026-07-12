@@ -51,6 +51,14 @@ final class WorkoutMetricsEngineTests: XCTestCase {
         XCTAssertEqual(kcal, 175, accuracy: 1)
     }
 
+    func testFlatRateCaloriesIsEightPerMinuteRegardlessOfType() {
+        // The legacy flat-rate estimate (useAdvancedCalories == false) is a pure function of duration
+        // only — no activity type, HR, or profile involved.
+        XCTAssertEqual(WorkoutMetricsEngine.flatRateCalories(durationSeconds: 30 * 60), 240)
+        XCTAssertEqual(WorkoutMetricsEngine.flatRateCalories(durationSeconds: 0), 0)
+        XCTAssertEqual(WorkoutMetricsEngine.flatRateCalories(durationSeconds: -60), 0, "never negative")
+    }
+
     func testSpeedTieredMETs() {
         XCTAssertEqual(WorkoutMetricsEngine.metValue(for: "cycle", averageSpeedMps: 3.0), 5.8)
         XCTAssertEqual(WorkoutMetricsEngine.metValue(for: "cycle", averageSpeedMps: 7.0), 10.0)

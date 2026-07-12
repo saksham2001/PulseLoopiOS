@@ -53,6 +53,17 @@ struct WorkoutSettingsView: View {
                     }
                 }
 
+                SettingsGroup(
+                    header: "Calories",
+                    footer: "On: a personalized estimate from your heart rate (Keytel formula) and activity "
+                        + "type (MET). Off: a flat 8 kcal/min based on duration."
+                ) {
+                    FormToggleRow(title: "Use advanced calories", isOn: Binding(
+                        get: { store.settings.useAdvancedCalories },
+                        set: { store.settings.useAdvancedCalories = $0 }
+                    ))
+                }
+
                 SettingsGroup(header: "GPS") {
                     FormToggleRow(title: "Record GPS route by default", isOn: Binding(
                         get: { store.settings.useGpsByDefault },

@@ -195,6 +195,23 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertEqual(spo2s.first, 97)
     }
 
+    /// The QRing-Colmi SpO₂ log is emitted with no floor of its own (`lo > 0, hi > 0`), and before the
+    /// shared bridge grew a per-kind history gate, every value it produced was persisted. A severe
+    /// nocturnal desaturation is the reading a user with sleep apnea most needs kept — the gate is there
+    /// to drop the ring's "no sample" fillers and misframed bytes, not real hypoxemia — so it has to
+    /// survive the whole decoder → bridge path, not just the decoder.
+    func testSevereDesaturationSurvivesTheSharedHistoryGate() throws {
+        var payload: [UInt8] = [0x00, 60, 76]   // hour 0: min 60 %, max 76 % → mean 68 %
+        payload.append(contentsOf: [UInt8](repeating: 0, count: 46))
+        let frame = bigData(type: ColmiCommandID.bigDataSpo2, payload: payload)
+        let decoded = try XCTUnwrap(decoder.decodeBigData(frame, calendar: calendar).first)
+        guard case let .historyMeasurement(kind, value, _) = decoded, kind == .spo2 else {
+            return XCTFail("expected an SpO₂ history sample, got \(decoded.kind)")
+        }
+        XCTAssertEqual(value, 68)
+        XCTAssertEqual(RingEventBridge.events(for: decoded).count, 1, "the bridge dropped a real desaturation")
+    }
+
     func testSleepBigDataMapsStages() {
         // packetLength ≥ 2; days=1; day record: daysAgo=0, dayBytes=8, start=480(08:00), end=540(09:00),
         // then stage pairs: (deep,30)(rem,30). j runs 4..<dayBytes in steps of 2 → 2 pairs.

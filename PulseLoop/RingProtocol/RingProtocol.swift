@@ -23,8 +23,12 @@ enum RingCommandID: UInt8 {
     case heartRateStop = 0x15
     case historyMeasurementStream = 0x16
     case goalOrConfig = 0x1a
-    case deviceTimeOrConfig = 0x20
+    /// Automatic background HR schedule — the command that arms the ring's continuous sensor logging.
+    case autoHeartRate = 0x19
+    /// Capability bitmask query/reply (vendor `getBandFunction`).
+    case bandFunction = 0x20
     case locale = 0x21
+    /// One-shot combined-sensor measurement. Byte [1] selects the sensor — see `RingEncoder.CombinedMode`.
     case combinedStartStop = 0x23
     /// Combined sensor result: HR + systolic + diastolic + SpO₂ + fatigue + stress + blood sugar +
     /// HRV in one 9-byte payload (per the APK decompile's `onReceiveSensorData`). iOS previously
@@ -38,7 +42,8 @@ enum RingCommandID: UInt8 {
     case bpAdjust = 0x33
     /// Keepalive ping — prevents the ring's ~20s idle disconnect.
     case keepalive = 0x3a
-    case spo2Toggle = 0x3e
+    /// Periodic background blood-oxygen enable (vendor `setBloodOxygenMode`), on separate-mode firmware.
+    case bloodOxygenMode = 0x3e
     case spo2Result = 0x3f
     case appIdentifier = 0x48
     /// Bind/unbind handshake (ring-driven claim + app-driven release on Forget).
@@ -51,6 +56,30 @@ enum RingCommandID: UInt8 {
 enum RingProtocolError: Error {
     case invalidLength(Int)
     case invalidHex(String)
+}
+
+/// The ring's self-reported feature bitmask (0x20 reply, vendor `getBandFunction` →
+/// `onGetBandFunction(int, boolean[])`). The vendor app gates its history-sync chain on these bits.
+///
+/// The *bit indices* are verified against the vendor app; the *bit ordering within each byte*
+/// (LSB-first assumed here) is inferred and must be confirmed against a real ring's reply before
+/// anything depends on it. Until then, an absent/misdecoded bitmask degrades to "no extra features",
+/// which is the safe direction.
+struct JringBandCapabilities: Sendable, Equatable {
+    /// The raw payload bytes (frame bytes [1...]).
+    let bytes: [UInt8]
+
+    func bit(_ index: Int) -> Bool {
+        let byte = index / 8
+        guard byte < bytes.count else { return false }
+        return bytes[byte] & (1 << UInt8(index % 8)) != 0
+    }
+
+    var hasTemperature: Bool { bit(10) }
+    /// SpO₂ uses the dedicated 0x3E command rather than the 0x23 mode selector.
+    var separateBloodOxygenMode: Bool { bit(65) }
+    var hasOxygenOfflineHistory: Bool { bit(81) }
+    var hasPressureHistory: Bool { bit(83) }
 }
 
 struct RingPacket {
@@ -96,6 +125,31 @@ enum RingDecodedEvent: Sendable {
     case firmware(version: String)
     /// Ring bind/unbind handshake frame (0x4B): `action`/`state` per the protocol state machine.
     case bind(action: UInt8, state: UInt8)
+    /// Capability bitmask reply (0x20). Consumed by `JringSyncEngine`; produces no `PulseEvent`.
+    case bandFunction(JringBandCapabilities)
+    /// The device's own capability bitmap, already mapped onto `WearableCapability` (YCBT `02 01`; see
+    /// `YCBTSupportFunction`). Consumed by `RingBLEClient` to refine the active capability set — the
+    /// coordinator's baseline is what the *family* can do, this is what *this unit* claims. Produces no
+    /// `PulseEvent`: capabilities reach persistence via the re-published `.deviceIdentified`, not here.
+    case supportFunctions(Set<WearableCapability>)
+    /// The chipset/OTA family (YCBT `02 1b`). **Diagnostic only** — PulseLoop does no firmware updates,
+    /// so nothing branches on it; it is decoded because it is the one frame that says whether the ring's
+    /// OTA path is JieLi RCSP (3/4/5), which is what would gate the AE00 auth we deliberately don't
+    /// implement. Produces no `PulseEvent`.
+    case chipScheme(value: Int)
+    /// The ring reports it went on/off the finger (YCBT `06 13`). Debug-feed only for now — it produces
+    /// no `PulseEvent`, because nothing in the app gates on wear state yet. It is decoded so the packet
+    /// feed can show *why* a measurement returned nothing (the ring was off).
+    case wearingStatus(worn: Bool, timestamp: Date)
+    /// The ring **refused** to start the spot measurement we asked for (YCBT `03 2f` answered with a
+    /// non-zero status). `mode` is the measurement mode we started — the reply itself carries only a
+    /// status byte, so the mode comes from the start `YCBTDriver` remembers sending.
+    ///
+    /// Produces no `PulseEvent`: it is a verdict on a command, not data. `RingSyncCoordinator` reads it
+    /// off the raw-packet feed and aborts the matching in-flight measurement, which is the whole point —
+    /// the owner's R99 refuses HRV (mode `0x0a` → status `0x01`), and without this the app polls a ring
+    /// that already said no for the full 45-second window before reporting a generic failure.
+    case measurementRejected(mode: UInt8)
     case timeSyncAck(timestamp: Date)
     case commandAck(commandId: UInt8)
     case unknown(commandId: UInt8, raw: Data)
@@ -123,6 +177,11 @@ enum RingDecodedEvent: Sendable {
         case .status: return "status"
         case .firmware: return "firmware"
         case .bind: return "bind"
+        case .bandFunction: return "band_function"
+        case .supportFunctions: return "support_functions"
+        case .chipScheme: return "chip_scheme"
+        case .wearingStatus: return "wearing_status"
+        case .measurementRejected: return "measurement_rejected"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"
         case .unknown: return "unknown"
@@ -133,7 +192,12 @@ enum RingDecodedEvent: Sendable {
         switch self {
         case .unknown:
             return .unknown
-        case .commandAck, .heartRateComplete, .spo2Complete, .spo2Progress, .bind, .firmware:
+        case .commandAck, .heartRateComplete, .spo2Complete, .spo2Progress, .bind, .firmware,
+             .bandFunction,          // bit ordering unverified against hardware
+             .wearingStatus,         // layout is SDK-verified; the status byte's *polarity* is not
+             .measurementRejected:   // 0x00 = accepted is hardware-confirmed; that *every* non-zero code
+                                     // means "refused" is the SDK's generic `code` contract, unnamed by
+                                     // any enum in it (we have seen exactly one: 0x01, refusing HRV)
             return .partial
         default:
             return .known
@@ -166,6 +230,16 @@ enum RingDecodedEvent: Sendable {
             return #"{"firmware":"\#(version)"}"#
         case let .bind(action, state):
             return #"{"bind_action":\#(action),"bind_state":\#(state)}"#
+        case let .bandFunction(caps):
+            return #"{"temp":\#(caps.hasTemperature),"spo2_separate":\#(caps.separateBloodOxygenMode),"spo2_offline":\#(caps.hasOxygenOfflineHistory),"pressure":\#(caps.hasPressureHistory)}"#
+        case let .supportFunctions(capabilities):
+            return #"{"claimed":"\#(capabilities.csv)"}"#
+        case let .chipScheme(value):
+            return #"{"chip_scheme":\#(value)}"#
+        case let .wearingStatus(worn, _):
+            return #"{"worn":\#(worn)}"#
+        case let .measurementRejected(mode):
+            return #"{"rejected_mode":\#(mode)}"#
         case let .historySyncProgress(stage):
             return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):
@@ -179,6 +253,20 @@ enum RingDecodedEvent: Sendable {
 }
 
 struct RingDecoder {
+    /// The offset the ring's RTC was set to. Ring-stamped history timestamps are local wall-clock
+    /// epochs and must have it subtracted off; `nil` (the `DebugView` / legacy-test path) subtracts 0.
+    private let clock: JringClock?
+
+    init(clock: JringClock? = nil) {
+        self.clock = clock
+    }
+
+    /// Convert a ring-stamped epoch (local wall-clock seconds) into a true `Date`.
+    /// Use this for every timestamp the *ring* supplies — never for ones we stamp on arrival.
+    private func ringDate(_ raw: UInt32) -> Date {
+        clock?.date(fromRingEpoch: raw) ?? Date(timeIntervalSince1970: TimeInterval(raw))
+    }
+
     /// Decode one inbound frame into *all* the events it carries. Most frames decode to a single
     /// event; the `0x24` combined-sensor packet fans out into several (HR, BP, SpO₂, fatigue, stress,
     /// blood sugar, HRV). `JringDriver.ingest` calls this.
@@ -206,7 +294,7 @@ struct RingDecoder {
     /// blocks of six 1-minute HR samples at [8..13] and [14..19]. Each block is averaged into one
     /// reading, the second timestamped 60s after the first. Mirrors the Android multi-packet routing.
     private func decodeHistoryHeartRate(_ bytes: [UInt8]) -> [RingDecodedEvent] {
-        let base = TimeInterval(u32le(bytes, 2))
+        let base = ringDate(u32le(bytes, 2))
         func average(_ slice: ArraySlice<UInt8>) -> Int? {
             let valid = slice.map { Int($0) }.filter { $0 > 0 }
             guard !valid.isEmpty else { return nil }
@@ -214,12 +302,11 @@ struct RingDecoder {
         }
         var events: [RingDecodedEvent] = []
         if let avg = average(bytes[8..<14]) {
-            events.append(.historyMeasurement(kind: .heartRate, value: Double(avg),
-                                               timestamp: Date(timeIntervalSince1970: base)))
+            events.append(.historyMeasurement(kind: .heartRate, value: Double(avg), timestamp: base))
         }
         if let avg = average(bytes[14..<20]) {
             events.append(.historyMeasurement(kind: .heartRate, value: Double(avg),
-                                               timestamp: Date(timeIntervalSince1970: base + 60)))
+                                               timestamp: base.addingTimeInterval(60)))
         }
         return events.isEmpty ? [.commandAck(commandId: 0x16)] : events
     }
@@ -261,11 +348,11 @@ struct RingDecoder {
 
         switch packet.commandId {
         case 0x01 where bytes.count >= 6:
-            return .timeSyncAck(timestamp: Date(timeIntervalSince1970: TimeInterval(u32le(bytes, 1))))
+            return .timeSyncAck(timestamp: ringDate(u32le(bytes, 1)))
         case 0x02:
             return .commandAck(commandId: packet.commandId)
         case 0x03 where bytes.count >= 17:
-            let timestamp = Date(timeIntervalSince1970: TimeInterval(u32le(bytes, 1)))
+            let timestamp = ringDate(u32le(bytes, 1))
             let steps = Int(u32le(bytes, 5))
             let distance = Double(u32le(bytes, 9))
             let calories = Double(u32le(bytes, 13))
@@ -278,7 +365,7 @@ struct RingDecoder {
             let address = bytes.count >= 9 ? bytes[3...8].map { String(format: "%02x", $0) }.joined(separator: ":") : nil
             return .status(address: address)
         case 0x11 where bytes.count >= 20:
-            let timestamp = Date(timeIntervalSince1970: TimeInterval(u32le(bytes, 1)))
+            let timestamp = ringDate(u32le(bytes, 1))
             let stages = bytes[5..<20].map(stage)
             return .sleepTimeline(timestamp: timestamp, stages: stages)
         case 0x14 where bytes.count >= 6:
@@ -292,6 +379,8 @@ struct RingDecoder {
             // blocks (0xA0) are handled in `decodeAll`. None decode to a measurement on their own, so
             // they're plain acks here.
             return .commandAck(commandId: packet.commandId)
+        case 0x20 where bytes.count >= 2:
+            return .bandFunction(JringBandCapabilities(bytes: Array(bytes.dropFirst())))
         case 0x24:
             // Combined-sensor packet: `decodeAll` fans out every metric; a single-event caller just
             // gets the first (HR) for backwards compatibility.
@@ -350,9 +439,50 @@ struct RingEncoder {
     func makeHistoryMeasurementQueryCommand() -> Data { data(hex: "1600000000000000000000000000000000000000") }
     func makeHeartRateStartCommand() -> Data { data(hex: "14b4000000000000000000000000000000000000") }
     func makeHeartRateStopCommand() -> Data { data(hex: "1500000000000000000000000000000000000000") }
-    func makeSpO2StartCommand() -> Data { data(hex: "2301000000000000000000000000000000000000") }
-    func makeSpO2StopCommand() -> Data { data(hex: "2300000000000000000000000000000000000000") }
     func makeFindRingCommand() -> Data { data(hex: "040a000000000000000000000000000000000000") }
+
+    /// One-shot combined-sensor measurement (0x23). Byte [1] selects *which* sensor runs — it is a
+    /// mode selector, not a generic start flag (vendor `setBloodPressureMode`/`setSpoMode`/
+    /// `setSugarMode`/`setPressureMode` all write 0x23 with a different [1]).
+    enum CombinedMode: UInt8 {
+        case off = 0x00
+        case bloodPressure = 0x01
+        case spo2 = 0x02
+        case bloodSugar = 0x03
+        case stress = 0x04
+    }
+
+    func makeCombinedModeCommand(_ mode: CombinedMode) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        bytes[0] = 0x23
+        bytes[1] = mode.rawValue
+        return Data(bytes)
+    }
+
+    func makeSpO2StartCommand() -> Data { makeCombinedModeCommand(.spo2) }
+    func makeSpO2StopCommand() -> Data { makeCombinedModeCommand(.off) }
+
+    /// Blood pressure is mode 1 of the same selector. The result arrives in the 0x24 combined packet
+    /// (bytes [2]/[3]), not a dedicated reply.
+    func makeBloodPressureStartCommand() -> Data { makeCombinedModeCommand(.bloodPressure) }
+    func makeBloodPressureStopCommand() -> Data { makeCombinedModeCommand(.off) }
+
+    /// Periodic background blood-oxygen monitoring (0x3E). Only present on firmware that reports the
+    /// "BP/SpO₂ separate mode" capability bit; otherwise SpO₂ rides the 0x23 mode selector.
+    func makeBloodOxygenModeCommand(enabled: Bool) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        bytes[0] = 0x3e
+        bytes[1] = enabled ? 0x01 : 0x00
+        return Data(bytes)
+    }
+
+    /// Capability bitmask query (0x20, vendor `getBandFunction`). The ring replies with a bit array
+    /// describing which sensors and offline history streams it supports.
+    func makeBandFunctionCommand() -> Data {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        bytes[0] = 0x20
+        return Data(bytes)
+    }
 
     /// Daily step goal command (0x1a) — opcode + u32 little-endian goal value, zero-padded.
     /// Protocol.md: `1a 10 27 00 00 …` sets a 10000-step goal.
@@ -367,10 +497,12 @@ struct RingEncoder {
         return Data(bytes)
     }
 
-    /// Automatic background heart-rate schedule (0x19). Protocol.md:
-    /// `19 00 00 17 3b <enable> <cadenceMin> 02 …` — window 00:00–23:59, enable flag, cadence in
-    /// minutes, mode 0x02. Used to restore the ring's normal background cadence after a workout's
-    /// live HR stream is stopped.
+    /// Automatic background heart-rate schedule (0x19) — the command that arms the ring's continuous
+    /// background sensor logging. `19 <startHH> <startMM> <endHH> <endMM> <enable> <cadenceMin> 01`.
+    /// The window is always all-day; the vendor's own default is 00:00–23:59 at 30-minute cadence.
+    ///
+    /// Byte [7] is a constant `0x01`: the vendor SDK hardcodes it and ignores the caller's 7th
+    /// argument (`snooze`, which is 2 in the Android app — the source of an earlier 0x02 here).
     func makeAutomaticHeartRateCommand(enabled: Bool, cadenceMinutes: Int = 30) -> Data {
         var bytes = [UInt8](repeating: 0, count: 20)
         bytes[0] = 0x19
@@ -380,7 +512,7 @@ struct RingEncoder {
         bytes[4] = 0x3b          // end MM (59)
         bytes[5] = enabled ? 0x01 : 0x00
         bytes[6] = UInt8(clamping: max(1, cadenceMinutes))
-        bytes[7] = 0x02
+        bytes[7] = 0x01
         return Data(bytes)
     }
 
@@ -435,15 +567,26 @@ struct RingEncoder {
         return Data(bytes)
     }
 
-    func makeTimeSyncCommand(date: Date = Date()) -> Data {
+    /// Set the ring's clock (0x01). Bytes [1..4] are a u32 LE epoch holding **local wall-clock**
+    /// seconds — i.e. `utcEpoch + utcOffset`, not a true UTC epoch. The ring's RTC therefore runs on
+    /// local time, which is what its own wall-clock-keyed firmware logic (day bucketing for the
+    /// day-indexed history queries, and sleep/night-window detection) expects. Every ring-stamped
+    /// history timestamp must have the same offset subtracted back off on the way in — see
+    /// `JringClock.date(fromRingEpoch:)`, which is the matched half of this contract.
+    ///
+    /// Byte [5] is the offset in whole hours. We send the DST-aware offset; the vendor sends the raw
+    /// (non-DST) one. Half-hour zones truncate (IST +5:30 → 5) exactly as the vendor's do — harmless,
+    /// because bytes [1..4] already carry the full offset and decode uses the full cached value.
+    func makeTimeSyncCommand(date: Date = Date(), timeZone: TimeZone = .current) -> Data {
         var bytes = [UInt8](repeating: 0, count: 20)
         bytes[0] = 0x01
-        let ts = UInt32(date.timeIntervalSince1970)
+        let offset = timeZone.secondsFromGMT(for: date)
+        let ts = UInt32(date.timeIntervalSince1970 + Double(offset))
         bytes[1] = UInt8(ts & 0xff)
         bytes[2] = UInt8((ts >> 8) & 0xff)
         bytes[3] = UInt8((ts >> 16) & 0xff)
         bytes[4] = UInt8((ts >> 24) & 0xff)
-        bytes[5] = UInt8(bitPattern: Int8(TimeZone.current.secondsFromGMT(for: date) / 3600))
+        bytes[5] = UInt8(bitPattern: Int8(clamping: offset / 3600))
         return Data(bytes)
     }
 

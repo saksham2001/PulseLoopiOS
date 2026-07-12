@@ -56,9 +56,42 @@ final class MeasurementSettingsTests: XCTestCase {
 
     // MARK: - Capability gating
 
-    func testMeasurementIntervalIsColmiOnly() {
+    /// Colmi configures its interval via the 0x16 pref; jring via byte [6] of its 0x19 background
+    /// monitoring command; TK5 via the five YCBT monitor writes (`01 0C/1C/20/26/45 {enable, interval}`,
+    /// interval floored at the firmware's 30-minute minimum).
+    func testMeasurementIntervalCapabilityPerDevice() {
         XCTAssertTrue(ColmiCoordinator().capabilities.contains(.measurementInterval))
-        XCTAssertFalse(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertTrue(TK5Coordinator().capabilities.contains(.measurementInterval))
+    }
+
+    /// A ring can be *asked* for a blood-pressure reading only if its live protocol has a BP mode: the
+    /// jring's `0x23` mode 1, and — as of A4 — the TK5's `03 2f {01,01}`, which is exactly what
+    /// SmartHealth's own BP screen sends (`appStartMeasurement(1, 1)`); the reading streams back on
+    /// `06 03`. The note here used to claim the TK5 had no on-demand BP command. Colmi has no BP sensor
+    /// at all.
+    ///
+    /// The TK5's BP is a *command* the stack has and a *sensor* nobody has confirmed on the ring, so it
+    /// is bitmap-gated (`ISHASBLOOD` / `ISHASTESTBLOOD`) rather than promised: what this asserts is that
+    /// the family can reach it at all, i.e. that a TK5 which claims the bits gets the button.
+    func testManualBloodPressureRequiresALiveBPMode() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.manualBloodPressure))
+        let tk5 = TK5Coordinator()
+        XCTAssertTrue(tk5.bitmapGatedCapabilities.contains(.manualBloodPressure))
+        XCTAssertTrue(
+            tk5.refinedCapabilities(bitmapDerived: [.bloodPressure, .manualBloodPressure])
+                .contains(.manualBloodPressure)
+        )
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.bloodPressure))
+    }
+
+    /// Only the jring's PPG sweep returns every vital in one packet, so only it collapses the Vitals
+    /// measure row into a single "Measure Vitals" action.
+    func testCombinedVitalsMeasurementIsJringOnly() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.combinedVitalsMeasurement))
     }
 
     // MARK: - Vital visibility (capability first, then user opt-out)
