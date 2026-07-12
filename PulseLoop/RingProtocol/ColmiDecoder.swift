@@ -211,8 +211,13 @@ struct ColmiDecoder {
         comps.year = 2000 + hexLit(v[1])
         comps.month = hexLit(v[2])
         comps.day = hexLit(v[3])
-        comps.hour = min(23, max(0, Int(v[4]) / 4))   // nth quarter of day, clamped to a valid hour
-        comps.minute = 0
+        // v[4] is the nth quarter-hour of the day (0…95): hour = q/4, minute = (q%4)*15. Dropping the
+        // within-hour offset collapsed all four quarters of an hour onto HH:00, so — since the day
+        // total is the sum of buckets keyed by their start epoch — three of every four quarters
+        // overwrote each other and daily steps/distance were undercounted by up to ~75%.
+        let quarter = min(95, max(0, Int(v[4])))
+        comps.hour = quarter / 4
+        comps.minute = (quarter % 4) * 15
         comps.second = 0
         guard let ts = calendar.date(from: comps) else { return [] }
         // Reject implausible dates (misframed packet / bad BCD): must be within the last ~8 days.
