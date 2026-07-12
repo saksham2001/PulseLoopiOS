@@ -21,6 +21,7 @@ struct AboutSettingsView: View {
     }
 
     private let repoURL = URL(string: "https://github.com/saksham2001/PulseLoopiOS")!
+    private let discordURL = URL(string: "https://discord.gg/t9y85ebaKD")!
 
     private var appVersionLabel: String {
         "v1.0.0-beta.2"
@@ -75,6 +76,12 @@ struct AboutSettingsView: View {
                         title: "Source on GitHub",
                         subtitle: "github.com/saksham2001/PulseLoopiOS",
                         url: repoURL
+                    )
+                    linkCard(
+                        icon: "bubble.left.and.bubble.right.fill",
+                        title: "Join the Discord",
+                        subtitle: "discord.gg/t9y85ebaKD",
+                        url: discordURL
                     )
                 }
                 StatusCopy(

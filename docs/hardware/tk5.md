@@ -14,8 +14,7 @@ YCBT** protocol on a `be940` service — nothing in common at the wire level wit
 [56ff / Jring](jring.md) or [Colmi / Yawell QRing](colmi.md) families.
 
 PulseLoop's driver is reconstructed from the **decompiled Yucheng YCBT SDK** (`com.yucheng.ycbtsdk`,
-v4.0.10) that ships inside the SmartHealth Android app. The byte-level reference is
-[YCBT protocol](../YCBT-Protocol.md).
+v4.0.10) that ships inside the SmartHealth Android app.
 
 !!! warning "Limited support — the protocol is proven, the TK5 hasn't been re-tested"
     The YCBT stack is confirmed working on real hardware — but on a *sibling* ring, the
@@ -59,8 +58,6 @@ A fix to any `YCBT*` file fixes both rings; a regression in one breaks both.
 | **Custom firmware** | ❓ Unknown |
 
 ## Protocol
-
-Full byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)**.
 
 | Property | Value |
 |---|---|
@@ -198,6 +195,5 @@ are the delete opcodes. The real enables are the five `01 xx {enable, interval}`
 
 ---
 
-See the [YCBT protocol reference](../YCBT-Protocol.md) for the byte-level spec, the
-[SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings) that share this driver, or the
-[hardware overview](index.md) for the cross-manufacturer comparison.
+See the [SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings) that share this driver,
+or the [hardware overview](index.md) for the cross-manufacturer comparison.
