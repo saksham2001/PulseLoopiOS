@@ -5,8 +5,11 @@ struct SleepView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query private var allSummaries: [CoachSummary]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var range: SleepRangeKey
     @State private var coachStore = CoachSettingsStore.shared
+    @State private var selectedSleepPage = 0
+    @State private var scrolledSleepPage: Int?
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
@@ -72,27 +75,8 @@ struct SleepView: View {
 
     @ViewBuilder
     private func dayView(summary: SleepRangeSummary, activitySteps: Int?) -> some View {
-        if let night = SleepInsights.validSessions(summary.sessions).last {
-            let score = SleepScore.calculate(night)
-            let coach = SleepInsights.dayCoach(night, score: score.score, awakePct: score.awakePct, deepPct: score.deepPct, activitySteps: activitySteps)
-            // Hero card opens the page; coach card closes it.
-            SleepHeroCardView(
-                label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep",
-                value: SleepFormat.duration(night.session.totalMinutes),
-                support: "\(SleepFormat.clockTime(night.session.startAt)) to \(SleepFormat.clockTime(night.session.endAt))",
-                score: score.score,
-                scoreLabel: score.label.rawValue
-            )
-            VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
-                SleepHypnogramView(blocks: night.blocks, totalMin: night.session.totalMinutes, startTs: night.session.startAt)
-            }
-            SleepStageSummaryCardsView(
-                deep: SleepFormat.duration(night.deepMinutes),
-                light: SleepFormat.duration(night.lightMinutes),
-                awake: SleepFormat.duration(night.awakeMinutes)
-            )
-            summaryCard(daySummary, fallback: coach)
-        } else {
+        let sessions = SleepInsights.validSessions(summary.sessions).sorted { $0.session.startAt < $1.session.startAt }
+        if sessions.isEmpty {
             let noData = SleepInsights.noDataState(.day)
             SleepHeroCardView(label: noData.label, value: noData.value, support: noData.support, score: nil, noData: true)
             VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: false) {
@@ -103,7 +87,82 @@ struct SleepView: View {
             if coachEnabled {
                 CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
             }
+        } else {
+            // The primary (longest) session drives the day-level coach fallback.
+            let primary = sessions.max { $0.session.totalMinutes < $1.session.totalMinutes } ?? sessions[0]
+            let primaryScore = SleepScore.calculate(primary)
+            let dayFallback = SleepInsights.dayCoach(primary, score: primaryScore.score, awakePct: primaryScore.awakePct, deepPct: primaryScore.deepPct, activitySteps: activitySteps)
+
+            if sessions.count == 1 {
+                // Single session: render exactly as before, no carousel chrome.
+                sessionPage(sessions[0])
+            } else {
+                sleepCarousel(sessions: sessions)
+            }
+            summaryCard(daySummary, fallback: dayFallback)
         }
+    }
+
+    /// One session's stack: Hero + hypnogram VisualizationCard + stage cards.
+    @ViewBuilder
+    private func sessionPage(_ s: SleepSummary) -> some View {
+        let score = SleepScore.calculate(s)
+        SleepHeroCardView(
+            label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep",
+            value: SleepFormat.duration(s.session.totalMinutes),
+            support: "\(SleepFormat.clockTime(s.session.startAt)) to \(SleepFormat.clockTime(s.session.endAt))",
+            score: score.score,
+            scoreLabel: score.label.rawValue
+        )
+        VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
+            SleepHypnogramView(blocks: s.blocks, totalMin: s.session.totalMinutes, startTs: s.session.startAt)
+        }
+        SleepStageSummaryCardsView(
+            deep: SleepFormat.duration(s.deepMinutes),
+            light: SleepFormat.duration(s.lightMinutes),
+            awake: SleepFormat.duration(s.awakeMinutes)
+        )
+    }
+
+    /// Horizontal paged carousel across multiple sleep sessions in one day.
+    /// Sizes to the tallest visible page (no fixed height) and shows a dot row.
+    @ViewBuilder
+    private func sleepCarousel(sessions: [SleepSummary]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
+                ForEach(Array(sessions.enumerated()), id: \.element.session.id) { idx, s in
+                    VStack(spacing: 16) {
+                        Text("\(idx + 1) of \(sessions.count) · \(SleepFormat.clockTime(s.session.startAt))–\(SleepFormat.clockTime(s.session.endAt))")
+                            .font(PulseFont.caption)
+                            .foregroundStyle(PulseColors.textSecondary)
+                            .textCase(.uppercase)
+                            .kerning(0.5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        sessionPage(s)
+                    }
+                    .containerRelativeFrame(.horizontal)
+                    .id(idx)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $scrolledSleepPage)
+        .onChange(of: scrolledSleepPage) { _, newValue in
+            if let newValue { selectedSleepPage = newValue }
+        }
+
+        // Page indicator dots.
+        HStack(spacing: 8) {
+            ForEach(sessions.indices, id: \.self) { i in
+                Circle()
+                    .fill(i == selectedSleepPage ? PulseColors.accent : PulseColors.textSecondary.opacity(0.3))
+                    .frame(width: 7, height: 7)
+                    .animation(reduceMotion ? nil : PulseMotion.spring, value: selectedSleepPage)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
     }
 
     // MARK: Aggregate

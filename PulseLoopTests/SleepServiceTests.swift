@@ -217,4 +217,202 @@ final class SleepServiceTests: XCTestCase {
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions.first?.id, rich.id, "tie on totalMinutes should keep the session with more blocks")
     }
+
+    // MARK: - Sleep-session segmentation (issue #59)
+
+    /// Build a detached `SleepStageBlock` for the pure `segment` tests. `segment` only
+    /// reads `startAt`/`durationMinutes`, so `sessionId`/`startMinute` are placeholders.
+    private func block(_ start: Date, minutes: Int, stage: SleepStage = .light) -> SleepStageBlock {
+        SleepStageBlock(sessionId: UUID(), startAt: start, startMinute: 0, durationMinutes: minutes, stage: stage)
+    }
+
+    private func at(_ hour: Int, _ minute: Int = 0, dayOffset: Int = 0) -> Date {
+        let base = TestSupport.day(dayOffset)
+        return Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? base
+    }
+
+    // 1. SleepSegmentation.segment — pure, no context
+
+    func testSegmentEmptyReturnsEmpty() {
+        XCTAssertTrue(SleepSegmentation.segment([]).isEmpty)
+    }
+
+    func testSegmentContiguousBlocksStayOneGroup() {
+        // Block2 starts exactly when block1 ends (00:00 + 30m = 00:30) -> zero gap -> one group.
+        let b1 = block(at(0, 0), minutes: 30)
+        let b2 = block(at(0, 30), minutes: 30)
+        let groups = SleepSegmentation.segment([b1, b2])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.count, 2)
+    }
+
+    func testSegmentLargeGapSplitsIntoTwoGroups() {
+        // Block1 [00:00, 60m] ends 01:00; block2 starts 14:00 -> ~13h gap >= 60m -> two groups.
+        let b1 = block(at(0, 0), minutes: 60)
+        let b2 = block(at(14, 0), minutes: 30)
+        let groups = SleepSegmentation.segment([b1, b2])
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].count, 1)
+        XCTAssertEqual(groups[1].count, 1)
+    }
+
+    func testSegmentShortAwakeningStaysOneGroup() {
+        // Block1 [23:00, 120m] ends 01:00; block2 starts 01:30 -> 30m gap < 60m -> one group.
+        let b1 = block(at(23, 0, dayOffset: -1), minutes: 120)
+        let b2 = block(at(1, 30), minutes: 60)
+        let groups = SleepSegmentation.segment([b1, b2])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups.first?.count, 2)
+    }
+
+    func testSegmentThreeSleepsSplitIntoThreeGroupsInOrder() {
+        let b1 = block(at(1, 0), minutes: 60)     // ends 02:00
+        let b2 = block(at(9, 0), minutes: 30)     // gap 7h -> split; ends 09:30
+        let b3 = block(at(15, 0), minutes: 30)    // gap ~5.5h -> split
+        let groups = SleepSegmentation.segment([b1, b2, b3])
+        XCTAssertEqual(groups.count, 3)
+        // Chronological order preserved.
+        XCTAssertEqual(groups[0].first?.startAt, b1.startAt)
+        XCTAssertEqual(groups[1].first?.startAt, b2.startAt)
+        XCTAssertEqual(groups[2].first?.startAt, b3.startAt)
+    }
+
+    func testSegmentUnsortedInputStillGroupsCorrectly() {
+        let bNight1 = block(at(23, 0, dayOffset: -1), minutes: 60)  // ends 00:00
+        let bNight2 = block(at(0, 0), minutes: 60)                  // contiguous with night1
+        let bNap = block(at(14, 0), minutes: 30)                    // >60m gap -> own group
+        // Pass out of chronological order.
+        let groups = SleepSegmentation.segment([bNap, bNight2, bNight1])
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups[0].count, 2, "the two contiguous night blocks group together")
+        XCTAssertEqual(groups[0].first?.startAt, bNight1.startAt, "groups come out sorted")
+        XCTAssertEqual(groups[1].count, 1)
+        XCTAssertEqual(groups[1].first?.startAt, bNap.startAt)
+    }
+
+    // 2. SleepService.reconcileWakingDay — in-memory context
+
+    /// Insert ONE session whose blocks form a night run + a nap run separated by a >60m
+    /// gap under a single row, then reconcile the waking day. Returns the (day, expected bounds).
+    @discardableResult
+    private func seedNightPlusNapSession(into context: ModelContext) -> (day: Date, nightStart: Date, nightEnd: Date, napStart: Date, napEnd: Date) {
+        let day = TestSupport.day(0)
+        let nightStart = at(1, 0)                       // 01:00
+        let napStart = at(14, 0)                        // 14:00, >60m after the night ends
+        let session = SleepSession(date: day, startAt: nightStart, endAt: at(15, 0), totalMinutes: 0)
+        context.insert(session)
+        // Night: 3 contiguous 60-min blocks -> 01:00..04:00
+        for i in 0..<3 {
+            let s = Calendar.current.date(byAdding: .minute, value: i * 60, to: nightStart)!
+            context.insert(SleepStageBlock(sessionId: session.id, startAt: s, startMinute: i * 60, durationMinutes: 60, stage: .deep))
+        }
+        // Nap: 2 contiguous 30-min blocks -> 14:00..15:00
+        for i in 0..<2 {
+            let s = Calendar.current.date(byAdding: .minute, value: i * 30, to: napStart)!
+            context.insert(SleepStageBlock(sessionId: session.id, startAt: s, startMinute: i * 30, durationMinutes: 30, stage: .light))
+        }
+        try? context.save()
+        let nightEnd = Calendar.current.date(byAdding: .minute, value: 180, to: nightStart)!  // 04:00
+        let napEnd = Calendar.current.date(byAdding: .minute, value: 60, to: napStart)!        // 15:00
+        return (day, nightStart, nightEnd, napStart, napEnd)
+    }
+
+    private func sessions(on day: Date, in context: ModelContext) -> [SleepSession] {
+        let cal = Calendar.current
+        return ((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
+            .filter { cal.isDate($0.date, inSameDayAs: day) }
+            .sorted { $0.startAt < $1.startAt }
+    }
+
+    func testReconcileSplitsNightAndNapIntoTwoSessions() throws {
+        let context = try TestSupport.makeContext()
+        let seed = seedNightPlusNapSession(into: context)
+
+        SleepService.reconcileWakingDay(dateKey: seed.day, context: context)
+
+        let rows = sessions(on: seed.day, in: context)
+        XCTAssertEqual(rows.count, 2, "night + nap separated by a >60m gap split into two rows")
+
+        let night = rows[0]
+        let nap = rows[1]
+
+        // Each row's blocks all belong to it, and the first block of each is rebased to minute 0.
+        for row in rows {
+            let blocks = SleepRepository.blocks(sessionId: row.id, context: context)
+            XCTAssertFalse(blocks.isEmpty)
+            XCTAssertTrue(blocks.allSatisfy { $0.sessionId == row.id })
+            XCTAssertEqual(blocks.map { $0.startMinute }.min(), 0, "first block of each session rebased to startMinute 0")
+        }
+
+        // Bounds match each segment's first block start / last block end.
+        XCTAssertEqual(night.startAt, seed.nightStart)
+        XCTAssertEqual(night.endAt, seed.nightEnd)
+        XCTAssertEqual(nap.startAt, seed.napStart)
+        XCTAssertEqual(nap.endAt, seed.napEnd)
+
+        // Own spans, not one merged ~14h span.
+        XCTAssertEqual(night.totalMinutes, 180, "night span 01:00..04:00")
+        XCTAssertEqual(nap.totalMinutes, 60, "nap span 14:00..15:00")
+    }
+
+    func testReconcileIsIdempotent() throws {
+        let context = try TestSupport.makeContext()
+        let seed = seedNightPlusNapSession(into: context)
+
+        SleepService.reconcileWakingDay(dateKey: seed.day, context: context)
+        let first = sessions(on: seed.day, in: context)
+        XCTAssertEqual(first.count, 2)
+
+        SleepService.reconcileWakingDay(dateKey: seed.day, context: context)
+        let second = sessions(on: seed.day, in: context)
+        XCTAssertEqual(second.count, 2, "re-running does not churn into 3+ or collapse to 1")
+        XCTAssertEqual(second[0].startAt, seed.nightStart)
+        XCTAssertEqual(second[0].endAt, seed.nightEnd)
+        XCTAssertEqual(second[1].startAt, seed.napStart)
+        XCTAssertEqual(second[1].endAt, seed.napEnd)
+    }
+
+    func testReconcileSingleContiguousNightStaysOneSession() throws {
+        let context = try TestSupport.makeContext()
+        let day = TestSupport.day(0)
+        let start = at(1, 0)
+        let session = SleepSession(date: day, startAt: start, endAt: at(7, 0), totalMinutes: 0)
+        context.insert(session)
+        // 6 contiguous 60-min blocks: 01:00..07:00, no gap >= 60m.
+        for i in 0..<6 {
+            let s = Calendar.current.date(byAdding: .minute, value: i * 60, to: start)!
+            context.insert(SleepStageBlock(sessionId: session.id, startAt: s, startMinute: i * 60, durationMinutes: 60, stage: .light))
+        }
+        try? context.save()
+
+        SleepService.reconcileWakingDay(dateKey: day, context: context)
+
+        let rows = sessions(on: day, in: context)
+        XCTAssertEqual(rows.count, 1, "a single contiguous night must not spuriously split")
+        XCTAssertEqual(rows.first?.totalMinutes, 360, "01:00..07:00 span")
+    }
+
+    // 3. SleepService.migrateSleepSessionSegmentsIfNeeded
+
+    func testMigrateSleepSessionSegmentsSplitsLegacyMergedRow() throws {
+        let context = try TestSupport.makeContext()
+        let key = "sleepSessionSegment.v1"
+        // Capture and reset the gate so the migration runs; restore global state afterwards.
+        let priorGate = UserDefaults.standard.bool(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer {
+            if priorGate { UserDefaults.standard.set(true, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+
+        // Seed a legacy merged row: a night + a nap both under ONE session, separated by a >60m gap.
+        seedNightPlusNapSession(into: context)
+        let day = TestSupport.day(0)
+        XCTAssertEqual(sessions(on: day, in: context).count, 1, "starts as one merged row")
+
+        SleepService.migrateSleepSessionSegmentsIfNeeded(context: context)
+
+        XCTAssertEqual(sessions(on: day, in: context).count, 2, "migration re-segmented the merged row into night + nap")
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: key), "gate is set true after the one-time pass")
+    }
 }

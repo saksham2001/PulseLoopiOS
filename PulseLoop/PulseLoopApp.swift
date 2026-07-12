@@ -65,6 +65,10 @@ struct PulseLoopApp: App {
         // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
         SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
 
+        // One-time re-split of days whose nap merged into that morning's night (issue #59): re-derive
+        // each waking day into distinct sessions so the carousel can page through them.
+        SleepService.migrateSleepSessionSegmentsIfNeeded(context: container.mainContext)
+
         // A persisted "connected" state can't survive a restart — the live link is gone. Reset it so
         // the UI never shows a false "Connected" until a real connection re-confirms.
         if !runningTests {

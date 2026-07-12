@@ -152,18 +152,89 @@ enum SleepInsights {
         sessions.filter { $0.session.totalMinutes > 0 }
     }
 
+    /// Collapse each calendar (waking) day's sessions into ONE combined `SleepSummary` so
+    /// that a main night plus daytime naps count as a single tracked day for aggregate math.
+    ///
+    /// Pure and deterministic. Days with exactly one session pass through unchanged. For days
+    /// with multiple sessions, stage minutes are summed, blocks are concatenated (sorted by
+    /// `startAt`), and a combined detached `SleepSession` carries the day's start-of-day date,
+    /// earliest `startAt`, latest `endAt`, the SUM of `totalMinutes` (total time asleep across
+    /// the day, not the wall-clock span), and a duration-weighted average of non-nil scores.
+    /// The result is sorted by session date.
+    static func collapseByDay(_ sessions: [SleepSummary]) -> [SleepSummary] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.session.date) }
+
+        var collapsed: [SleepSummary] = []
+        collapsed.reserveCapacity(grouped.count)
+
+        for (day, daySessions) in grouped {
+            guard daySessions.count > 1 else {
+                if let only = daySessions.first { collapsed.append(only) }
+                continue
+            }
+
+            let lightMinutes = daySessions.reduce(0) { $0 + $1.lightMinutes }
+            let deepMinutes = daySessions.reduce(0) { $0 + $1.deepMinutes }
+            let awakeMinutes = daySessions.reduce(0) { $0 + $1.awakeMinutes }
+            let blocks = daySessions.flatMap { $0.blocks }.sorted { $0.startAt < $1.startAt }
+
+            let totalMinutes = daySessions.reduce(0) { $0 + $1.session.totalMinutes }
+            let startAt = daySessions.map { $0.session.startAt }.min() ?? day
+            let endAt = daySessions.map { $0.session.endAt }.max() ?? day
+
+            let scored = daySessions.compactMap { s -> (score: Int, weight: Int)? in
+                guard let score = s.session.score else { return nil }
+                return (score, max(0, s.session.totalMinutes))
+            }
+            let combinedScore: Int?
+            let totalWeight = scored.reduce(0) { $0 + $1.weight }
+            if scored.isEmpty {
+                combinedScore = nil
+            } else if totalWeight > 0 {
+                let weightedSum = scored.reduce(0.0) { $0 + Double($1.score) * Double($1.weight) }
+                combinedScore = Int((weightedSum / Double(totalWeight)).rounded())
+            } else {
+                // All contributing sessions have zero duration; fall back to a plain average.
+                let plainSum = scored.reduce(0) { $0 + $1.score }
+                combinedScore = Int((Double(plainSum) / Double(scored.count)).rounded())
+            }
+
+            let combinedSession = SleepSession(
+                date: day,
+                startAt: startAt,
+                endAt: endAt,
+                totalMinutes: totalMinutes,
+                score: combinedScore
+            )
+
+            collapsed.append(SleepSummary(
+                session: combinedSession,
+                lightMinutes: lightMinutes,
+                deepMinutes: deepMinutes,
+                awakeMinutes: awakeMinutes,
+                blocks: blocks
+            ))
+        }
+
+        return collapsed.sorted { $0.session.date < $1.session.date }
+    }
+
     static func averageDuration(_ valid: [SleepSummary]) -> Int? {
+        let valid = collapseByDay(valid)
         guard !valid.isEmpty else { return nil }
         return valid.reduce(0) { $0 + $1.session.totalMinutes } / valid.count
     }
 
     static func averageScore(_ valid: [SleepSummary]) -> Int? {
+        let valid = collapseByDay(valid)
         guard !valid.isEmpty else { return nil }
         let total = valid.reduce(0) { $0 + SleepScore.calculate($1).score }
         return Int((Double(total) / Double(valid.count)).rounded())
     }
 
     static func averageStages(_ valid: [SleepSummary]) -> (deep: Int, light: Int, awake: Int)? {
+        let valid = collapseByDay(valid)
         guard !valid.isEmpty else { return nil }
         let deep = valid.reduce(0) { $0 + $1.deepMinutes } / valid.count
         let light = valid.reduce(0) { $0 + $1.lightMinutes } / valid.count
@@ -305,6 +376,9 @@ extension SleepInsights {
     /// carrying its session's duration/score or nil for an untracked night.
     static func buildNightAxis(start: Date, end: Date, sessions: [SleepSummary], range: SleepRangeKey) -> [SleepBar] {
         let calendar = Calendar.current
+        // Collapse each waking day's sessions (main night + naps) into one before mapping, so a
+        // day is represented by its combined summary rather than an arbitrary first session.
+        let sessions = collapseByDay(sessions)
         let byDate: [Date: SleepSummary] = Dictionary(
             sessions.map { (calendar.startOfDay(for: $0.session.date), $0) },
             uniquingKeysWith: { first, _ in first }
@@ -335,7 +409,8 @@ extension SleepInsights {
     static func buildMonthBuckets(end: Date, sessions: [SleepSummary]) -> [SleepBar] {
         var calendar = Calendar.current
         calendar.timeZone = .current
-        let valid = validSessions(sessions)
+        // Collapse naps into their waking day before bucketing so each day counts once per month.
+        let valid = collapseByDay(validSessions(sessions))
         var byMonth: [String: [SleepSummary]] = [:]
         for session in valid {
             let comps = calendar.dateComponents([.year, .month], from: session.session.date)

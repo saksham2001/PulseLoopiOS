@@ -559,6 +559,42 @@ extension Calendar {
     }
 }
 
+/// Splits a waking-day's sleep into distinct sessions — the main night vs. daytime
+/// naps — so each can surface as its own carousel page (issue #59). Pure and
+/// testable; the SwiftData-facing reconciliation lives in `SleepService`.
+enum SleepSegmentation {
+    /// A run of >= this many minutes with no recorded sleep data marks a boundary
+    /// between two sessions. The ring writes a contiguous per-minute block for each
+    /// timeline packet, so short mid-night awakenings stay in one session while a nap
+    /// hours after the night (a genuine gap in the blocks) splits into its own.
+    static let sessionGapMinutes = 60
+
+    /// Group blocks into chronological sessions, splitting wherever the gap from one
+    /// block's end to the next block's start is >= `sessionGapMinutes`. Input need not
+    /// be sorted. Returns time-ordered groups; empty in -> empty out.
+    static func segment(_ blocks: [SleepStageBlock]) -> [[SleepStageBlock]] {
+        let sorted = blocks.sorted { $0.startAt < $1.startAt }
+        guard let firstBlock = sorted.first else { return [] }
+        let gapSeconds = Double(sessionGapMinutes) * 60
+        var groups: [[SleepStageBlock]] = []
+        var current: [SleepStageBlock] = [firstBlock]
+        var prevEnd = firstBlock.startAt.addingTimeInterval(Double(firstBlock.durationMinutes) * 60)
+        for block in sorted.dropFirst() {
+            if block.startAt.timeIntervalSince(prevEnd) >= gapSeconds {
+                groups.append(current)
+                current = [block]
+            } else {
+                current.append(block)
+            }
+            // `max` guards against nested/overlapping blocks pulling the running end backwards.
+            let end = block.startAt.addingTimeInterval(Double(block.durationMinutes) * 60)
+            prevEnd = max(prevEnd, end)
+        }
+        groups.append(current)
+        return groups
+    }
+}
+
 @MainActor
 enum SleepService {
     static func latestSleep(context: ModelContext) -> SleepSummary? {
@@ -572,9 +608,12 @@ enum SleepService {
     
     static func sleepForDate(_ date: Date, context: ModelContext) -> SleepSummary? {
         let start = Calendar.current.startOfDay(for: date)
-        guard let session = SleepRepository.sessions(context: context).first(where: { Calendar.current.isDate($0.date, inSameDayAs: start) }) else {
-            return nil
-        }
+        // A day can now hold several sessions (night + naps). Surface the main sleep —
+        // the longest — so single-session callers (Today card) show the night, not a nap.
+        let session = SleepRepository.sessions(context: context)
+            .filter { Calendar.current.isDate($0.date, inSameDayAs: start) }
+            .max { $0.totalMinutes < $1.totalMinutes }
+        guard let session else { return nil }
         return summary(for: session, includeStages: true, context: context)
     }
     
@@ -697,6 +736,87 @@ enum SleepService {
         }
 
         try? context.save()
+    }
+
+    /// Re-derive one waking day's sessions from its raw stage blocks: split by
+    /// `SleepSegmentation`, then reconcile the SwiftData rows — reuse existing rows in
+    /// time order, insert any missing, delete extras — re-point every block to its
+    /// segment and recompute session bounds. Idempotent: re-running on the same blocks
+    /// yields the same rows. Called after each timeline packet and from the one-time
+    /// migration. Does not save; the caller owns the transaction boundary.
+    static func reconcileWakingDay(dateKey: Date, context: ModelContext) {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: dateKey)
+
+        let allSessions = (try? context.fetch(FetchDescriptor<SleepSession>())) ?? []
+        let daySessions = allSessions
+            .filter { calendar.isDate($0.date, inSameDayAs: day) }
+            .sorted { $0.startAt < $1.startAt }
+        guard !daySessions.isEmpty else { return }
+
+        let daySessionIds = Set(daySessions.map { $0.id })
+        let dayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
+            .filter { daySessionIds.contains($0.sessionId) }
+
+        let segments = SleepSegmentation.segment(dayBlocks)
+
+        // No blocks left on this day — drop the empty rows entirely.
+        guard !segments.isEmpty else {
+            for row in daySessions { context.delete(row) }
+            return
+        }
+
+        for (index, segment) in segments.enumerated() {
+            let sorted = segment.sorted { $0.startAt < $1.startAt }
+            guard let segStart = sorted.first?.startAt else { continue }
+            let segEnd = sorted
+                .map { $0.startAt.addingTimeInterval(Double($0.durationMinutes) * 60) }
+                .max() ?? segStart
+
+            let row: SleepSession
+            if index < daySessions.count {
+                row = daySessions[index]
+            } else {
+                row = SleepSession(date: day, startAt: segStart, endAt: segEnd, totalMinutes: 0, syncedAt: Date())
+                context.insert(row)
+            }
+
+            for block in sorted {
+                block.sessionId = row.id
+                block.startMinute = max(0, Int(block.startAt.timeIntervalSince(segStart) / 60))
+            }
+            row.date = day
+            row.startAt = segStart
+            row.endAt = segEnd
+            row.totalMinutes = max(0, Int(segEnd.timeIntervalSince(segStart) / 60))
+            row.syncedAt = Date()
+            row.updatedAt = Date()
+            context.insert(DerivedUpdateRow(kind: "sleep_timeline", entityType: "sleep_session", entityId: row.id.uuidString))
+        }
+
+        // Every block was re-pointed to a segment row above, so any rows beyond the
+        // segment count are now empty — remove them.
+        if daySessions.count > segments.count {
+            for row in daySessions[segments.count...] { context.delete(row) }
+        }
+    }
+
+    /// One-time re-segmentation of existing sleep sessions that were persisted before
+    /// per-session splitting: an afternoon nap used to merge into that morning's night
+    /// (one row spanning ~16 h with a broken hypnogram). Re-derives each waking day into
+    /// distinct sessions. Idempotent + `UserDefaults`-gated so it runs once, off the
+    /// render path. Mirrors `migrateSplitSleepSessionsIfNeeded`.
+    static func migrateSleepSessionSegmentsIfNeeded(context: ModelContext) {
+        let key = "sleepSessionSegment.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let calendar = Calendar.current
+        let sessions = (try? context.fetch(FetchDescriptor<SleepSession>())) ?? []
+        let days = Set(sessions.map { calendar.startOfDay(for: $0.date) })
+        for day in days {
+            reconcileWakingDay(dateKey: day, context: context)
+        }
+        try? context.save()
+        UserDefaults.standard.set(true, forKey: key)
     }
 }
 
