@@ -51,6 +51,9 @@ final class CoachSleepGateTests: XCTestCase {
     private func service(_ c: ModelContext, json: String = ws3SummaryJSON()) -> CoachSummaryService {
         let store = CoachSettingsStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         store.settings.coachMasterEnabled = true
+        // Pin the keyed provider (paired with the stub key) so the coach isn't gated off by the new
+        // product default `.appleOnDevice`, which is unavailable in CI.
+        store.settings.providerMode = .userOpenAIKey
         return CoachSummaryService(
             modelContext: c,
             keyStore: WS3KeyStore(key: "sk-test"),

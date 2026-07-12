@@ -175,8 +175,7 @@ enum MetricsService {
 
     /// Whether a metric should be shown for the current device.
     static func supports(_ metric: MetricKey, context: ModelContext) -> Bool {
-        guard let required = metric.requiredCapability else { return true }
-        return deviceCapabilities(context).contains(required)
+        metric.isSupported(by: deviceCapabilities(context))
     }
 
     /// Whether a metric should be rendered right now: the device must support it (capability gate
@@ -212,6 +211,10 @@ enum MetricsService {
             value = Double(Int.random(in: 20...70))
         case .bloodSugar:
             value = Double(Int.random(in: 85...110))
+        case .respiratoryRate:
+            value = Double(Int.random(in: 12...18))
+        case .vo2max:
+            value = Double(Int.random(in: 35...50))
         }
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,
@@ -830,13 +833,15 @@ enum ActivityService {
         let spo2 = spo2Rows.map(\.value)
         let distance = gpsDistance(session: session, context: context) ?? session.distanceMeters
         let duration = max(0, Int(endedAt.timeIntervalSince(session.startedAt) - session.totalPauseSeconds))
-        let estimated = WorkoutMetricsEngine.calories(
-            type: session.type,
-            durationSeconds: duration,
-            distanceMeters: distance,
-            hrSamples: hrRows.map { (timestamp: $0.timestamp, bpm: $0.value) },
-            profile: MetricsProfileValues(profile: ProfileRepository.profile(context: context))
-        )
+        let estimated = WorkoutPrefsStore.shared.settings.useAdvancedCalories
+            ? WorkoutMetricsEngine.calories(
+                type: session.type,
+                durationSeconds: duration,
+                distanceMeters: distance,
+                hrSamples: hrRows.map { (timestamp: $0.timestamp, bpm: $0.value) },
+                profile: MetricsProfileValues(profile: ProfileRepository.profile(context: context))
+            )
+            : WorkoutMetricsEngine.flatRateCalories(durationSeconds: duration)
         let calories = preserveProvidedCalories ? (session.calories ?? estimated) : estimated
 
         session.distanceMeters = distance
@@ -902,6 +907,7 @@ enum ActivityService {
         let summary = refreshSummary(for: session, context: context)
         creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
         try? context.save()
+        PulseDataChange.shared.notify()
         return true
     }
 
@@ -1030,58 +1036,7 @@ enum ActivityService {
     }
 }
 
-enum ManualActivityCreationError: LocalizedError, Equatable {
-    case invalidActivityType
-    case invalidDuration
-    case endsInFuture
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidActivityType: return "Choose a valid activity type."
-        case .invalidDuration: return "Duration must be greater than zero."
-        case .endsInFuture: return "The activity must end in the past."
-        }
-    }
-}
-
-/// Single creation path for completed workouts supplied manually by either the coach or the UI.
-@MainActor
-enum ManualActivityService {
-    @discardableResult
-    static func create(
-        type: String,
-        startedAt: Date,
-        durationMinutes: Double,
-        distanceMeters: Double? = nil,
-        notes: String? = nil,
-        now: Date = Date(),
-        context: ModelContext
-    ) throws -> ActivitySession {
-        let canonicalType = ActivityMeta.meta(type).type
-        guard ActivityMeta.allKinds.contains(where: { $0.type == canonicalType }) else {
-            throw ManualActivityCreationError.invalidActivityType
-        }
-        guard durationMinutes > 0, durationMinutes.isFinite else {
-            throw ManualActivityCreationError.invalidDuration
-        }
-        let endedAt = startedAt.addingTimeInterval(durationMinutes * 60)
-        guard endedAt <= now else { throw ManualActivityCreationError.endsInFuture }
-
-        let session = ActivitySession(
-            type: canonicalType,
-            status: .finished,
-            startedAt: startedAt,
-            endedAt: endedAt,
-            distanceMeters: distanceMeters,
-            notes: notes?.isEmpty == true ? nil : notes,
-            useGps: false
-        )
-        context.insert(session)
-        _ = ActivityService.finishSummary(for: session, endedAt: endedAt, context: context)
-        try context.save()
-        return session
-    }
-}
+// ManualActivityCreationError / ManualActivityService live in Services/ManualActivityService.swift.
 
 @MainActor
 enum ActivityRecorderService {
@@ -1118,6 +1073,7 @@ enum ActivityRecorderService {
         context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
         context.insert(ActivityEvent(sessionId: session.id, kind: "finished"))
         try? context.save()
+        PulseDataChange.shared.notify()
     }
     
     static func cancel(_ session: ActivitySession, context: ModelContext) {
@@ -1144,6 +1100,8 @@ enum ActivityRecorderService {
         polls.forEach(context.delete)
         context.delete(session)
         try? context.save()
+        HealthSyncService.shared.deleteExportedWorkout(sessionId: id)
+        PulseDataChange.shared.notify()
     }
 
     static func recoverStaleSession(context: ModelContext) -> [ActivitySession] {

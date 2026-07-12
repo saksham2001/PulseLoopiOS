@@ -1,18 +1,29 @@
 ---
-title: Colmi / Yawell (QRing)
+title: Colmi / Yawell
 description: >-
-  The $15–30 QRing ring family (R02/R0x/R1x/H59) — Nordic-UART protocol, skin
-  temperature, REM sleep, and continuous background sync.
+  The $15–30 Colmi/Yawell ring family (R02/R0x/R1x/H59) — sold with either the
+  QRing app (Nordic-UART protocol) or the SmartHealth app (Yucheng YCBT). Both supported.
 ---
 
-# Colmi / Yawell (QRing)
+# Colmi / Yawell
 
-**PulseLoop support: ✅ Supported** (R11 tested; rest implemented, needs testing 🧪)
+**PulseLoop support: ✅ Supported & tested** — with either app
 
 The QRing family — manufactured by Yawell and most commonly sold under the
 **Colmi** brand. These $15–30 rings speak a Nordic-UART–based protocol and bring
 sensors the cheaper [56ff / Jring](jring.md) lacks: skin temperature, REM sleep,
 HRV, stress, and continuous background sync.
+
+!!! info "The same ring is sold with two apps — PulseLoop supports both"
+    A Colmi ring ships with **either QRing or SmartHealth**, and the two speak completely different
+    BLE protocols. The box tells you which; the ring itself doesn't, so **PulseLoop asks you when you
+    pair** ([details](#the-pairing-app-type-picker)). Pick wrong and it's a 20-second dead end with a
+    one-tap fix — never a broken ring.
+
+    | | Protocol | Covered by |
+    |---|---|---|
+    | **QRing** app | Nordic-UART (`6e40fff0` / `de5bf728`) | this page, down to [Hackability](#hackability) |
+    | **SmartHealth** app | Yucheng YCBT (`be940`) — the [TK5](tk5.md)'s protocol | [SmartHealth-app Colmi rings](#smarthealth-app-colmi-rings) |
 
 ## At a glance
 
@@ -41,7 +52,7 @@ HRV, stress, and continuous background sync.
 - **Colmi** (Shenzhen Colmi Technology Co., Ltd.) is the most popular licensed brand selling Yawell's QRing rings
 - Website: [yawellfit.com](https://www.yawellfit.com/), [colmi.com](https://www.colmi.com/)
 
-## Protocol
+## Protocol (QRing firmware)
 
 | Property | Value |
 |---|---|
@@ -49,6 +60,9 @@ HRV, stress, and continuous background sync.
 | **App** | QRing |
 | **Frame size** | 16 bytes (checksum) |
 | **Encryption** | None |
+
+A SmartHealth-flavoured unit speaks none of this — see
+[SmartHealth-app Colmi rings](#smarthealth-app-colmi-rings).
 
 ## Models — QRing platform
 
@@ -108,7 +122,7 @@ The VC30F is the PPG bio-sensor used in R10, R11, and R12:
 - Wear detection (wake on motion)
 - Raw acceleration data for sleep and activity algorithms
 
-## Capabilities per model
+## Capabilities per model (QRing firmware)
 
 | Capability | R10 | R12 | R11 | Other QRing¹ |
 |---|---|---|---|---|
@@ -140,6 +154,78 @@ The VC30F is the PPG bio-sensor used in R10, R11, and R12:
 - Stress scoring
 - Continuous background sync (autonomous notifications while worn)
 
+---
+
+## SmartHealth-app Colmi rings
+
+**PulseLoop support: ✅ Tested on the Colmi R09** — other models implemented, untested
+
+Some Colmi rings ship with **SmartHealth** (`com.zhuoting.healthyucheng`) instead of QRing: same brand,
+same product numbers, often the same box — but the firmware speaks the **Yucheng YCBT** protocol
+(`be940`), which has nothing in common at the wire level with QRing's Nordic-UART frames. It is the
+[TK5](tk5.md)'s protocol byte for byte, so these rings run the same shared driver.
+
+Byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)**.
+
+### Which rings
+
+| Ring | Status |
+|---|---|
+| **Colmi R09** (advertises `R99 54DC`) | ✅ Tested — pairs, syncs, HR + SpO₂ + blood pressure |
+| Colmi R10 | 🧪 Implemented, untested |
+| Any other Colmi / Yawell model | ❔ Possible — which app a ring ships with is a seller choice, not a hardware one, and the *same* model number is sold both ways. If yours came with SmartHealth it should just work |
+
+Every SmartHealth ring seen so far advertises as `<MODEL> <4 hex>` — with a **space** (`R99 54DC`,
+`TK5 24AA`) — where QRing rings use an **underscore** (`R02_A1B2`). PulseLoop uses that to pre-select
+the picker, but your pick always wins.
+
+### The pairing app-type picker
+
+The ring can't be asked which app it came with, so PulseLoop **asks you**. Under every Colmi card in
+*Add your ring* there's a segmented picker — *"Which app came with your ring?"* — with **QRing** (the
+default) and **SmartHealth**. It chooses the driver, and the card's capability chips and support badge
+follow it. jring and TK5 show no picker: those ship with exactly one app.
+
+**If you pick wrong**, the driver looks for services the ring doesn't have, the connect stalls, and
+after **20 seconds** PulseLoop says so — *"This ring didn't answer as a SmartHealth ring…"* — with a
+one-tap **"Try as QRing"** that flips the picker and re-dials. Nothing wrong is saved. (Only pairing
+times out; a background reconnect to a ring you've already paired keeps waiting, as it should.)
+
+### Capabilities
+
+**The ring decides.** The handshake asks what sensors it has (`02 01` → its capability bitmap) and
+PulseLoop offers only those, so two Colmi rings on the identical protocol correctly show different
+cards. The bitmap can only *add* from a pre-approved list — a garbled reply never takes one away.
+
+The R09 shows why that matters: it reports **no HRV, temperature, stress or blood sugar** — but it
+*does* have blood pressure, including calibration.
+
+| Capability | QRing-Colmi | SmartHealth-Colmi (R09) |
+|---|:---:|:---:|
+| Heart rate — history / live / spot | ✅ | ✅ |
+| SpO₂ — history | ✅ | ✅ |
+| SpO₂ — **spot** | ❌ (all-day only) | ✅ (takes ~40 s) |
+| Steps / distance / calories | ✅ | ✅ |
+| Sleep, incl. REM | ✅ | 🧪 untested |
+| Blood pressure — spot + history | ❌ | ✅ ¹ |
+| Battery · find device · measurement intervals | ✅ | ✅ |
+| HRV | ✅ | ❌ ¹ |
+| Skin temperature · Stress | ✅ | ❌ ¹ |
+| Blood sugar | ❌ | ❌ ¹ |
+| Power off / factory reset | ✅ | ❌ |
+| Continuous background sync | ✅ | ❌ — read only while connected |
+
+¹ **Ring-declared.** A different SmartHealth-Colmi that sets the bit would get these cards. The R09
+leaves them clear, and backs that up on the wire — it refuses the HRV commands outright.
+
+### 🧪 Still unconfirmed
+
+**Sleep** is the one significant path no SmartHealth-Colmi has exercised yet. Everything else above is
+confirmed on the R09 — including that its JieLi chip needs **no `AE00` auth**: every health command
+answered in plaintext.
+
+---
+
 ## Hackability
 
 ### 🏆 Full-Stack Hackable: Colmi R02 / R03 / R06
@@ -169,5 +255,6 @@ The manufacturer publishes firmware update images with no authenticity checks �
 ---
 
 See the [hardware overview](index.md) for the full cross-manufacturer comparison
-tables, or the [Jring / 56ff](jring.md) page for the cheaper option (the only one
-with BP/blood sugar).
+tables, the [Jring / 56ff](jring.md) page for the cheaper option, or — if your Colmi came with the
+SmartHealth app — the [TK5](tk5.md) page and the [YCBT protocol](../YCBT-Protocol.md) reference, whose
+driver it shares.

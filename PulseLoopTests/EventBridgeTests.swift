@@ -3,6 +3,108 @@ import XCTest
 
 /// The pure `RingDecodedEvent → [PulseEvent]` mapping, including its sanity gates.
 final class EventBridgeTests: XCTestCase {
+
+    // MARK: - History-measurement plausibility
+
+    func testHistoryMeasurementInWindowMapsThrough() {
+        let now = Date()
+        let events = RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(-900)),
+            now: now
+        )
+        XCTAssertEqual(events.count, 1)
+    }
+
+    /// A jring's on-ring log can still hold records stamped under an older *UTC* clock. Once the app
+    /// sets the ring's RTC to local time, those decode hours into the future — observed at +3.7 h on a
+    /// real device. They must be dropped, not persisted (they would poison "today" and peak HR).
+    func testFutureHistoryMeasurementDropped() {
+        let now = Date()
+        XCTAssertTrue(RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(3.7 * 3600)),
+            now: now
+        ).isEmpty)
+    }
+
+    /// Anything older than the ~8-day history horizon is a misdecoded frame.
+    func testAncientHistoryMeasurementDropped() {
+        let now = Date()
+        XCTAssertTrue(RingEventBridge.events(
+            for: .historyMeasurement(kind: .heartRate, value: 70, timestamp: now.addingTimeInterval(-9 * 24 * 3600)),
+            now: now
+        ).isEmpty)
+    }
+
+    // MARK: - Per-kind history gates (YCBT/TK5 history types)
+    //
+    // History is where a range gate earns its keep: the ring replays its *entire* log on every sync and
+    // history rows upsert on (kind, timestamp), so a misdecoded record re-persists on every future sync.
+
+    /// One value each side of the gate, per kind.
+    private struct Gate {
+        let kind: MeasurementKind
+        let accepted: Double
+        let rejected: Double
+    }
+
+    func testHistoryMeasurementRangeGatesPerKind() {
+        let gates = [
+            // The floor is the display floor of consumer oximetry, not its 70 % accuracy spec: 12 % is a
+            // misdecoded byte, but 68 % is a desaturation the QRing-Colmi log has always been allowed to
+            // report (see `ColmiDecoderTests.testSevereDesaturationSurvivesTheSharedHistoryGate`).
+            Gate(kind: .spo2, accepted: 68, rejected: 12),
+            Gate(kind: .hrv, accepted: 62.5, rejected: 0),
+            Gate(kind: .stress, accepted: 34.25, rejected: 0),
+            Gate(kind: .fatigue, accepted: 18, rejected: 0),
+            Gate(kind: .temperature, accepted: 36.6, rejected: 0.15),   // the ring's `int=0, frac=15` filler
+            Gate(kind: .bloodPressureSystolic, accepted: 118, rejected: 300),
+            Gate(kind: .bloodPressureDiastolic, accepted: 79, rejected: 10),
+            Gate(kind: .bloodSugar, accepted: 99.088, rejected: 10),
+            Gate(kind: .respiratoryRate, accepted: 14, rejected: 90),
+            Gate(kind: .vo2max, accepted: 42, rejected: 5),
+        ]
+        let now = Date()
+        let timestamp = now.addingTimeInterval(-900)
+        for gate in gates {
+            XCTAssertEqual(
+                RingEventBridge.events(
+                    for: .historyMeasurement(kind: gate.kind, value: gate.accepted, timestamp: timestamp), now: now
+                ).count,
+                1, "\(gate.kind) \(gate.accepted) should map through"
+            )
+            XCTAssertTrue(
+                RingEventBridge.events(
+                    for: .historyMeasurement(kind: gate.kind, value: gate.rejected, timestamp: timestamp), now: now
+                ).isEmpty,
+                "\(gate.kind) \(gate.rejected) should be dropped"
+            )
+        }
+    }
+
+    /// Every kind must be *reachable* through the gate — a kind accidentally left out of the range
+    /// switch would silently persist garbage (or, worse, drop everything).
+    func testEveryMeasurementKindHasAPlausibleValueThatMapsThrough() {
+        let plausible: [MeasurementKind: Double] = [
+            .heartRate: 70, .spo2: 97, .stress: 40, .hrv: 55, .temperature: 36.6,
+            .bloodPressureSystolic: 118, .bloodPressureDiastolic: 79, .fatigue: 20,
+            .bloodSugar: 99, .respiratoryRate: 14, .vo2max: 42,
+        ]
+        let now = Date()
+        for kind in MeasurementKind.allCases {
+            guard let value = plausible[kind] else {
+                XCTFail("new MeasurementKind \(kind) — add a plausible value here and a gate in RingEventBridge")
+                continue
+            }
+            XCTAssertEqual(
+                RingEventBridge.events(
+                    for: .historyMeasurement(kind: kind, value: value, timestamp: now.addingTimeInterval(-900)),
+                    now: now
+                ).count,
+                1, "\(kind) has no path through the history gate"
+            )
+        }
+    }
+
     func testHeartRateSampleMapsThrough() {
         let events = RingEventBridge.events(for: .heartRateSample(bpm: 72, timestamp: Date()))
         XCTAssertEqual(events.count, 1)
@@ -149,5 +251,15 @@ final class EventBridgeTests: XCTestCase {
     func testActivityBucketAboveCeilingDropped() {
         // A single ~15-min bucket can't exceed the per-bucket step ceiling.
         XCTAssertTrue(RingEventBridge.events(for: .activityBucket(timestamp: Date(), steps: 5_001, distanceMeters: 0)).isEmpty)
+    }
+
+    /// A bucket carries a ring-supplied timestamp, and unlike a live update (which only ratchets today's
+    /// row) it *creates* the day it is dated — so a sport record logged before the ring's first time-sync
+    /// (RTC at the 2000 epoch) would mint an `ActivityDaily` for 2000-01-01 and re-upsert it on every
+    /// sync, for good. Same ~8-day window as every other ring-stamped history event.
+    func testActivityBucketWithAnImplausibleTimestampDropped() {
+        let unsetRingClock = Date(timeIntervalSince1970: 946_684_800)   // 2000-01-01, the TK5 epoch
+        XCTAssertTrue(RingEventBridge.events(
+            for: .activityBucket(timestamp: unsetRingClock, steps: 120, distanceMeters: 90)).isEmpty)
     }
 }

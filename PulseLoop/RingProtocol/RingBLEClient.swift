@@ -27,10 +27,37 @@ final class RingBLEClient: NSObject {
 
     /// Registry of supported wearables. First coordinator whose `matches` claims a peripheral wins.
     /// **Adding a wearable = append one entry here.**
+    ///
+    /// The order is load-bearing at exactly one place: `ColmiSmartHealthCoordinator` must precede
+    /// `ColmiCoordinator`. Both recognize the same Colmi local names, and the QRing matcher needs
+    /// *only* the name — so behind it, no SmartHealth ring would ever be claimed. The SmartHealth
+    /// matcher is a conjunction a QRing ring cannot satisfy, so it is safe in front.
     static let coordinators: [WearableCoordinator.Type] = [
         JringCoordinator.self,
+        ColmiSmartHealthCoordinator.self,
         ColmiCoordinator.self,
+        TK5Coordinator.self,
     ]
+
+    /// Which coordinator serves a connection. Pure, so the pairing rules are testable without a
+    /// `CBCentralManager`.
+    ///
+    /// **The user's explicit family outranks the scan's auto-match.** Two Colmi rings that speak
+    /// different protocols can advertise the identical local name, so the advertisement is a hint and
+    /// the pairing screen's app-type pick is the fact. Falls back to jring when neither is known (a
+    /// reconnect to an unrecognized cached peripheral), preserving the original behavior.
+    static func coordinatorType(
+        preferredFamily: RingDeviceType?,
+        autoMatched: RingDeviceType?
+    ) -> WearableCoordinator.Type {
+        let family = preferredFamily ?? autoMatched
+        return coordinators.first { $0.deviceType == family } ?? JringCoordinator.self
+    }
+
+    /// Walk the registry to claim an advertisement; nil when no coordinator recognizes it.
+    static func matchDeviceType(name: String?, advertisement: AdvertisementInfo) -> RingDeviceType? {
+        coordinators.first { $0.matches(name: name, advertisement: advertisement) }?.deviceType
+    }
 
     struct DiscoveredRing: Identifiable, Equatable {
         let id: UUID          // CBPeripheral.identifier
@@ -113,9 +140,20 @@ final class RingBLEClient: NSObject {
     /// single dropped ACK can't wedge it.
     private let writeAckTimeout: UInt64 = 4_000_000_000
 
+    /// Connect-attempt timeout, armed **only** for a connect the user asked for (see `beginConnect`).
+    /// The watchdog above only guards a link that already reached `.connected`; nothing guarded the
+    /// connect *phase*, which is where the wrong-driver failure lives: pick the wrong app variant for a
+    /// Colmi and the installed driver hunts for service UUIDs the ring doesn't have — the BLE link
+    /// opens, GATT discovery turns up nothing, `.connected` never arrives, and the pairing screen spins
+    /// forever with no error. 20 s is slack, not a race: a healthy ring completes link + discovery +
+    /// notify-enable in a few seconds.
+    private var connectTimeoutTask: Task<Void, Never>?
+    private let connectTimeout: UInt64 = 20_000_000_000
+
     private static let lastPeripheralKey = "ring.lastPeripheralIdentifier"
     private static let lastDeviceTypeKey = "ring.lastDeviceType"
     private static let lastWearableModelKey = "ring.lastWearableModel"
+    private static let lastCapabilitiesKey = "ring.lastCapabilities"
 
     /// The 0x180F battery service, used only when the active driver exposes GATT battery.
     private let batteryServiceCBUUID = CBUUID(string: "180F")
@@ -168,7 +206,9 @@ final class RingBLEClient: NSObject {
         if state == .scanning { state = .idle }
     }
 
-    func connect(to id: UUID, selectedModelID: String? = nil) {
+    /// - Parameter preferredFamily: the family the *user* declared at pairing (the app-type picker on a
+    ///   Colmi card). Non-nil wins over the scan's auto-match — see `coordinatorType(preferredFamily:autoMatched:)`.
+    func connect(to id: UUID, selectedModelID: String? = nil, preferredFamily: RingDeviceType? = nil) {
         // Prefer the freshly-scanned object; fall back to the system cache (paired/known).
         guard let target = discoveredPeripherals[id] ?? central.retrievePeripherals(withIdentifiers: [id]).first else {
             lastError = "Ring no longer available; scan again."
@@ -180,7 +220,9 @@ final class RingBLEClient: NSObject {
             to: target,
             deviceType: discoveredRing?.deviceType,
             selectedModelID: discoveredRing?.wearableModelID ?? selectedModelID,
-            advertisedName: discoveredRing?.name
+            advertisedName: discoveredRing?.name,
+            preferredFamily: preferredFamily,
+            userInitiated: true
         )
     }
 
@@ -201,6 +243,7 @@ final class RingBLEClient: NSObject {
 
     func disconnect() {
         autoReconnect = false
+        cancelConnectTimeout()   // an explicit disconnect is not a failed connect attempt
         central.stopScan()
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
@@ -231,6 +274,7 @@ final class RingBLEClient: NSObject {
         UserDefaults.standard.removeObject(forKey: Self.lastPeripheralKey)
         UserDefaults.standard.removeObject(forKey: Self.lastDeviceTypeKey)
         UserDefaults.standard.removeObject(forKey: Self.lastWearableModelKey)
+        UserDefaults.standard.removeObject(forKey: Self.lastCapabilitiesKey)   // a new ring must not inherit the old one's claims
         activeDeviceType = nil
         activeWearableModelID = nil
         activeCapabilities = []
@@ -265,6 +309,19 @@ final class RingBLEClient: NSObject {
         UserDefaults.standard.string(forKey: Self.lastWearableModelKey)
     }
 
+    /// What the last connected ring resolved to *after* its capability bitmap had spoken — the baseline
+    /// plus whatever the unit itself claimed (`applySupportFunctions`).
+    ///
+    /// Remembered because the bitmap arrives partway into a handshake, while `Device.capabilitiesRaw` is
+    /// overwritten wholesale at the *start* of one. Without this, every connect would first stamp the
+    /// device back down to the family baseline — so a ring whose temperature sensor we already know about
+    /// would drop its Vitals card on every launch and only get it back a second later, and a handshake
+    /// whose `02 01` reply is lost (or answered by firmware with a short array) would leave it dropped
+    /// for the whole session and while offline afterwards.
+    var lastKnownCapabilities: Set<WearableCapability> {
+        Set(csv: UserDefaults.standard.string(forKey: Self.lastCapabilitiesKey) ?? "")
+    }
+
     var hasLastKnownRing: Bool { lastKnownIdentifier != nil }
 
     /// The active sync engine, exposed so the `RingSyncCoordinator` façade can drive command flows.
@@ -272,11 +329,18 @@ final class RingBLEClient: NSObject {
 
     // MARK: - Internal
 
+    /// - Parameters:
+    ///   - preferredFamily: an explicitly user-declared family; wins over `deviceType` (the auto-match).
+    ///   - userInitiated: the user tapped a ring in the pairing screen, so a connect that never lands is
+    ///     a dead end they need told about — arm the connect-attempt timeout. Background reconnects pass
+    ///     false: a pending connect that waits forever is exactly what they're *for*.
     private func beginConnect(
         to target: CBPeripheral,
         deviceType: RingDeviceType?,
         selectedModelID: String?,
-        advertisedName: String?
+        advertisedName: String?,
+        preferredFamily: RingDeviceType? = nil,
+        userInitiated: Bool = false
     ) {
         central.stopScan()
         autoReconnect = true
@@ -284,6 +348,7 @@ final class RingBLEClient: NSObject {
         // a reconnect after an idle drop can't collide with an orphaned handle. iOS analogue of
         // Android's gatt.disconnect()+close(). Reset the per-connection write state too.
         stopReliabilityTimers()
+        cancelConnectTimeout()
         if let old = peripheral, old.identifier != target.identifier || old.state != .disconnected {
             central.cancelPeripheralConnection(old)
         }
@@ -291,9 +356,9 @@ final class RingBLEClient: NSObject {
         writeInFlight = false; writeQueue = []
         peripheral = target
         target.delegate = self
-        // Select the coordinator/driver for this connection. Default to jring if discovery didn't
-        // tag a type (e.g. reconnect to an unknown cached peripheral) — preserves prior behavior.
-        let coordinatorType = Self.coordinators.first { $0.deviceType == deviceType } ?? JringCoordinator.self
+        // Select the coordinator/driver for this connection: the user's declared family if they made
+        // one, else the auto-match, else jring (an unknown cached peripheral — prior behavior).
+        let coordinatorType = Self.coordinatorType(preferredFamily: preferredFamily, autoMatched: deviceType)
         activeAdvertisedName = advertisedName
         activeWearableModelID = WearableModel.resolve(
             advertisedName: advertisedName,
@@ -302,19 +367,67 @@ final class RingBLEClient: NSObject {
         )?.id
         installDriver(coordinatorType)
         state = .connecting
+        if userInitiated { startConnectTimeout() }
         central.connect(target, options: nil)
     }
 
     /// Instantiate the coordinator's driver + sync engine for the upcoming connection. A fresh driver
     /// per connection keeps per-connection state from leaking across reconnects.
-    private func installDriver(_ coordinatorType: WearableCoordinator.Type) {
+    ///
+    /// Capabilities start from what we last *learned* about the ring, not from the bare family baseline:
+    /// the remembered set is fed back through the same additive-only refinement (`refinedCapabilities`),
+    /// so it can only re-grant capabilities this family gates on the bitmap — a set remembered from a
+    /// different family, or one naming something this family never gates, cannot leak in. The ring's own
+    /// bitmap still overrules it moments later (`applySupportFunctions`), downwards as well as upwards.
+    func installDriver(_ coordinatorType: WearableCoordinator.Type) {
         let coordinator = coordinatorType.init()
         let driver = coordinator.makeDriver(writer: self)
         activeCoordinator = coordinator
         activeDriver = driver
         activeSyncEngine = driver.makeSyncEngine()
         activeDeviceType = coordinatorType.deviceType
-        activeCapabilities = coordinator.capabilities
+        activeCapabilities = coordinator.refinedCapabilities(bitmapDerived: lastKnownCapabilities)
+    }
+
+    /// Re-adopt the remembered ring's identity: its family **and** the exact catalog model.
+    ///
+    /// State restoration is the one connect path with no advertisement to re-derive either from. The
+    /// family was already remembered; the model id was not, and a restored session that reached
+    /// `.connected` without it published `.deviceIdentified(wearableModelID: nil)` — which *erases*
+    /// `Device.wearableModelID`, costing the device card its product name and art until some later
+    /// reconnect happened to carry a resolvable GAP name.
+    func adoptRememberedIdentity() {
+        // The remembered family already *is* the user's choice — `beginConnect` persisted whichever
+        // coordinator it selected — so a restored session re-adopts the right driver for free.
+        installDriver(Self.coordinatorType(preferredFamily: nil, autoMatched: lastKnownDeviceType))
+        activeWearableModelID = lastKnownWearableModelID
+    }
+
+    /// Fold the ring's self-reported capability bitmap into the active capability set.
+    ///
+    /// `installDriver` seeds `activeCapabilities` with the coordinator's baseline — what the *family*
+    /// can do. This is where *this unit* gets a say, which is what makes one driver able to serve SKUs
+    /// that differ on which sensors they physically have. The bitmap can only add capabilities the
+    /// family pre-approved (`refinedCapabilities`), so a family that gates none is untouched.
+    ///
+    /// Re-publishing `.deviceIdentified` is what carries the refined set into `Device.capabilitiesRaw`;
+    /// the equality guard keeps that idempotent, because the bitmap arrives on *every* handshake and a
+    /// reconnect runs a fresh one — without it, each reconnect would re-publish an identical set and
+    /// churn the bus and the store for nothing.
+    private func applySupportFunctions(_ derived: Set<WearableCapability>) {
+        guard let coordinator = activeCoordinator, let type = activeDeviceType else { return }
+        let refined = coordinator.refinedCapabilities(bitmapDerived: derived)
+        // Remember the answer even when it changes nothing right now: this is what seeds the *next*
+        // connect, before that connect's own bitmap has arrived (see `lastKnownCapabilities`).
+        UserDefaults.standard.set(refined.csv, forKey: Self.lastCapabilitiesKey)
+        guard refined != activeCapabilities else { return }
+        activeCapabilities = refined
+        publish(.deviceIdentified(
+            deviceType: type,
+            wearableModelID: activeWearableModelID,
+            advertisedName: activeAdvertisedName,
+            capabilities: refined
+        ))
     }
 
     private func pumpWrites() {
@@ -399,6 +512,41 @@ final class RingBLEClient: NSObject {
         watchdogTask?.cancel(); watchdogTask = nil
     }
 
+    // MARK: Connect-attempt timeout
+
+    private func startConnectTimeout() {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.connectTimeout ?? 20_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.connectAttemptTimedOut()
+        }
+    }
+
+    /// Deliberately *not* folded into `stopReliabilityTimers`: that also runs on an unexpected disconnect,
+    /// where the client re-dials and the attempt is still live — cancelling there would disarm the very
+    /// case this guards.
+    private func cancelConnectTimeout() {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+    }
+
+    /// The user's connect never reached `.connected`. Give up, and say why in terms they can act on.
+    private func connectAttemptTimedOut() {
+        guard state == .connecting || state == .reconnecting else { return }
+        connectTimeoutTask = nil
+        // Order matters: `didDisconnectPeripheral` re-dials whenever `autoReconnect` is set, so clearing
+        // it *before* the cancel is what stops the failure from instantly reconnecting itself.
+        autoReconnect = false
+        if let peripheral { central.cancelPeripheralConnection(peripheral) }
+        stopReliabilityTimers()
+        // Names the app variant we tried and the one to try instead — the whole point of failing loudly
+        // here is that the wrong-app pick is recoverable in one tap (`PairingView`).
+        lastError = RingConnectFailure.message(family: activeDeviceType)
+        state = .failed
+        publish(.deviceStateChanged(state: .failed, address: nil))
+    }
+
     private func publishRawPacket(direction: PacketDirection, data: Data) {
         // Outgoing frames are logged raw for the debug feed. We do NOT route them through the
         // driver's `ingest` (that is the inbound path and, for big-data devices, would corrupt the
@@ -411,16 +559,13 @@ final class RingBLEClient: NSObject {
         Task { await PulseEventBus.shared.publish(event) }
     }
 
-    /// Walk the coordinator registry to claim a discovered peripheral. Returns the first matching
-    /// device type, or nil if no coordinator recognizes it.
+    /// Lift CoreBluetooth's raw advertisement dictionary into `AdvertisementInfo` and claim it against
+    /// the registry.
     private func matchDeviceType(name: String?, advertisementData: [String: Any]) -> RingDeviceType? {
-        let serviceUUIDs = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
-        let mfg = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
-        let info = AdvertisementInfo(serviceUUIDs: serviceUUIDs, manufacturerData: mfg)
-        for coordinatorType in Self.coordinators where coordinatorType.matches(name: name, advertisement: info) {
-            return coordinatorType.deviceType
-        }
-        return nil
+        Self.matchDeviceType(name: name, advertisement: AdvertisementInfo(
+            serviceUUIDs: (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? [],
+            manufacturerData: advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        ))
     }
 }
 
@@ -448,8 +593,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
             autoReconnect = true
             peripheral = target
             target.delegate = self
-            let coordinatorType = Self.coordinators.first { $0.deviceType == lastKnownDeviceType } ?? JringCoordinator.self
-            installDriver(coordinatorType)
+            adoptRememberedIdentity()
         }
     }
 
@@ -493,13 +637,20 @@ extension RingBLEClient: CBCentralManagerDelegate {
             // advertisement omits the service UUID / manufacturer bytes; recognized rings sort first.
             guard let displayName = name, !displayName.isEmpty else { return }
             discoveredPeripherals[peripheral.identifier] = peripheral
+            // Keep the model tag when the matched family is *any* the card can resolve to, not just its
+            // default — a Colmi claimed as `.colmiSmartHealth` is still a "Colmi R09".
+            let modelID: String? = {
+                guard let matchedModel, let matchedType,
+                      matchedModel.families.contains(matchedType) else { return nil }
+                return matchedModel.id
+            }()
             let ring = DiscoveredRing(
                 id: peripheral.identifier,
                 name: displayName,
                 rssi: RSSI.intValue,
                 isLikelyRing: matchedType != nil,
                 deviceType: matchedType,
-                wearableModelID: matchedModel?.family == matchedType ? matchedModel?.id : nil
+                wearableModelID: modelID
             )
             if let index = discovered.firstIndex(where: { $0.id == ring.id }) {
                 discovered[index] = ring
@@ -513,6 +664,9 @@ extension RingBLEClient: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         MainActor.assumeIsolated {
             peripheral.delegate = self
+            // Auto-reconnect keeps the existing driver, so tell it the link is new: anything half-read
+            // when the old link dropped (a partial frame, an in-flight history transfer) must go.
+            activeDriver?.connectionDidStart()
             // Discover ALL services so we also find a Device Information Service the ring exposes
             // without advertising it (firmware revision lives there). Characteristic discovery below
             // filters to the driver's chars + battery + firmware.
@@ -554,12 +708,20 @@ extension RingBLEClient: CBCentralManagerDelegate {
             batteryCharacteristic = nil
             writeInFlight = false
             writeQueue = []
+            // Stop the driver's own state machines *now*, not on the next connect: a self-driving one
+            // (the YCBT history transfer's stall watchdog) would otherwise keep stepping through the
+            // reconnect gap and refill the queue we just cleared, and those stale queries would be the
+            // first thing the new link writes — ahead of its handshake.
+            activeDriver?.connectionDidEnd()
             publish(.deviceStateChanged(state: .disconnected, address: nil))
             if autoReconnect {
                 state = .reconnecting
                 central.connect(peripheral, options: nil)
             } else {
-                state = .disconnected
+                // A connect-attempt timeout has already parked us in `.failed` with an explanatory
+                // message, and the cancel *it* issued is what brought us here — it must not overwrite
+                // that with a bland `.disconnected`.
+                if state != .failed { state = .disconnected }
                 self.peripheral = nil
             }
         }
@@ -598,17 +760,21 @@ extension RingBLEClient: CBPeripheralDelegate {
         MainActor.assumeIsolated {
             guard let driver = activeDriver else { return }
             for characteristic in service.characteristics ?? [] {
-                if characteristic.uuid == driver.writeUUID {
-                    writeChar = characteristic
-                } else if characteristic.uuid == driver.commandUUID {
-                    commandChar = characteristic
-                } else if driver.notifyUUIDs.contains(characteristic.uuid) {
-                    notifyChars[characteristic.uuid] = characteristic
+                let uuid = characteristic.uuid
+                // Write / command / notify are checked independently (not mutually exclusive) because a
+                // device can expose one characteristic that is *both* the write target and a notify
+                // source — the YCBT families' `be940001` receives command replies on the same char it's written
+                // to. jring/Colmi keep these on distinct UUIDs, so their behavior is unchanged.
+                if uuid == driver.writeUUID { writeChar = characteristic }
+                if uuid == driver.commandUUID { commandChar = characteristic }
+                if driver.notifyUUIDs.contains(uuid) {
+                    notifyChars[uuid] = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)
-                } else if characteristic.uuid == driver.batteryCharUUID {
+                }
+                if uuid == driver.batteryCharUUID {
                     batteryCharacteristic = characteristic
                     peripheral.readValue(for: characteristic)
-                } else if firmwareCharUUIDs.contains(characteristic.uuid) {
+                } else if firmwareCharUUIDs.contains(uuid) {
                     peripheral.readValue(for: characteristic)
                 }
             }
@@ -628,6 +794,7 @@ extension RingBLEClient: CBPeripheralDelegate {
             // this twice; guard against re-running startup.)
             guard state != .connected else { return }
             state = .connected
+            cancelConnectTimeout()   // the attempt landed
             UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.lastPeripheralKey)
             if let type = activeDeviceType {
                 UserDefaults.standard.set(type.rawValue, forKey: Self.lastDeviceTypeKey)
@@ -683,6 +850,9 @@ extension RingBLEClient: CBPeripheralDelegate {
                 publish(.rawPacket(direction: .incoming, data: value, decoded: decoded))
                 for event in RingEventBridge.events(for: decoded) {
                     publish(event)
+                }
+                if case let .supportFunctions(derived) = decoded {
+                    applySupportFunctions(derived)
                 }
                 // Advance any response-driven sync machine (no-op for jring).
                 activeSyncEngine?.handle(decoded)

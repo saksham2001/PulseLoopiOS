@@ -32,15 +32,21 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
     // Interaction capabilities
     case manualHeartRate      // single-shot on-demand HR
     case manualSpo2           // single-shot on-demand SpO2 (jring; Colmi has no instant SpO2)
+    case manualHrv            // single-shot on-demand HRV (TK5: rides the same live stream as HR)
+    case manualBloodPressure  // single-shot on-demand BP (jring: 0x23 mode 1 → result in the 0x24 packet)
+    /// One measurement returns *every* vital at once. The jring's PPG sweep computes HR, blood
+    /// pressure, SpO₂ and fatigue together and reports them in a single `0x24` packet, so the app
+    /// offers one "Measure Vitals" action instead of a button per metric.
+    case combinedVitalsMeasurement
     case realtimeHeartRate    // live HR stream
     case realtimeSteps        // live activity stream
     case findDevice
     case powerOff
     case factoryReset
 
-    // Configurable all-day measurement: the device exposes a settable HR sampling interval and
-    // per-vital monitoring toggles (Colmi `0x16` + prefs). The generic jring has no such control, so
-    // it never surfaces it and the Measurement settings screen stays hidden for it.
+    // Configurable all-day measurement: the device exposes a settable HR sampling interval (Colmi
+    // `0x16` + per-vital prefs; jring byte [6] of its `0x19` background-monitoring command). Devices
+    // without it keep the Measurement settings screen hidden.
     case measurementInterval
 
     // The device records all-day SpO2 on-ring and the app can read that log back (Colmi big-data

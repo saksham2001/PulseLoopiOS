@@ -32,6 +32,80 @@ struct CapabilityChips: View {
     }
 }
 
+// MARK: - SupportBadge
+
+/// A "Limited support" pill for experimental ring families. Warn-toned rather than glass, because a
+/// tinted glass capsule reads as a *selected control* everywhere else in this app. Renders nothing
+/// for `.full` families, so call sites can place it unconditionally.
+struct SupportBadge: View {
+    let level: WearableSupportLevel
+
+    var body: some View {
+        if let label = level.badgeLabel {
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(label)
+            }
+            .font(PulseFont.caption2.weight(.semibold))
+            .foregroundStyle(ChipTone.warn.foreground)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(ChipTone.warn.background, in: Capsule())
+            .overlay(Capsule().stroke(ChipTone.warn.border, lineWidth: 1))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+        }
+    }
+}
+
+// MARK: - AppVariantPicker
+
+/// "Which app came with your ring?" — a segmented pick of the native app a model ships with.
+///
+/// This is a question and not a detection because it cannot be detected: the same physical Colmi ring
+/// is sold with either the QRing or the SmartHealth firmware, the two speak entirely different
+/// protocols, and the OEM sets the local name — so both can advertise `R09_ABCD`. The scan can only
+/// *hint* (see `ColmiSmartHealthCoordinator.Advertisement`, all provisional); the user's answer is what
+/// actually selects the driver. Cards with a single firmware show no picker.
+///
+/// Styled as the brand pills are (glass capsule, accent-tinted when selected) so it reads as one more
+/// filter on the same screen rather than a settings control that wandered in.
+struct AppVariantPicker: View {
+    let options: [AppVariantOption]
+    @Binding var selection: RingAppVariant
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("Which app came with your ring?")
+                .font(PulseFont.caption2)
+                .foregroundStyle(PulseColors.textMuted)
+            HStack(spacing: 8) {
+                ForEach(options) { option in
+                    let isSelected = option.variant == selection
+                    Button {
+                        selection = option.variant
+                    } label: {
+                        Text(option.variant.displayName)
+                            .font(PulseFont.subheadline.weight(.semibold))
+                            .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .pulseGlass(Capsule(), interactive: true, tint: isSelected ? PulseColors.accent : nil)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.82), value: isSelected)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                }
+            }
+            .pulseGlassContainer(spacing: 8) // morph the pills as the selection moves
+        }
+        .frame(maxWidth: .infinity)
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+
 // MARK: - SignalStrengthDots
 
 /// Three small circles indicating BLE signal strength for a discovered ring.

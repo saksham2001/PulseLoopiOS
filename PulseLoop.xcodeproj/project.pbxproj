@@ -650,6 +650,8 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PulseLoop reads your Health profile (age, sex, height, weight) to personalize calorie and vitals insights.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PulseLoop writes your ring's heart rate, blood oxygen, HRV, temperature, sleep, activity, and workouts to Apple Health — only for the data types you enable.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts, and — when enabled — uses your approximate location for weather-aware coaching.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
@@ -690,6 +692,8 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PulseLoop reads your Health profile (age, sex, height, weight) to personalize calorie and vitals insights.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PulseLoop writes your ring's heart rate, blood oxygen, HRV, temperature, sleep, activity, and workouts to Apple Health — only for the data types you enable.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PulseLoop records your route during outdoor workouts, and — when enabled — uses your approximate location for weather-aware coaching.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;

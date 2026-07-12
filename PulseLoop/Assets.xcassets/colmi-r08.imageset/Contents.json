@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "colmi-r08.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

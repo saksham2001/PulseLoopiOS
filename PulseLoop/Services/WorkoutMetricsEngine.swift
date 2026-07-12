@@ -46,6 +46,12 @@ enum WorkoutMetricsEngine {
 
     /// MET by canonical activity type (2011 Compendium ballparks), speed-tiered where average
     /// speed meaningfully changes intensity.
+    /// Legacy flat-rate estimate used when `useAdvancedCalories` is off: 8 kcal per active minute,
+    /// independent of activity type.
+    static func flatRateCalories(durationSeconds: Int) -> Double {
+        max(0, Double(durationSeconds) / 60 * 8)
+    }
+
     static func metValue(for type: String, averageSpeedMps: Double?) -> Double {
         switch ActivityMeta.meta(type).type {
         case "walk": return 3.5

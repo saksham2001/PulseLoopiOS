@@ -53,8 +53,7 @@ struct SettingsView: View {
                 // Grouped glass sections share one container so their glass renders/
                 // blends consistently (iOS-Settings inset-grouped look).
                 VStack(spacing: 20) {
-                    SettingsSection(title: "Device", rows: deviceRows(caps))
-                    SettingsSection(title: "General", rows: generalRows)
+                    SettingsSection(title: "General", rows: generalRows(caps))
                     SettingsSection(title: "Metrics", rows: metricsRows)
                     SettingsSection(title: "Resources", rows: resourcesRows(caps))
                 }
@@ -69,32 +68,29 @@ struct SettingsView: View {
 
     // MARK: - Rows
 
-    private func deviceRows(_ caps: Set<WearableCapability>) -> [SettingsRowItem] {
-        var rows: [SettingsRowItem] = []
-        // Only rings that expose a configurable measurement interval (Colmi) declare
-        // `.measurementInterval`, so the generic 56ff jring never shows this row.
-        if caps.contains(.measurementInterval) {
-            rows.append(SettingsRowItem(icon: "timer", tint: PulseColors.spo2, title: "Measurement Frequency") {
-                path.append(AppRoute.settingsMeasurement)
-            })
-        }
-        return rows
-    }
-
-    /// User setup lives in one group: profile + physiology, then the AI Coach and its check-ins
-    /// (the check-ins screen only configures coach alerts, so it's a coach sub-feature).
-    private var generalRows: [SettingsRowItem] {
+    /// User setup lives in one group: profile + physiology, then (for rings that support it) the
+    /// measurement-interval control, then the AI Coach and its check-ins (the check-ins screen only
+    /// configures coach alerts, so it's a coach sub-feature).
+    private func generalRows(_ caps: Set<WearableCapability>) -> [SettingsRowItem] {
         var rows: [SettingsRowItem] = [
             SettingsRowItem(icon: "person.crop.circle", tint: PulseColors.accent, title: "User Profile") {
                 path.append(AppRoute.settingsProfile)
             },
             SettingsRowItem(icon: "lungs", tint: PulseColors.hrv, title: "Physiology") {
                 path.append(AppRoute.settingsPhysiology)
-            },
-            SettingsRowItem(icon: "sparkles", tint: PulseColors.accent, title: "AI Coach", trailingValue: coachTrailing) {
-                path.append(AppRoute.settingsCoach)
             }
         ]
+        // Measurement frequency configures the ring's sampling interval — shown only for rings that
+        // declare `.measurementInterval` (Colmi's 0x16 pref, jring's 0x19 background-monitoring
+        // cadence). Sits under Physiology, above the AI Coach.
+        if caps.contains(.measurementInterval) {
+            rows.append(SettingsRowItem(icon: "timer", tint: PulseColors.spo2, title: "Measurement Frequency") {
+                path.append(AppRoute.settingsMeasurement)
+            })
+        }
+        rows.append(SettingsRowItem(icon: "sparkles", tint: PulseColors.accent, title: "AI Coach", trailingValue: coachTrailing) {
+            path.append(AppRoute.settingsCoach)
+        })
         // Check-ins are a coach sub-feature — only show the row once the coach is on.
         if coachStore.settings.coachMasterEnabled {
             rows.append(SettingsRowItem(icon: "bell.badge", tint: PulseColors.warning, title: "Coach Check-Ins", trailingValue: notificationsTrailing) {
@@ -135,6 +131,9 @@ struct SettingsView: View {
                 path.append(AppRoute.debug)
             })
         }
+        rows.append(SettingsRowItem(icon: "heart.fill", tint: PulseColors.heartRate, title: "Apple Health") {
+            path.append(AppRoute.settingsHealth)
+        })
         rows.append(SettingsRowItem(icon: "lock.shield", tint: PulseColors.success, title: "Privacy & Data") {
             path.append(AppRoute.settingsPrivacyData)
         })
