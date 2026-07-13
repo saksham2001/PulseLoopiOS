@@ -370,10 +370,7 @@ private struct EditWorkoutSheet: View {
             content()
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
-        // Glass as a BACKGROUND layer so the foreground .menu Picker / compact DatePickers
-        // stay outside the iOS 26 glassEffect — an interactive control inside glass can
-        // vanish/flicker when its popover opens. See SettingsLabeledRow.
-        .background { Color.clear.pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous)) }
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -382,11 +379,21 @@ private struct EditWorkoutSheet: View {
 struct RecordSelectView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(LiveWorkoutManager.self) private var liveWorkout
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var path: NavigationPath
     @State private var selected = "run"
     @State private var useGps = true
 
     private var gpsCapable: Bool { ActivityMeta.meta(selected).gpsCapable }
+
+    // At accessibility text sizes the 2-up grid clips the 2-line helper — reflow to a
+    // single column so each card can grow vertically. Icon sizes stay fixed.
+    private var gridColumns: [GridItem] {
+        if dynamicTypeSize >= .accessibility1 {
+            return [GridItem(.flexible(), spacing: 12)]
+        }
+        return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
 
     var body: some View {
         ScrollView {
@@ -396,45 +403,52 @@ struct RecordSelectView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(PulseColors.textSecondary)
 
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                LazyVGrid(columns: gridColumns, spacing: 12) {
                     ForEach(ActivityMeta.allKinds) { kind in
                         let isSelected = kind.type == selected
                         Button { selected = kind.type } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 Image(systemName: kind.symbol)
                                     .font(PulseFont.title2.weight(.regular))
-                                    // White glyph on the accent-tinted selected card (accent-on-accent
-                                    // was low-contrast); neutral otherwise.
-                                    .foregroundStyle(isSelected ? Color.white : PulseColors.textSecondary)
+                                    .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
                                     .frame(width: 46, height: 46)
                                     .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                                 Text(kind.label)
                                     .font(PulseFont.bodyEmphasis)
-                                    .foregroundStyle(isSelected ? Color.white : PulseColors.textPrimary)
+                                    .foregroundStyle(isSelected ? .white : PulseColors.textPrimary)
                                 Text(kind.helper)
                                     .font(PulseFont.caption.weight(.regular))
-                                    // textMuted is unreadable on the accent-tinted selected card.
-                                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : PulseColors.textMuted)
+                                    .foregroundStyle(isSelected ? Color.white.opacity(0.85) : PulseColors.textMuted)
                                     .lineLimit(2)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
-                            // Glass card; selected = accent-tinted glass, with an accent hairline for definition.
-                            .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous),
-                                        interactive: true, tint: isSelected ? PulseColors.accent : nil)
+                            .contentShape(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+                            .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous),
+                                        interactive: true, tint: isSelected ? PulseColors.accentSoft : nil)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1)
+                                RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous)
+                                    .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1.5)
                             )
-                            // Whole card taps — glass doesn't hit-test like the old solid fill, so
-                            // without this only the icon/text (not the empty card area) registered.
-                            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                            .overlay(alignment: .topTrailing) {
+                                if isSelected {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(PulseColors.accent)
+                                        .padding(10)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(kind.label)
+                        .accessibilityHint(kind.helper)
+                        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     }
                 }
-                .pulseGlassContainer(spacing: 12)
+                .sensoryFeedback(.selection, trigger: selected)
 
                 Toggle(isOn: $useGps) {
                     VStack(alignment: .leading, spacing: 2) {
