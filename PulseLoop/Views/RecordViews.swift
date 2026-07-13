@@ -410,10 +410,11 @@ struct RecordSelectView: View {
                                     .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                                 Text(kind.label)
                                     .font(PulseFont.bodyEmphasis)
-                                    .foregroundStyle(PulseColors.textPrimary)
+                                    .foregroundStyle(isSelected ? Color.white : PulseColors.textPrimary)
                                 Text(kind.helper)
                                     .font(PulseFont.caption.weight(.regular))
-                                    .foregroundStyle(PulseColors.textMuted)
+                                    // textMuted is unreadable on the accent-tinted selected card.
+                                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : PulseColors.textMuted)
                                     .lineLimit(2)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
