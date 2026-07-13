@@ -100,7 +100,13 @@ struct ActivityTrendsView: View {
         return (0..<12).reversed().compactMap { offset -> MetricSample? in
             guard let monthStart = cal.date(byAdding: .month, value: -offset, to: thisMonthStart) else { return nil }
             let key = cal.dateComponents([.year, .month], from: monthStart)
-            let days = cal.range(of: .day, in: .month, for: monthStart)?.count ?? 30
+            // Divide by elapsed days for the in-progress current month (else a partial month's
+            // total is spread over the full 30/31, understating its per-day bar + the headline
+            // average). Completed months use their full calendar length.
+            let isCurrentMonth = cal.isDate(monthStart, equalTo: Date(), toGranularity: .month)
+            let days = isCurrentMonth
+                ? cal.component(.day, from: Date())
+                : (cal.range(of: .day, in: .month, for: monthStart)?.count ?? 30)
             let perDay = days > 0 ? (totals[key] ?? 0) / Double(days) : 0
             return MetricSample(timestamp: monthStart, value: perDay)
         }

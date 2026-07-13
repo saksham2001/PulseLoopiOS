@@ -96,6 +96,15 @@ enum PulseColors {
     static let borderStrong = Color.white.opacity(0.16)
 }
 
+/// Corner-radius tokens so peer glass surfaces share one radius instead of the
+/// ad-hoc 16/18/20/22/24 mix. `card` for standard glass cards, `compact` for
+/// smaller/inset surfaces, `control` for buttons and small controls.
+enum PulseRadius {
+    static let card: CGFloat = 20
+    static let compact: CGFloat = 16
+    static let control: CGFloat = 12
+}
+
 extension Color {
     init(hex: String) {
         let trimmed = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)

@@ -165,8 +165,6 @@ same product numbers, often the same box — but the firmware speaks the **Yuche
 (`be940`), which has nothing in common at the wire level with QRing's Nordic-UART frames. It is the
 [TK5](tk5.md)'s protocol byte for byte, so these rings run the same shared driver.
 
-Byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)**.
-
 ### Which rings
 
 | Ring | Status |
@@ -256,5 +254,4 @@ The manufacturer publishes firmware update images with no authenticity checks �
 
 See the [hardware overview](index.md) for the full cross-manufacturer comparison
 tables, the [Jring / 56ff](jring.md) page for the cheaper option, or — if your Colmi came with the
-SmartHealth app — the [TK5](tk5.md) page and the [YCBT protocol](../YCBT-Protocol.md) reference, whose
-driver it shares.
+SmartHealth app — the [TK5](tk5.md) page, whose driver it shares.

@@ -62,6 +62,8 @@ struct ActivityView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                // Record pill + calendar circle share one container so their glass renders/blends together.
+                .pulseGlassContainer(spacing: 12)
 
                 Button { path.append(AppRoute.logPastActivity) } label: {
                     HStack(spacing: 12) {
@@ -136,6 +138,8 @@ struct ActivityView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
+            // Stacked glass cards share one container so their glass renders/blends consistently.
+            .pulseGlassContainer(spacing: 16)
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
