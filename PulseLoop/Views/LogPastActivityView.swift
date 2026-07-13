@@ -196,7 +196,11 @@ private struct PastActivityTimeCard: View {
                     .foregroundStyle(isValid ? PulseColors.textSecondary : PulseColors.warning)
             }
         }
-        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        // Glass as a BACKGROUND layer so the foreground compact DatePicker stays outside the
+        // iOS 26 glassEffect — an interactive control inside glass can vanish/flicker when its
+        // popover opens. See SettingsLabeledRow.
+        .background { Color.clear.pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous)) }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func row<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {

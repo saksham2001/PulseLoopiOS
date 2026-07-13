@@ -370,7 +370,10 @@ private struct EditWorkoutSheet: View {
             content()
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Glass as a BACKGROUND layer so the foreground .menu Picker / compact DatePickers
+        // stay outside the iOS 26 glassEffect — an interactive control inside glass can
+        // vanish/flicker when its popover opens. See SettingsLabeledRow.
+        .background { Color.clear.pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous)) }
     }
 }
 

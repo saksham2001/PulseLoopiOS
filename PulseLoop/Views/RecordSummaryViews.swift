@@ -132,7 +132,24 @@ struct RecordSummaryView: View {
                             .font(PulseFont.footnote)
                             .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textSecondary)
                             .padding(.horizontal, 12).padding(.vertical, 8)
-                            .pulseGlass(Capsule(), interactive: true, tint: active ? PulseColors.accent : nil)
+                            // Solid tile, not glass: these pills sit inside the effort card's
+                            // own glass, and glass can't sample glass (renders flat). Selected
+                            // keeps the accent as a solid fill; unselected gets a subtle white
+                            // sheen + hairline.
+                            .background {
+                                if active {
+                                    Capsule().fill(PulseColors.accent)
+                                } else {
+                                    Capsule()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color.white.opacity(0.16), Color.white.opacity(0.07)],
+                                                startPoint: .top, endPoint: .bottom
+                                            )
+                                        )
+                                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                 }
@@ -141,7 +158,14 @@ struct RecordSummaryView: View {
                 .lineLimit(2...4)
                 .font(PulseFont.subheadline.weight(.regular))
                 .padding(12)
-                .pulseGlass(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                // Solid field background, not glass: this input sits inside the effort card's
+                // glass (glass can't sample glass → flat). A soft fill + hairline gives it a
+                // visible input affordance.
+                .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
