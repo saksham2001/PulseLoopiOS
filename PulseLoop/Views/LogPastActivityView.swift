@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct LogPastActivityView: View {
     @Environment(\.modelContext) private var modelContext
@@ -76,9 +77,11 @@ struct LogPastActivityView: View {
                 durationMinutes: Double(durationMinutes),
                 context: modelContext
             )
+            UINotificationFeedbackGenerator().notificationOccurred(.success)   // "activity logged" cue
             path.removeLast()
             path.append(AppRoute.activityDetail(session.id))
         } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
             saveError = error.localizedDescription
         }
     }
@@ -222,7 +225,8 @@ private struct PastActivityTimeCard: View {
             Text(title)
                 .font(PulseFont.subheadline)
                 .foregroundStyle(PulseColors.textPrimary)
-            Spacer()
+                .fixedSize()   // never wrap "Started" when the date/time chips are wide
+            Spacer(minLength: 8)
             content()
         }
         .padding(.horizontal, 16)
@@ -291,6 +295,7 @@ private struct PastActivityDurationCard: View, Equatable {
             Image(systemName: systemImage)
                 .foregroundStyle(disabled ? PulseColors.textMuted : PulseColors.textPrimary)
                 .frame(width: 44, height: 44)
+                .contentShape(Rectangle())   // whole 44pt circle taps, not just the thin glyph
         }
         .buttonStyle(.plain)
         .background(PulseColors.cardSoft, in: Circle())

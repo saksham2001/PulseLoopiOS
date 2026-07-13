@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 // MARK: - Shared small pieces
 
@@ -465,6 +466,7 @@ struct RecordSelectView: View {
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     let willUseGps = useGps && gpsCapable
                     let session = liveWorkout.start(type: selected, useGps: willUseGps)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)   // "it started" cue
                     path.append(AppRoute.recordLive(session.id))
                 }
             }

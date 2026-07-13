@@ -138,8 +138,8 @@ struct ActivityView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
-            // Stacked glass cards share one container so their glass renders/blends consistently.
-            .pulseGlassContainer(spacing: 16)
+            // NB: no glass container around the whole content stack — it made adjacent workout
+            // cards blend/bleed into each other. Small button clusters keep their own containers.
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
