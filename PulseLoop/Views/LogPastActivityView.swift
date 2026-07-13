@@ -136,6 +136,7 @@ private struct ActivityTypeGrid: View, Equatable {
                 }
             }
         }
+        .pulseGlassContainer(spacing: 12)
     }
 }
 
@@ -153,9 +154,11 @@ private struct ActivityTypeButton: View, Equatable {
             HStack(spacing: 10) {
                 Image(systemName: kind.symbol)
                     .font(PulseFont.title3.weight(.regular))
-                    .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
+                    // Selected pill is accent-tinted glass, so an accent glyph on an accentSoft
+                    // circle vanished into it — use a white glyph on a white-translucent circle.
+                    .foregroundStyle(isSelected ? Color.white : PulseColors.textSecondary)
                     .frame(width: 38, height: 38)
-                    .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
+                    .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                 Text(kind.label)
                     .font(PulseFont.callout.weight(.semibold))
                     .foregroundStyle(PulseColors.textPrimary)

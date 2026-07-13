@@ -403,9 +403,11 @@ struct RecordSelectView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Image(systemName: kind.symbol)
                                     .font(PulseFont.title2.weight(.regular))
-                                    .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
+                                    // White glyph on the accent-tinted selected card (accent-on-accent
+                                    // was low-contrast); neutral otherwise.
+                                    .foregroundStyle(isSelected ? Color.white : PulseColors.textSecondary)
                                     .frame(width: 46, height: 46)
-                                    .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
+                                    .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                                 Text(kind.label)
                                     .font(PulseFont.bodyEmphasis)
                                     .foregroundStyle(PulseColors.textPrimary)
@@ -417,13 +419,18 @@ struct RecordSelectView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
-                            .background(isSelected ? PulseColors.accentSoft : PulseColors.card)
-                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(isSelected ? PulseColors.accent : PulseColors.borderSubtle, lineWidth: 1))
+                            // Glass card; selected = accent-tinted glass, with an accent hairline for definition.
+                            .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous),
+                                        interactive: true, tint: isSelected ? PulseColors.accent : nil)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                    .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1)
+                            )
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .pulseGlassContainer(spacing: 12)
 
                 Toggle(isOn: $useGps) {
                     VStack(alignment: .leading, spacing: 2) {
