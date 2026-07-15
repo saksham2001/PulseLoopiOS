@@ -16,6 +16,8 @@ struct MetricDetailView: View {
     @State private var period: DetailPeriod = .today
     @State private var primary: [MetricSample] = []
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
+    /// Observed so the detail chart/tiles re-fetch when a background sync lands while this is open.
+    @State private var dataChange = PulseDataChange.shared
 
     private var profile: UserPhysiologyProfile { UserPhysiologyProfile(profiles.first) }
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
@@ -78,6 +80,7 @@ struct MetricDetailView: View {
         // bar (so the zoom transition doesn't reflow the content).
         .pageChrome(metric.title)
         .task(id: period) { reload() }
+        .onChange(of: dataChange.token) { _, _ in reload() }
     }
 
     // MARK: - Period selector

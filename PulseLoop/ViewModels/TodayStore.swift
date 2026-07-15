@@ -164,13 +164,19 @@ final class TodayStore {
         let p = MetricPrefsStore.shared.settings
         let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)"
 
+        // The daily goal targets feed the rings tile (via `goalsSummary`) but aren't otherwise
+        // observed, so a goal edit must change the signature or the rings keep filling against the
+        // old goal until an unrelated sync bumps it.
+        let goal = MetricsRepository.goals(context: context)
+        let goalSig = goal.map { "\($0.steps)/\($0.activeMinutes)/\($0.distanceMeters)/\($0.calories)/\($0.sleepMinutes)/\($0.workoutsPerWeek)" } ?? "·"
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             activity.map { "\($0.steps)/\(Int($0.distanceMeters))/\($0.activeMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             sleep.map { "\($0.totalMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)@\(stamp($0.lastSyncAt))" } ?? "·",
-            calSig, profileSig, prefSig,
+            calSig, profileSig, prefSig, goalSig,
         ].joined(separator: "|")
     }
 }
