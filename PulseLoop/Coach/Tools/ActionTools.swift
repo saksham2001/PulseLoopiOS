@@ -310,7 +310,8 @@ enum ActionTools {
             // Start moved without a new duration: shift the whole window, keeping its span.
             newEnd = newStart.addingTimeInterval((session.endedAt ?? Date()).timeIntervalSince(session.startedAt))
         }
-        if newType != session.type || newStart != session.startedAt || newEnd != session.endedAt {
+        let didEdit = newType != session.type || newStart != session.startedAt || newEnd != session.endedAt
+        if didEdit {
             _ = ActivityService.applyEdit(
                 session: session, newType: newType, newStartedAt: newStart, newEndedAt: newEnd, context: context
             )
@@ -321,6 +322,8 @@ enum ActionTools {
 
         session.updatedAt = Date()
         try? context.save()
-        PulseDataChange.shared.notify()
+        // `applyEdit` already notified; only notify again when it didn't run or we changed
+        // something after it (the distance override), so a plain edit doesn't double-bump.
+        if !didEdit || updates.distanceKm != nil { PulseDataChange.shared.notify() }
     }
 }
