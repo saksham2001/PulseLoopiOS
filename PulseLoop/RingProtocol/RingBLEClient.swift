@@ -28,14 +28,19 @@ final class RingBLEClient: NSObject {
     /// Registry of supported wearables. First coordinator whose `matches` claims a peripheral wins.
     /// **Adding a wearable = append one entry here.**
     ///
-    /// The order is load-bearing at exactly one place: `ColmiSmartHealthCoordinator` must precede
-    /// `ColmiCoordinator`. Both recognize the same Colmi local names, and the QRing matcher needs
-    /// *only* the name — so behind it, no SmartHealth ring would ever be claimed. The SmartHealth
-    /// matcher is a conjunction a QRing ring cannot satisfy, so it is safe in front.
+    /// The order is load-bearing at exactly two places:
+    ///   • `ColmiSmartHealthCoordinator` must precede `ColmiCoordinator`. Both recognize the same Colmi
+    ///     local names, and the QRing matcher needs *only* the name — so behind it, no SmartHealth ring
+    ///     would ever be claimed. The SmartHealth matcher is a conjunction a QRing ring cannot satisfy.
+    ///   • `LuckRingCoordinator` must precede `TK5Coordinator`. LuckRing matches strong, family-exclusive
+    ///     signals (the `F618` service, the `0xFF64` company ID) that no other coordinator claims; ordering
+    ///     it ahead of TK5 is defensive, so TK5's weak `TK5`-name prefix could never shadow a hypothetical
+    ///     `TK5x`-named LuckRing sibling. ("TK18" does not hit the `TK5` prefix, so today it is moot.)
     static let coordinators: [WearableCoordinator.Type] = [
         JringCoordinator.self,
         ColmiSmartHealthCoordinator.self,
         ColmiCoordinator.self,
+        LuckRingCoordinator.self,
         TK5Coordinator.self,
     ]
 
@@ -435,10 +440,32 @@ final class RingBLEClient: NSObject {
               let peripheral,
               let writeChar,
               !writeQueue.isEmpty else { return }
-        let item = writeQueue.removeFirst()
         // Big-data requests go to the command char (`de5bf72a`); fall back to the write char if the
         // device/firmware didn't expose a separate one.
-        let target = (item.useCommandChannel ? commandChar : writeChar) ?? writeChar
+        let target = (writeQueue[0].useCommandChannel ? commandChar : writeChar) ?? writeChar
+
+        // The write type must come from the characteristic, not a constant. A characteristic that only
+        // supports write-without-response (the TK18's `B002`) silently *discards* a `.withResponse`
+        // write — CoreBluetooth never calls `didWriteValueFor`, so every packet used to sit out the
+        // full missed-ACK timeout and the device never received a byte. This mirrors Android's
+        // `writeCharacteristic`, which auto-selects the type from the properties.
+        let type: CBCharacteristicWriteType =
+            target.properties.contains(.write) ? .withResponse : .withoutResponse
+
+        if type == .withoutResponse {
+            // No ATT round-trip to serialize on; pace with the peripheral's buffer instead.
+            // `peripheralIsReady(toSendWriteWithoutResponse:)` re-pumps when it drains.
+            guard peripheral.canSendWriteWithoutResponse else { return }
+            let item = writeQueue.removeFirst()
+            publishRawPacket(direction: .outgoing, data: item.data)
+            // Deliberately no `noteActivity()`: an unacknowledged write proves nothing about the link,
+            // and crediting it would blind the watchdog to a zombie connection during a silent sync.
+            peripheral.writeValue(item.data, for: target, type: .withoutResponse)
+            pumpWrites()
+            return
+        }
+
+        let item = writeQueue.removeFirst()
         writeInFlight = true
         writeSeq &+= 1
         let seq = writeSeq
@@ -868,6 +895,14 @@ extension RingBLEClient: CBPeripheralDelegate {
         MainActor.assumeIsolated {
             noteActivity()
             writeInFlight = false
+            pumpWrites()
+        }
+    }
+
+    /// The without-response buffer drained — resume the queue. (Writes gated on
+    /// `canSendWriteWithoutResponse` park here when the peripheral's buffer is full.)
+    nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        MainActor.assumeIsolated {
             pumpWrites()
         }
     }

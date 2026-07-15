@@ -56,12 +56,23 @@ section breaks the hardware down by manufacturer.
 
     [:octicons-arrow-right-24: TK5 / SmartHealth](tk5.md)
 
+-   :material-flask-outline: __LuckRing / TK18__
+
+    ---
+
+    🧪 Limited. The `0xFF64` "K6" family (LuckRing app), rebuilt from the vendor
+    SDK. Fixed 20-byte cleartext packets, no CRC. TK18 is the tested unit; other
+    siblings (some sold under simsonlab) pair too.
+
+    [:octicons-arrow-right-24: LuckRing / TK18](luckring.md)
+
 -   :material-help-circle-outline: __SIMSONLAB__
 
     ---
 
-    Not supported — unknown protocol on a Phyplus PHY6222 SoC, with no public
-    reverse engineering. Documented here for reference.
+    Split: the **LuckRing-app** simsonlab rings are 🧪 supported (see
+    [LuckRing / TK18](luckring.md)); the **LA380-YJ** (Phyplus PHY6222, unknown
+    protocol) is not. Documented here for reference.
 
     [:octicons-arrow-right-24: SIMSONLAB](simsonlab.md)
 
@@ -161,7 +172,7 @@ The TK5 stores stress and fatigue on the ring itself (the body-data record), whi
 
 | Ring | Reason |
 |---|---|
-| **SIMSONLAB LA380-YJ** | Unknown protocol (PHY6222 SoC), no reverse engineering — see [SIMSONLAB](simsonlab.md) |
+| **SIMSONLAB LA380-YJ** | Unknown protocol (PHY6222 SoC), no reverse engineering — see [SIMSONLAB](simsonlab.md). (Note: the *other* simsonlab-branded rings, which pair with the **LuckRing** app, **are** supported — see [LuckRing / TK18](luckring.md).) |
 | **Oura Gen 3/4** | Encrypted BLE, proprietary protocol, subscription required — see [Premium rings](premium.md) |
 | **Ultrahuman Ring Air** | Not yet implemented (protocol is documented) — see [Premium rings](premium.md) |
 | **RingConn Gen 2** | No public protocol, no reverse engineering — see [Premium rings](premium.md) |
