@@ -238,6 +238,7 @@ struct DeviceHeroCard: View {
         // line has no single representative image — fall back to the generic ring.
         case .colmiR02, .colmiSmartHealth: return nil
         case .tk5: return "tk5"
+        case .luckRing: return "luckring-tk18"
         case nil: return nil
         }
     }

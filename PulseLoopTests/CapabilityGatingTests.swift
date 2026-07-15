@@ -21,6 +21,37 @@ final class CapabilityGatingTests: XCTestCase {
         XCTAssertFalse(MetricsService.supports(.temperature, context: context))
     }
 
+    /// The LuckRing / TK18 baseline surfaces its metric cards — but deliberately not blood sugar, REM
+    /// staging, fatigue, or a combined-vitals sweep (the K6 protocol has no command or record for any
+    /// of them).
+    func testLuckRingSurfacesItsBaselineButNotTheExcludedMetrics() throws {
+        let context = try TestSupport.makeContext()
+        let ring = Device(deviceType: .luckRing, capabilities: LuckRingCoordinator().capabilities)
+        context.insert(ring)
+        try context.save()
+
+        for metric: MetricKey in [.heartRate, .spo2, .hrv, .temperature, .bloodPressureSystolic, .stress] {
+            XCTAssertTrue(MetricsService.supports(metric, context: context), metric.rawValue)
+        }
+        // Blood sugar and fatigue are the two vital *metrics* the family deliberately does not claim.
+        for metric: MetricKey in [.bloodSugar, .fatigue] {
+            XCTAssertFalse(MetricsService.supports(metric, context: context), metric.rawValue)
+        }
+    }
+
+    /// The declared sets, straight from the coordinator: nothing excluded leaks in, and the family gates
+    /// nothing on a bitmap (the K6 FUNCTION_CONTROL bitmap is obfuscated in the decompile).
+    /// `.measurementInterval` *is* declared — the K6 auto-monitoring config (opcode 128) is a real
+    /// interval knob, and the firmware default is off.
+    func testLuckRingCoordinatorDeclaresTheApprovedSet() {
+        let coordinator = LuckRingCoordinator()
+        XCTAssertTrue(coordinator.bitmapGatedCapabilities.isEmpty)
+        XCTAssertTrue(coordinator.capabilities.contains(.measurementInterval))
+        for cap: WearableCapability in [.bloodSugar, .remSleep, .fatigue, .combinedVitalsMeasurement, .powerOff, .factoryReset] {
+            XCTAssertFalse(coordinator.capabilities.contains(cap), cap.rawValue)
+        }
+    }
+
     func testColmiShowsRichMetrics() throws {
         let context = try TestSupport.makeContext()
         let colmi = Device(
