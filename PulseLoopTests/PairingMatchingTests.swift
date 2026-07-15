@@ -301,7 +301,7 @@ final class PairingMatchingTests: XCTestCase {
         // The user still outranks everything, in both directions.
         XCTAssertEqual(card.preferredFamily(picked: .qring, rowFamily: .colmiSmartHealth, hinted: nil), .colmiR02)
         XCTAssertEqual(card.otherVariant(than: .smartHealth), .qring)
-        XCTAssertEqual(card.supportLevel, .limited)
+        XCTAssertEqual(card.supportLevel, .full)
         // No R99 art exists; nil is the only value `RingArtView` has a fallback for.
         XCTAssertNil(card.imageName)
     }
@@ -623,20 +623,74 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertEqual(colmi.refinedCapabilities(bitmapDerived: [.powerOff]), colmi.capabilities)
     }
 
+    // MARK: - LuckRing / TK18
+
+    /// The TK18's real advertisement, captured with nRF: manufacturer data `64 FF …` — company ID
+    /// `0xFF64` in the little-endian slot, then MAC + the ASCII `WB39_1_2_0` version string. The
+    /// company-ID prefix is the single signal the vendor app matches on, so it is authoritative.
+    private var luckRingAdv: AdvertisementInfo {
+        AdvertisementInfo(serviceUUIDs: [], manufacturerData: bytes("64ffada9e302cedf024f574233395f315f325f30"))
+    }
+
+    /// The `F618` service, advertised in its 16-bit short form.
+    private var luckRingServiceAdv: AdvertisementInfo {
+        AdvertisementInfo(serviceUUIDs: [CBUUID(string: "F618")], manufacturerData: nil)
+    }
+
+    func testLuckRingClaimedByItsRealAdvertisement() {
+        XCTAssertTrue(LuckRingCoordinator.matches(name: nil, advertisement: luckRingAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: nil, advertisement: luckRingAdv), .luckRing)
+        // No other coordinator may claim it.
+        XCTAssertFalse(TK5Coordinator.matches(name: nil, advertisement: luckRingAdv))
+        XCTAssertFalse(ColmiSmartHealthCoordinator.matches(name: nil, advertisement: luckRingAdv))
+        XCTAssertFalse(ColmiCoordinator.matches(name: nil, advertisement: luckRingAdv))
+        XCTAssertFalse(JringCoordinator.matches(name: nil, advertisement: luckRingAdv))
+    }
+
+    func testLuckRingClaimedByServiceUUID() {
+        XCTAssertTrue(LuckRingCoordinator.matches(name: "Unlabeled", advertisement: luckRingServiceAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "Unlabeled", advertisement: luckRingServiceAdv), .luckRing)
+    }
+
+    func testTK18NameResolvesToTheLuckRingModel() {
+        for name in ["TK18", "TK18 A1B2", "TK18_1_2_0", "TK18-x"] {
+            XCTAssertEqual(WearableModel.model(advertisedName: name)?.id, "luckring-tk18", name)
+        }
+        XCTAssertEqual(WearableModel.luckRingTK18.family, .luckRing)
+        XCTAssertEqual(WearableModel.resolve(advertisedName: "TK18", selectedModelID: nil, family: .luckRing)?.id, "luckring-tk18")
+    }
+
+    /// The two never cross-claim: a TK18 is not a TK5, and a TK5 is not a LuckRing.
+    func testTK18AndTK5DoNotCrossClaim() {
+        XCTAssertEqual(WearableModel.model(advertisedName: "TK18")?.families, [.luckRing])
+        XCTAssertFalse(TK5Coordinator.matches(name: "TK18", advertisement: noAdv))
+        XCTAssertFalse(LuckRingCoordinator.matches(name: "TK5 24AA", advertisement: tk5Adv))
+        // A TK5 / Colmi advertisement is never claimed as a LuckRing.
+        XCTAssertFalse(LuckRingCoordinator.matches(name: "TK5 24AA", advertisement: tk5Adv))
+        XCTAssertFalse(LuckRingCoordinator.matches(name: "R09_00AA", advertisement: qringAdv))
+        XCTAssertFalse(LuckRingCoordinator.matches(name: "R99 54DC", advertisement: smartHealthAdv))
+    }
+
+    func testLuckRingSupportLevelIsLimited() {
+        XCTAssertEqual(RingDeviceType.luckRing.supportLevel, .limited)
+        XCTAssertEqual(WearableModel.luckRingTK18.supportLevel, .limited)
+        XCTAssertNil(RingAppVariant(family: .luckRing), "single-firmware family — no app picker")
+    }
+
     // MARK: - Support level
 
     func testSupportLevelIsPerFamily() {
         XCTAssertEqual(RingDeviceType.jring.supportLevel, .full)
         XCTAssertEqual(RingDeviceType.colmiR02.supportLevel, .full)
         XCTAssertEqual(RingDeviceType.tk5.supportLevel, .limited)
-        XCTAssertEqual(RingDeviceType.colmiSmartHealth.supportLevel, .limited)
+        XCTAssertEqual(RingDeviceType.colmiSmartHealth.supportLevel, .full)
     }
 
-    /// Both YCBT families are unproven, and only unproven families get a badge. The two cards that
-    /// *default* to one — the TK5 and the R99 — therefore wear it as they sit; a two-app Colmi card wears
-    /// it only while its picker is on SmartHealth (the same physical ring, a different driver's maturity).
+    /// Only unproven families get a badge — the TK5 (never connected on hardware) and the LuckRing
+    /// family (only the TK18 unit is proven). The SmartHealth-Colmi graduated to `.full` once an R99
+    /// ran against the driver on hardware, so neither Colmi picker position wears a badge anymore.
     func testLimitedSupportFamiliesCarryTheBadge() {
-        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.colmiR99.id]
+        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.luckRingTK18.id]
         for model in WearableModel.catalog {
             let expected: WearableSupportLevel = limitedByDefault.contains(model.id) ? .limited : .full
             XCTAssertEqual(model.supportLevel, expected, model.displayName)
@@ -648,7 +702,7 @@ final class PairingMatchingTests: XCTestCase {
         }
         for model in WearableModel.catalog where !model.appVariants.isEmpty {
             XCTAssertEqual(model.supportLevel(for: .qring), .full, model.displayName)
-            XCTAssertEqual(model.supportLevel(for: .smartHealth), .limited, model.displayName)
+            XCTAssertEqual(model.supportLevel(for: .smartHealth), .full, model.displayName)
         }
     }
 

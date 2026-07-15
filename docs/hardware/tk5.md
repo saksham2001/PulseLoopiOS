@@ -1,8 +1,7 @@
 ---
 title: TK5 / SmartHealth
 description: >-
-  The TK5 ring (SmartHealth app) — the Yucheng YCBT protocol, rebuilt from the
-  decompiled vendor SDK. Broad metric support; awaiting on-device confirmation.
+  The TK5 ring (SmartHealth app) — the Yucheng YCBT protocol. Broad metric support.
 ---
 
 # TK5 / SmartHealth
@@ -12,10 +11,6 @@ description: >-
 The TK5 pairs with the **SmartHealth** app (`com.zhuoting.healthyucheng`) and speaks the **Yucheng
 YCBT** protocol on a `be940` service — nothing in common at the wire level with the
 [56ff / Jring](jring.md) or [Colmi / Yawell QRing](colmi.md) families.
-
-PulseLoop's driver is reconstructed from the **decompiled Yucheng YCBT SDK** (`com.yucheng.ycbtsdk`,
-v4.0.10) that ships inside the SmartHealth Android app. The byte-level reference is
-[YCBT protocol](../YCBT-Protocol.md).
 
 !!! warning "Limited support — the protocol is proven, the TK5 hasn't been re-tested"
     The YCBT stack is confirmed working on real hardware — but on a *sibling* ring, the
@@ -60,8 +55,6 @@ A fix to any `YCBT*` file fixes both rings; a regression in one breaks both.
 
 ## Protocol
 
-Full byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)**.
-
 | Property | Value |
 |---|---|
 | **Service** | `be940000-7333-be46-b7ae-689e71722bd5` |
@@ -83,18 +76,6 @@ right-hand column is the honest one: what a physical ring still has to confirm.
 at all: they are offered only if *this* unit's `02 01` capability bitmap sets their bit
 (`YCBTSupportFunction` → `TK5Coordinator.bitmapGatedCapabilities`). Everything else is a **baseline**
 promise — the app claims it unconditionally, and the bitmap can only ever *add*, never remove.
-
-The reason for the split is a sibling ring. The owner's **R99** (a Colmi on this same YCBT protocol)
-had HRV promised unconditionally, denied it four independent ways — bitmap bit clear, `01 45` → `0xFC`,
-`05 33` → `0xFC`, `03 2f` mode `0a` → outright refusal — and the "Measure HRV" button spun for 45 s and
-failed, every time. The TK5's temperature / stress / fatigue / blood-sugar claims rested on exactly the
-same kind of reasoning that produced that bug (*the SDK defines the record type*), and no TK5 has ever
-been seen producing one of those records. So the ring now says, and the app listens.
-
-**HRV is the exception that proves it**: it stays a baseline promise because it was *observed working on
-a TK5* (48 / 79 ms, cross-checked against the vendor app). Evidence from the hardware outranks a bit —
-and since no TK5 `02 01` reply has ever been captured, gating HRV could only risk losing a feature that
-demonstrably works.
 
 | Capability | Status | Needs on-device confirmation | Notes |
 |---|:---:|---|---|
@@ -170,15 +151,7 @@ app-side: every history sample upserts on `(kind, timestamp)`, activity buckets 
 epoch, and the cumulative step counter is a per-day `max` ratchet. All three are idempotent under
 replay, so a double-sync produces no duplicates. The cost is a longer sync as the ring's log fills.
 
-(An earlier version of the driver sent `05 40/42/43/44/4E` *believing they enabled monitoring*. They
-are the delete opcodes. The real enables are the five `01 xx {enable, interval}` monitor commands.)
-
 ## Known limitations
-
-- **No TK5 has run this driver yet.** The protocol is confirmed on a [sibling YCBT ring](colmi.md#smarthealth-app-colmi-rings)
-  and the layouts come from the vendor SDK, but the TK5-specific items in
-  [Needs on-device confirmation](#needs-on-device-confirmation) are still open, which is why support
-  stays "Limited". See [Contributing](../project/contributing.md) if you own one.
 - **~8-day history horizon.** `RingEventBridge` drops any history sample, sleep session or activity
   timestamp outside `now − 8 days … now + 1 hour`. A ring's log can hold records stamped under a
   *previous* clock, which decode hours or days out of place — and because history rows upsert, one
@@ -198,6 +171,5 @@ are the delete opcodes. The real enables are the five `01 xx {enable, interval}`
 
 ---
 
-See the [YCBT protocol reference](../YCBT-Protocol.md) for the byte-level spec, the
-[SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings) that share this driver, or the
-[hardware overview](index.md) for the cross-manufacturer comparison.
+See the [SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings) that share this driver,
+or the [hardware overview](index.md) for the cross-manufacturer comparison.

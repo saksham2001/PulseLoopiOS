@@ -7,7 +7,14 @@ description: >-
 
 # SIMSONLAB
 
-**PulseLoop support: ❌ Not supported**
+**PulseLoop support: ❌ Not supported (this model)**
+
+!!! tip "SIMSONLAB sells more than one ring — the LuckRing-app ones *are* supported"
+    SIMSONLAB is a retail brand (SHARE AUDIO HONG KONG LIMITED) that sources rings from at least two
+    OEMs. This page is about the **LA380-YJ** (a Phyplus PHY6222 ring on an unknown protocol, paired
+    with the *SIMSONLAB* app), which is not supported. The SIMSONLAB-branded rings that pair with the
+    **LuckRing** app are a different OEM's hardware (Shenzhen Coolwear/Kewo, advertising as `TK18`) and
+    **are** supported — see **[LuckRing / TK18](luckring.md)**. Check which app your ring came with.
 
 The SIMSONLAB LA380-YJ uses a completely different, undocumented BLE protocol on a
 Phyplus PHY6222 SoC. There's no public reverse engineering, so it isn't
