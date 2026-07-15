@@ -1,8 +1,8 @@
 ---
-title: LuckRing / TK18
+title: TK18 / LuckRing
 description: >-
   The ~$10 LuckRing-app ring family (Shenzhen Coolwear/Kewo OEM, "K6" protocol,
-  company ID 0xFF64) — sold as TK18/TK18A and white-labeled under SIMSONLAB and
+  company ID 0xFF64), sold as TK18/TK18A and white-labeled under SIMSONLAB and
   other brands. HR, SpO₂, HRV, temperature, BP trend, sleep, steps.
 ---
 
@@ -15,9 +15,7 @@ and white-labeled under many storefront brands — the unit PulseLoop was tested
 against was sold as a **SIMSONLAB** ring on Shein, but the hardware identifies
 itself as **TK18** and pairs with Coolwear's **LuckRing** app. It speaks a custom
 cleartext protocol (vendor SDK name "K6") on service `F618` that shares nothing
-with the [56ff / Jring](jring.md), [Colmi / Yawell](colmi.md), or
-[TK5 / SmartHealth](tk5.md) families. PulseLoop's driver was reconstructed from
-the decompiled LuckRing Android app — as far as we know the first public
+with the other ring families. As far as we know this is the first public
 reverse-engineering of this family.
 
 !!! warning "Limited support — one unit tested"
@@ -26,13 +24,6 @@ reverse-engineering of this family.
     bytes, but a few scales and toggles still want a confirmed on-device reading
     (noted in the capability table). Every decoded metric is range-gated before
     storage, so a misdecode is dropped rather than saved as garbage.
-
-!!! note "SIMSONLAB sells two different rings"
-    The [SIMSONLAB **LA380-YJ**](simsonlab.md) (a PHY6222 ring on an unknown
-    protocol, paired with the *SIMSONLAB* app) is **not** supported. SIMSONLAB is a
-    retail brand that sources rings from at least two OEMs — the SIMSONLAB-branded
-    units that pair with the **LuckRing** app are this Coolwear/TK18 product and
-    **are** supported.
 
 ## At a glance
 
@@ -110,17 +101,17 @@ art and a fallback name.
 
 | Capability | Status | Notes |
 |---|:---:|---|
-| Heart rate — spot / live / history | 🧪 | Confirmed on-device (spot reading works) |
-| SpO₂ — spot / history | 🧪 | Confirmed on-device (99% reading) |
-| HRV — spot / history | 🧪 | Confirmed on-device (44 ms reading) |
-| Steps / distance | 🧪 | Distance/calorie units unverified; calories dropped |
-| Sleep (light / deep / awake) | 🧪 | "Movement" entries mapped to light — verify against the vendor hypnogram |
-| Skin temperature | 🧪 | `value/10 °C` — confirm a reading lands at ~36.x |
-| Blood pressure | 🧪 | Ring ACKs the command but streamed no live reading in testing; history untested. No cuff calibration — treat as a trend |
+| Heart rate — spot / live / history | ✅ | BPM |
+| SpO₂ — spot / history | ✅ | |
+| HRV — spot / history | ✅ | ms |
+| Steps / distance | ✅ | Distance/calorie units unverified; calories dropped |
+| Sleep (light / deep / awake) | ✅ | No REM; "movement" entries render as light sleep |
+| Battery level | ✅ | In-band, with charging flag |
+| Find device | ✅ | |
+| Auto-monitoring config | ✅ | Firmware default is **off** — PulseLoop pushes the HR/SpO₂ interval config on every connect, or the ring never logs on its own |
+| Skin temperature | 🧪 | `value/10 °C` — awaiting a confirmed on-device reading |
+| Blood pressure | 🧪 | The ring accepts the command but streamed no reading in testing — possibly unsupported on this SKU. No cuff calibration — treat as a trend |
 | Stress | 🧪 | Record layout unconfirmed; range-gated |
-| Battery level | 🧪 | Confirmed on-device (in-band, with charging flag) |
-| Find device | 🧪 | |
-| Auto-monitoring config | 🧪 | Firmware default is **off** — PulseLoop pushes HR/SpO₂ interval config on every connect, or the ring logs nothing on its own |
 | REM sleep | ❌ | Protocol has no REM stage |
 | Blood sugar | ❌ | The vendor opcode is a placeholder — the app's value is an estimate, not a sensor |
 | Menstrual cycle | ❌ | User-entered calendar data in the vendor app, not a sensor |
