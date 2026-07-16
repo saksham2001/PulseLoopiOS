@@ -53,7 +53,14 @@ struct CoachChartView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // Solid card fill, not glass: this chart card renders inside the assistant bubble's
+        // glass, and glass can't sample glass (renders flat). A card fill + hairline keeps it
+        // reading as a distinct raised surface.
+        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+        )
     }
 
     // MARK: - Standard plot (line / dot / bar / sparkline)

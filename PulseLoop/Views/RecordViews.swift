@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 // MARK: - Shared small pieces
 
@@ -379,11 +380,21 @@ private struct EditWorkoutSheet: View {
 struct RecordSelectView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(LiveWorkoutManager.self) private var liveWorkout
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var path: NavigationPath
     @State private var selected = "run"
     @State private var useGps = true
 
     private var gpsCapable: Bool { ActivityMeta.meta(selected).gpsCapable }
+
+    // At accessibility text sizes the 2-up grid clips the 2-line helper — reflow to a
+    // single column so each card can grow vertically. Icon sizes stay fixed.
+    private var gridColumns: [GridItem] {
+        if dynamicTypeSize >= .accessibility1 {
+            return [GridItem(.flexible(), spacing: 12)]
+        }
+        return [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
 
     var body: some View {
         ScrollView {
@@ -393,34 +404,52 @@ struct RecordSelectView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(PulseColors.textSecondary)
 
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                LazyVGrid(columns: gridColumns, spacing: 12) {
                     ForEach(ActivityMeta.allKinds) { kind in
                         let isSelected = kind.type == selected
                         Button { selected = kind.type } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 Image(systemName: kind.symbol)
                                     .font(PulseFont.title2.weight(.regular))
-                                    .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
+                                    .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
                                     .frame(width: 46, height: 46)
-                                    .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
+                                    .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                                 Text(kind.label)
                                     .font(PulseFont.bodyEmphasis)
-                                    .foregroundStyle(PulseColors.textPrimary)
+                                    .foregroundStyle(isSelected ? .white : PulseColors.textPrimary)
                                 Text(kind.helper)
                                     .font(PulseFont.caption.weight(.regular))
-                                    .foregroundStyle(PulseColors.textMuted)
+                                    .foregroundStyle(isSelected ? Color.white.opacity(0.85) : PulseColors.textMuted)
                                     .lineLimit(2)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
-                            .background(isSelected ? PulseColors.accentSoft : PulseColors.card)
-                            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(isSelected ? PulseColors.accent : PulseColors.borderSubtle, lineWidth: 1))
+                            .contentShape(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+                            .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous),
+                                        interactive: true, tint: isSelected ? PulseColors.accentSoft : nil)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous)
+                                    .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1.5)
+                            )
+                            .overlay(alignment: .topTrailing) {
+                                if isSelected {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(PulseColors.accent)
+                                        .padding(10)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(kind.label)
+                        .accessibilityHint(kind.helper)
+                        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     }
                 }
+                .sensoryFeedback(.selection, trigger: selected)
 
                 Toggle(isOn: $useGps) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -437,6 +466,7 @@ struct RecordSelectView: View {
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     let willUseGps = useGps && gpsCapable
                     let session = liveWorkout.start(type: selected, useGps: willUseGps)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)   // "it started" cue
                     path.append(AppRoute.recordLive(session.id))
                 }
             }

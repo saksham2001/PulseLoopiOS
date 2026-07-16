@@ -14,32 +14,44 @@ struct ActivityView: View {
 
     @State private var goalsOpen = false
     @State private var historyOpen = false
+    @State private var dataChange = PulseDataChange.shared
+    // Cached off the render path (via reload() on token/data change) so an @Query invalidation
+    // doesn't re-run buildTodaySummary and re-create the glass tiles every body eval — that
+    // re-render flashed all the tiles white on iOS 26. Mirrors Today/Vitals.
+    @State private var summary: TodaySummary?
+    @State private var stale: [ActivitySession] = []
+    @State private var caloriesAvailable = false
+
+    private func reload() {
+        summary = MetricsService.buildTodaySummary(context: modelContext)
+        stale = ActivityRecorderService.recoverStaleSession(context: modelContext)
+        caloriesAvailable = MetricsService.isVisible(.calories, context: modelContext)
+    }
 
     var body: some View {
-        let summary = MetricsService.buildTodaySummary(context: modelContext)
-        let stale = ActivityRecorderService.recoverStaleSession(context: modelContext)
         let todayWorkouts = sessions.filter { $0.status == .finished && Calendar.current.isDateInToday($0.startedAt) }
-        let stepGoal = summary.goals.stepsDaily
-        let activeGoal = summary.goals.activeMinutesDaily
-        let todayIdx = todayWeekIndex()
-        let days = weeklyDays(summary: summary, stepGoal: stepGoal, todayIndex: todayIdx)
-        let activeDayCount = days.filter(\.completed).count
 
         ScrollView {
             VStack(spacing: 16) {
-                if !stale.isEmpty {
-                    StaleSessionRecoveryCard(sessions: stale)
-                }
+                if let summary {
+                    let stepGoal = summary.goals.stepsDaily
+                    let activeGoal = summary.goals.activeMinutesDaily
+                    let days = weeklyDays(summary: summary, stepGoal: stepGoal, todayIndex: todayWeekIndex())
+                    let activeDayCount = days.filter(\.completed).count
 
-                DailyActivitySummaryCard(
-                    summary: summary,
-                    units: units,
-                    caloriesAvailable: MetricsService.isVisible(.calories, context: modelContext)
-                ) {
-                    path.append(AppRoute.activityTrends)
-                }
+                    if !stale.isEmpty {
+                        StaleSessionRecoveryCard(sessions: stale)
+                    }
 
-                HStack(spacing: 12) {
+                    DailyActivitySummaryCard(
+                        summary: summary,
+                        units: units,
+                        caloriesAvailable: caloriesAvailable
+                    ) {
+                        path.append(AppRoute.activityTrends)
+                    }
+
+                    HStack(spacing: 12) {
                     Button { path.append(AppRoute.recordSelect) } label: {
                         Text("+ Record Activity")
                             .font(PulseFont.headline)
@@ -62,6 +74,8 @@ struct ActivityView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                // Record pill + calendar circle share one container so their glass renders/blends together.
+                .pulseGlassContainer(spacing: 12)
 
                 Button { path.append(AppRoute.logPastActivity) } label: {
                     HStack(spacing: 12) {
@@ -133,13 +147,18 @@ struct ActivityView: View {
                     .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                }   // if let summary
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
+            // NB: no glass container around the whole content stack — it made adjacent workout
+            // cards blend/bleed into each other. Small button clusters keep their own containers.
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .pulseScrollEdges()
+        .task(id: dataChange.token) { reload() }
+        .onChange(of: sessions.count) { _, _ in reload() }
         .sheet(isPresented: $goalsOpen) { GoalEditorSheet() }
         .sheet(isPresented: $historyOpen) {
             WorkoutHistorySheet(units: units) { id in

@@ -140,7 +140,14 @@ struct CoachFollowUpChipLabel: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .pulseGlass(RoundedRectangle(cornerRadius: 12, style: .continuous), interactive: true)
+        // Solid tile, not glass: this chip renders inside the assistant bubble's glass,
+        // and glass can't sample glass (renders flat). A soft card fill + hairline keeps
+        // the chip visible as a tappable affordance.
+        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+        )
     }
 }
 

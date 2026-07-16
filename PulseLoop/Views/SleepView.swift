@@ -151,6 +151,12 @@ struct SleepView: View {
         .onChange(of: scrolledSleepPage) { _, newValue in
             if let newValue { selectedSleepPage = newValue }
         }
+        // Reset to the first page whenever the day's session set changes (and on appear), so a
+        // stale index can't linger past the dots when a different day or fewer sessions load.
+        .onChange(of: sessions.map(\.session.id), initial: true) { _, _ in
+            selectedSleepPage = 0
+            scrolledSleepPage = 0
+        }
 
         // Page indicator dots.
         HStack(spacing: 8) {

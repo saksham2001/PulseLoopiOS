@@ -53,7 +53,7 @@ enum RingAppVariant: String, CaseIterable, Identifiable, Sendable {
         switch family {
         case .colmiR02: self = .qring
         case .colmiSmartHealth: self = .smartHealth
-        case .jring, .tk5: return nil
+        case .jring, .tk5, .luckRing: return nil
         }
     }
 
@@ -108,11 +108,12 @@ extension RingDeviceType {
     /// How proven this family's driver is. Exhaustive on purpose: a new family must state its level.
     var supportLevel: WearableSupportLevel {
         switch self {
-        case .jring, .colmiR02: return .full
-        // Both YCBT families are unproven on hardware. The SmartHealth-Colmi has never been connected
-        // at all — its advertisement, its capability bitmap and its history types are all still
-        // predictions (plan B6 is what settles them).
-        case .tk5, .colmiSmartHealth: return .limited
+        case .jring, .colmiR02, .colmiSmartHealth: return .full
+        // The TK5 is unproven on hardware — its advertisement, capability bitmap and history types
+        // are still predictions.
+        case .tk5: return .limited
+        // TK18 is the only hardware-tested LuckRing; every 0xFF64 sibling is still a prediction.
+        case .luckRing: return .limited
         }
     }
 }
@@ -171,6 +172,15 @@ extension WearableModel {
         id: "tk5", displayName: "TK5", brand: "TK", family: .tk5,
         tint: PulseColors.spo2, blurb: "HR · SpO₂ · HRV · Sleep · Steps",
         advertisedNamePatterns: ["^TK5 ?[0-9A-Fa-f]{0,4}$"], imageName: "tk5"
+    )
+
+    // TK18 — the LuckRing app / "K6" protocol (company ID 0xFF64). The only hardware-tested unit of the
+    // whole 0xFF64 family, so it is `.limited`. Its baseline is what the driver can decode; untested
+    // siblings still pair via the coordinator's strong-signal match and get generic art + a fallback name.
+    static let luckRingTK18 = WearableModel(
+        id: "luckring-tk18", displayName: "TK18", brand: "LuckRing", family: .luckRing,
+        tint: PulseColors.accent, blurb: "HR · SpO₂ · HRV · Temp · BP · Sleep · Steps",
+        advertisedNamePatterns: ["^TK18([ _-].*)?$"], imageName: "luckring-tk18"
     )
 
     // Yawell-branded variants of the same hardware.
@@ -301,6 +311,7 @@ extension WearableModel {
         colmiR99,
         yawellR05, yawellR10, yawellR11, h59,
         tk5,
+        luckRingTK18,
     ]
 
     static func model(id: String?) -> WearableModel? {

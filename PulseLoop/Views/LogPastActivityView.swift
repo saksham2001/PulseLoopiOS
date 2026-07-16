@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct LogPastActivityView: View {
     @Environment(\.modelContext) private var modelContext
@@ -76,9 +77,11 @@ struct LogPastActivityView: View {
                 durationMinutes: Double(durationMinutes),
                 context: modelContext
             )
+            UINotificationFeedbackGenerator().notificationOccurred(.success)   // "activity logged" cue
             path.removeLast()
             path.append(AppRoute.activityDetail(session.id))
         } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
             saveError = error.localizedDescription
         }
     }
@@ -136,6 +139,7 @@ private struct ActivityTypeGrid: View, Equatable {
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: selectedType)
     }
 }
 
@@ -153,21 +157,35 @@ private struct ActivityTypeButton: View, Equatable {
             HStack(spacing: 10) {
                 Image(systemName: kind.symbol)
                     .font(PulseFont.title3.weight(.regular))
-                    .foregroundStyle(isSelected ? PulseColors.accent : PulseColors.textSecondary)
+                    .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
                     .frame(width: 38, height: 38)
-                    .background(isSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Circle())
+                    .background(isSelected ? Color.white.opacity(0.22) : PulseColors.cardSoft, in: Circle())
                 Text(kind.label)
                     .font(PulseFont.callout.weight(.semibold))
-                    .foregroundStyle(PulseColors.textPrimary)
+                    .foregroundStyle(isSelected ? .white : PulseColors.textPrimary)
                 Spacer(minLength: 0)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(PulseColors.accent)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(12)
             .frame(maxWidth: .infinity)
-            // Selected = accent-tinted glass; others = plain glass.
-            .pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous),
-                        interactive: true, tint: isSelected ? PulseColors.accent : nil)
+            .contentShape(RoundedRectangle(cornerRadius: PulseRadius.compact, style: .continuous))
+            // Selected = dim accent-tinted glass; others = plain glass.
+            .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.compact, style: .continuous),
+                        interactive: true, tint: isSelected ? PulseColors.accentSoft : nil)
+            .overlay(
+                RoundedRectangle(cornerRadius: PulseRadius.compact, style: .continuous)
+                    .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1.5)
+            )
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(kind.label)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
@@ -196,7 +214,7 @@ private struct PastActivityTimeCard: View {
                     .foregroundStyle(isValid ? PulseColors.textSecondary : PulseColors.warning)
             }
         }
-        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
     private func row<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
@@ -207,7 +225,8 @@ private struct PastActivityTimeCard: View {
             Text(title)
                 .font(PulseFont.subheadline)
                 .foregroundStyle(PulseColors.textPrimary)
-            Spacer()
+                .fixedSize()   // never wrap "Started" when the date/time chips are wide
+            Spacer(minLength: 8)
             content()
         }
         .padding(.horizontal, 16)
@@ -223,10 +242,14 @@ private struct PastActivityDurationCard: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.minutes == rhs.minutes }
 
+    private var atFloor: Bool { minutes <= 5 }
+
     var body: some View {
         VStack(spacing: 16) {
             HStack {
-                durationButton(systemImage: "minus") { onChange(max(5, minutes - 5)) }
+                durationButton(systemImage: "minus", disabled: atFloor) { onChange(max(5, minutes - 5)) }
+                    .accessibilityLabel("Decrease duration")
+                    .accessibilityValue(durationText)
                 Spacer()
                 VStack(spacing: 2) {
                     Text(durationText)
@@ -240,31 +263,43 @@ private struct PastActivityDurationCard: View, Equatable {
                 }
                 Spacer()
                 durationButton(systemImage: "plus") { onChange(minutes + 5) }
+                    .accessibilityLabel("Increase duration")
+                    .accessibilityValue(durationText)
             }
 
             HStack(spacing: 8) {
                 ForEach(Self.quickDurations, id: \.self) { value in
+                    let chipSelected = minutes == value
                     Button("\(value)m") { onChange(value) }
                         .font(PulseFont.caption.weight(.semibold))
-                        .foregroundStyle(minutes == value ? Color.white : PulseColors.textSecondary)
+                        .foregroundStyle(chipSelected ? PulseColors.accent : PulseColors.textSecondary)
                         .frame(maxWidth: .infinity)
                         .frame(height: 34)
-                        .background(minutes == value ? PulseColors.accent : PulseColors.cardSoft, in: Capsule())
+                        .background(chipSelected ? PulseColors.accentSoft : PulseColors.cardSoft, in: Capsule())
+                        .overlay(
+                            Capsule().strokeBorder(chipSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1)
+                        )
                         .buttonStyle(.plain)
+                        .accessibilityLabel("\(value) minutes")
+                        .accessibilityAddTraits(chipSelected ? [.isButton, .isSelected] : .isButton)
                 }
             }
+            .sensoryFeedback(.selection, trigger: minutes)
         }
         .padding(16)
-        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
-    private func durationButton(systemImage: String, action: @escaping () -> Void) -> some View {
+    private func durationButton(systemImage: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage).frame(width: 44, height: 44)
+            Image(systemName: systemImage)
+                .foregroundStyle(disabled ? PulseColors.textMuted : PulseColors.textPrimary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())   // whole 44pt circle taps, not just the thin glyph
         }
         .buttonStyle(.plain)
-        .foregroundStyle(PulseColors.textPrimary)
         .background(PulseColors.cardSoft, in: Circle())
+        .disabled(disabled)
     }
 
     private var durationText: String {

@@ -53,6 +53,34 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertEqual(percent, 84)
     }
 
+    // MARK: Activity history buckets
+
+    /// Two quarter-hour buckets in the same hour must decode to distinct timestamps (:30 vs :45).
+    /// Regression: the decoder used to hard-code minute 0, collapsing all four quarters of an hour
+    /// onto HH:00; since day totals sum buckets keyed by start epoch, three of four quarters
+    /// overwrote each other and steps/distance were undercounted by up to ~75%.
+    func testActivityHistoryPreservesQuarterHourOffset() {
+        // Reference clock so the decoded timestamp lands inside the [now-8d, now+1h] window.
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 13, hour: 12))!
+        // BCD-literal date bytes for 2026-07-13, then the quarter-of-day index and steps=u16(v9,v10).
+        func frame(quarter: UInt8, steps: UInt8) -> Data {
+            ColmiPacket.frame([ColmiCommandID.syncActivity, 0x26, 0x07, 0x13, quarter,
+                               0, 0, 0, 0, steps, 0, 0, 0])
+        }
+        guard case let .activityBucket(ts6, s6, _) =
+                decoder.decodeHistory(frame(quarter: 6, steps: 100), day: now, calendar: calendar, now: now).first,
+              case let .activityBucket(ts7, s7, _) =
+                decoder.decodeHistory(frame(quarter: 7, steps: 200), day: now, calendar: calendar, now: now).first else {
+            return XCTFail("expected activityBucket events")
+        }
+        XCTAssertEqual(s6, 100)
+        XCTAssertEqual(s7, 200)
+        XCTAssertEqual(calendar.component(.hour, from: ts6), 1)
+        XCTAssertEqual(calendar.component(.minute, from: ts6), 30)  // quarter 6 → 01:30
+        XCTAssertEqual(calendar.component(.minute, from: ts7), 45)  // quarter 7 → 01:45
+        XCTAssertNotEqual(ts6, ts7, "same-hour quarter buckets must not share a timestamp/epoch")
+    }
+
     func testRealtimeHeartRate() {
         let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 72])
         let events = decoder.decodeNormal(frame)

@@ -29,7 +29,17 @@ struct CoachActionCardView: View {
                         .font(PulseFont.footnote.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 9)
                         .foregroundStyle(PulseColors.textPrimary)
-                        .pulseGlass(Capsule(), interactive: true)
+                        // Solid tile, not glass: this button sits inside the card's own glass,
+                        // and glass can't sample glass (renders flat). A subtle white sheen +
+                        // hairline mirrors the Settings icon tile.
+                        .background(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.16), Color.white.opacity(0.07)],
+                                startPoint: .top, endPoint: .bottom
+                            ),
+                            in: Capsule()
+                        )
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
                 Button(action: onConfirm) {
@@ -37,8 +47,9 @@ struct CoachActionCardView: View {
                         .font(PulseFont.footnote.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 9)
                         .foregroundStyle(.white)
-                        .pulseGlass(Capsule(), interactive: true,
-                                    tint: isDestructive ? PulseColors.danger : PulseColors.accent)
+                        // Solid accent/danger fill (not tinted glass): keeps the destructive
+                        // affordance visible while avoiding glass-inside-glass flattening.
+                        .background(isDestructive ? PulseColors.danger : PulseColors.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }

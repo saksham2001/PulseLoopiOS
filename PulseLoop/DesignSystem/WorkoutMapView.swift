@@ -58,8 +58,16 @@ struct WorkoutMapView: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(alignment: .bottomLeading) { infoOverlay }
-            .overlay(alignment: .topTrailing) { if follow { followControls } }
+            // Both glass overlays share one container so they render/blend as one group.
+            .overlay {
+                ZStack {
+                    infoOverlay.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    if follow {
+                        followControls.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    }
+                }
+                .pulseGlassContainer(spacing: 8)
+            }
             .onAppear { recenter() }
             .onChange(of: coordinates.count) { _, _ in
                 // Live (follow) mode tracks growth while auto-follow is engaged; static (summary)

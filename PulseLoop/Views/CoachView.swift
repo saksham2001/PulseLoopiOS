@@ -122,6 +122,8 @@ struct CoachView: View {
                             }
                         }
                         .padding(.horizontal, 12).padding(.vertical, 8)
+                        // Prompt chips share one container so their glass renders/blends together.
+                        .pulseGlassContainer(spacing: 6)
                     }
                 }
                 composer
@@ -188,18 +190,22 @@ struct CoachView: View {
                 Text("Using your latest ring sync").font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             }
             Spacer()
-            Button { composerFocused = false; showUsage = true } label: {
-                Image(systemName: "info.circle").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
-                    .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+            // Sibling glass circles share one container so their glass renders/blends together.
+            HStack(spacing: 12) {
+                Button { composerFocused = false; showUsage = true } label: {
+                    Image(systemName: "info.circle").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
+                        .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+                }
+                Button { newConversation() } label: {
+                    Image(systemName: "plus").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
+                        .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+                }
+                Button { composerFocused = false; showHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
+                        .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+                }
             }
-            Button { newConversation() } label: {
-                Image(systemName: "plus").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
-                    .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
-            }
-            Button { composerFocused = false; showHistory = true } label: {
-                Image(systemName: "clock.arrow.circlepath").font(PulseFont.body).foregroundStyle(PulseColors.textSecondary)
-                    .frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
-            }
+            .pulseGlassContainer(spacing: 8)
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .background(PulseColors.secondaryBackground)
@@ -243,6 +249,8 @@ struct CoachView: View {
                 .buttonStyle(.plain)
                 .disabled(!canSend)
             }
+            // Camera / field / send glass share one container so they render/blend together.
+            .pulseGlassContainer(spacing: 8)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
         .photosPicker(isPresented: $showPhotosPicker, selection: $photosPickerItem, matching: .images)

@@ -468,10 +468,14 @@ final class EventPersistenceSubscriber {
                 return new
             }()
 
-        let daySessionIds = Set(daySessions.map { $0.id }).union([container.id])
-        var existingStarts = Set(((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
+        // Rows to hand `reconcileWakingDay` (a just-created container isn't in `daySessions` yet).
+        let sessionsForDay = daySessions.contains(where: { $0.id == container.id }) ? daySessions : daySessions + [container]
+
+        let daySessionIds = Set(sessionsForDay.map { $0.id })
+        let existingDayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
             .filter { daySessionIds.contains($0.sessionId) }
-            .map { $0.startAt })
+        var existingStarts = Set(existingDayBlocks.map { $0.startAt })
+        var newBlocks: [SleepStageBlock] = []
 
         var offset = 0
         while offset < stages.count {
@@ -482,12 +486,18 @@ final class EventPersistenceSubscriber {
             }
             let blockStart = calendar.date(byAdding: .minute, value: offset, to: start) ?? start
             if !existingStarts.contains(blockStart) {
-                context.insert(SleepStageBlock(sessionId: container.id, startAt: blockStart, startMinute: 0, durationMinutes: duration, stage: stage))
+                let block = SleepStageBlock(sessionId: container.id, startAt: blockStart, startMinute: 0, durationMinutes: duration, stage: stage)
+                context.insert(block)
+                newBlocks.append(block)
                 existingStarts.insert(blockStart)
             }
             offset += duration
         }
 
-        SleepService.reconcileWakingDay(dateKey: dateKey, context: context)
+        // Hand the in-memory rows + blocks (incl. the ones just inserted, unsaved under the
+        // coalesced flush) straight to reconcile so it needn't re-scan the whole store.
+        SleepService.reconcileWakingDay(dateKey: dateKey, context: context,
+                                        daySessions: sessionsForDay,
+                                        dayBlocks: existingDayBlocks + newBlocks)
     }
 }

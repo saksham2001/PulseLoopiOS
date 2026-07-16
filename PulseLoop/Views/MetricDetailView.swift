@@ -16,6 +16,8 @@ struct MetricDetailView: View {
     @State private var period: DetailPeriod = .today
     @State private var primary: [MetricSample] = []
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
+    /// Observed so the detail chart/tiles re-fetch when a background sync lands while this is open.
+    @State private var dataChange = PulseDataChange.shared
 
     private var profile: UserPhysiologyProfile { UserPhysiologyProfile(profiles.first) }
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
@@ -72,12 +74,15 @@ struct MetricDetailView: View {
             }
             .padding(16)
             .padding(.bottom, 40)
+            // Stacked glass cards share one container so their glass renders/blends consistently.
+            .pulseGlassContainer(spacing: 18)
         }
         .background(PulseColors.background)
         // Shared glass chrome: centered title + glass back button, no system nav
         // bar (so the zoom transition doesn't reflow the content).
         .pageChrome(metric.title)
         .task(id: period) { reload() }
+        .onChange(of: dataChange.token) { _, _ in reload() }
     }
 
     // MARK: - Period selector
@@ -130,7 +135,7 @@ struct MetricDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
     /// BP shows two series — systolic in the metric accent, diastolic lighter.
@@ -176,7 +181,7 @@ struct MetricDetailView: View {
         .padding(.vertical, 14)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
-        .pulseGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
     private func stat(_ title: String, _ value: String) -> some View {
@@ -214,7 +219,7 @@ struct MetricDetailView: View {
             }
         }
         .padding(16)
-        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
     private var explainer: some View {
@@ -224,7 +229,7 @@ struct MetricDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
     }
 
     private var disclaimer: some View {
@@ -234,8 +239,8 @@ struct MetricDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(PulseColors.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.warning.opacity(0.3), lineWidth: 1))
+        .background(PulseColors.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous).stroke(PulseColors.warning.opacity(0.3), lineWidth: 1))
     }
 
     // MARK: - Data
