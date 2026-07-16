@@ -145,6 +145,16 @@ private struct OnboardingTopBar: View {
     }
 }
 
+/// One icon + title + one-line detail + tint, shared by the Welcome feature tiles and the Baseline
+/// timeline. A named struct rather than a 4-tuple (SwiftLint `large_tuple`) — `title` is the identity.
+struct OnboardingItem: Identifiable {
+    let icon: String
+    let title: String
+    let detail: String
+    let tint: Color
+    var id: String { title }
+}
+
 struct OnboardingWelcomeView: View {
     let getStarted: () -> Void
     let exploreWithoutRing: () -> Void
@@ -152,12 +162,12 @@ struct OnboardingWelcomeView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let features = [
-        ("dollarsign.circle.fill", "No subscription", "Own your ring data", PulseColors.success),
-        ("lock.shield.fill", "Privacy first", "Stays on your device", PulseColors.info),
-        ("sparkles", "AI coach", "Learns your baseline", PulseColors.accent),
-        ("waveform.path.ecg", "Your vitals", "HR, SpO₂, HRV, stress", PulseColors.heartRate),
-        ("moon.stars.fill", "Sleep tracking", "Stages & trends", PulseColors.sleep),
-        ("figure.run", "Workouts", "Live activity tracking", PulseColors.steps),
+        OnboardingItem(icon: "dollarsign.circle.fill", title: "No subscription", detail: "Own your ring data", tint: PulseColors.success),
+        OnboardingItem(icon: "lock.shield.fill", title: "Privacy first", detail: "Stays on your device", tint: PulseColors.info),
+        OnboardingItem(icon: "sparkles", title: "AI coach", detail: "Learns your baseline", tint: PulseColors.accent),
+        OnboardingItem(icon: "waveform.path.ecg", title: "Your vitals", detail: "HR, SpO₂, HRV, stress", tint: PulseColors.heartRate),
+        OnboardingItem(icon: "moon.stars.fill", title: "Sleep tracking", detail: "Stages & trends", tint: PulseColors.sleep),
+        OnboardingItem(icon: "figure.run", title: "Workouts", detail: "Live activity tracking", tint: PulseColors.steps),
     ]
 
     private let columns = [
@@ -193,7 +203,7 @@ struct OnboardingWelcomeView: View {
                 Spacer().frame(height: (16 * s).rounded())
 
                 LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(features, id: \.1) { feature in
+                    ForEach(features) { feature in
                         tile(feature, s: s)
                     }
                 }
@@ -208,14 +218,14 @@ struct OnboardingWelcomeView: View {
                 logo(size: 92)
                 CompactOnboardingHeader(title: "Set up PulseLoop", subtitle: headerSubtitle)
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(features, id: \.1) { feature in
+                    ForEach(features) { feature in
                         VStack(spacing: 8) {
                             tileIcon(feature, s: 1)
-                            Text(feature.1)
+                            Text(feature.title)
                                 .font(PulseFont.headline)
                                 .foregroundStyle(PulseColors.textPrimary)
                                 .multilineTextAlignment(.center)
-                            Text(feature.2)
+                            Text(feature.detail)
                                 .font(PulseFont.footnote.weight(.regular))
                                 .foregroundStyle(PulseColors.textMuted)
                                 .multilineTextAlignment(.center)
@@ -246,24 +256,24 @@ struct OnboardingWelcomeView: View {
             .accessibilityHidden(true)
     }
 
-    private func tileIcon(_ feature: (String, String, String, Color), s: CGFloat) -> some View {
-        Image(systemName: feature.0)
+    private func tileIcon(_ feature: OnboardingItem, s: CGFloat) -> some View {
+        Image(systemName: feature.icon)
             .font(.system(size: (18 * s).rounded()))
-            .foregroundStyle(feature.3)
+            .foregroundStyle(feature.tint)
             .frame(width: (34 * s).rounded(), height: (34 * s).rounded())
-            .background(feature.3.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+            .background(feature.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func tile(_ feature: (String, String, String, Color), s: CGFloat) -> some View {
+    private func tile(_ feature: OnboardingItem, s: CGFloat) -> some View {
         VStack(spacing: 6) {
             tileIcon(feature, s: s)
-            Text(feature.1)
+            Text(feature.title)
                 .font(PulseFont.subheadline.weight(.semibold))
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-            Text(feature.2)
+            Text(feature.detail)
                 .font(PulseFont.caption)
                 .foregroundStyle(PulseColors.textMuted)
                 .multilineTextAlignment(.center)
@@ -403,11 +413,20 @@ struct OnboardingBaselineView: View {
     // Drives the medallion (rings + checkmark) and staggered timeline reveal.
     @State private var appeared = false
 
-    // (icon / title / one-line description / node tint). "1" renders as a numbered chip.
+    // icon / title / one-line description / node tint. "1" renders as a numbered chip.
     private let milestones = [
-        ("1", "Today", "Activity and live vitals, right away", PulseColors.info),
-        ("moon.fill", "First sync", "Sleep stages and nightly trends", PulseColors.sleep),
-        ("chart.line.uptrend.xyaxis", "Days 3–7", "Your personalized baseline unlocks", PulseColors.success),
+        OnboardingItem(
+            icon: "1", title: "Today",
+            detail: "Activity and live vitals, right away", tint: PulseColors.info
+        ),
+        OnboardingItem(
+            icon: "moon.fill", title: "First sync",
+            detail: "Sleep stages and nightly trends", tint: PulseColors.sleep
+        ),
+        OnboardingItem(
+            icon: "chart.line.uptrend.xyaxis", title: "Days 3–7",
+            detail: "Your personalized baseline unlocks", tint: PulseColors.success
+        ),
     ]
 
     var body: some View {
@@ -541,7 +560,7 @@ struct OnboardingBaselineView: View {
 
     private func timeline(s: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: (18 * s).rounded()) {
-            ForEach(Array(milestones.enumerated()), id: \.element.1) { index, milestone in
+            ForEach(Array(milestones.enumerated()), id: \.element.id) { index, milestone in
                 milestoneRow(milestone, index: index, s: s, isLast: index == milestones.count - 1)
             }
         }
@@ -559,7 +578,7 @@ struct OnboardingBaselineView: View {
     }
 
     private func milestoneRow(
-        _ milestone: (String, String, String, Color),
+        _ milestone: OnboardingItem,
         index: Int,
         s: CGFloat,
         isLast: Bool
@@ -569,19 +588,19 @@ struct OnboardingBaselineView: View {
             // Glass node + connecting line to the next node.
             VStack(spacing: 0) {
                 Group {
-                    if milestone.0 == "1" {
+                    if milestone.icon == "1" {
                         Text("1").font(PulseFont.footnote.weight(.bold))
                     } else {
-                        Image(systemName: milestone.0).font(PulseFont.footnote.weight(.semibold))
+                        Image(systemName: milestone.icon).font(PulseFont.footnote.weight(.semibold))
                     }
                 }
-                .foregroundStyle(milestone.3)
+                .foregroundStyle(milestone.tint)
                 .frame(width: node, height: node)
-                .pulseGlass(Circle(), tint: milestone.3.opacity(0.18))
+                .pulseGlass(Circle(), tint: milestone.tint.opacity(0.18))
 
                 if !isLast {
                     Rectangle()
-                        .fill(milestone.3.opacity(0.35))
+                        .fill(milestone.tint.opacity(0.35))
                         .frame(width: 2)
                         .frame(maxHeight: .infinity)
                 }
@@ -589,10 +608,10 @@ struct OnboardingBaselineView: View {
             .frame(width: node)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(milestone.1)
+                Text(milestone.title)
                     .font(PulseFont.subheadline.weight(.semibold))
                     .foregroundStyle(PulseColors.textPrimary)
-                Text(milestone.2)
+                Text(milestone.detail)
                     .font(PulseFont.footnote.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
