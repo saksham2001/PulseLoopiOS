@@ -292,10 +292,19 @@ final class SleepServiceTests: XCTestCase {
 
     // 2. SleepService.reconcileWakingDay — in-memory context
 
+    /// The seeded day and each segment's expected bounds, returned by `seedNightPlusNapSession`.
+    private struct NightNapSeed {
+        let day: Date
+        let nightStart: Date
+        let nightEnd: Date
+        let napStart: Date
+        let napEnd: Date
+    }
+
     /// Insert ONE session whose blocks form a night run + a nap run separated by a >60m
     /// gap under a single row, then reconcile the waking day. Returns the (day, expected bounds).
     @discardableResult
-    private func seedNightPlusNapSession(into context: ModelContext) -> (day: Date, nightStart: Date, nightEnd: Date, napStart: Date, napEnd: Date) {
+    private func seedNightPlusNapSession(into context: ModelContext) -> NightNapSeed {
         let day = TestSupport.day(0)
         let nightStart = at(1, 0)                       // 01:00
         let napStart = at(14, 0)                        // 14:00, >60m after the night ends
@@ -314,7 +323,7 @@ final class SleepServiceTests: XCTestCase {
         try? context.save()
         let nightEnd = Calendar.current.date(byAdding: .minute, value: 180, to: nightStart)!  // 04:00
         let napEnd = Calendar.current.date(byAdding: .minute, value: 60, to: napStart)!        // 15:00
-        return (day, nightStart, nightEnd, napStart, napEnd)
+        return NightNapSeed(day: day, nightStart: nightStart, nightEnd: nightEnd, napStart: napStart, napEnd: napEnd)
     }
 
     private func sessions(on day: Date, in context: ModelContext) -> [SleepSession] {
@@ -414,5 +423,65 @@ final class SleepServiceTests: XCTestCase {
 
         XCTAssertEqual(sessions(on: day, in: context).count, 2, "migration re-segmented the merged row into night + nap")
         XCTAssertTrue(UserDefaults.standard.bool(forKey: key), "gate is set true after the one-time pass")
+    }
+
+    // 4. Identity stability + change-gating (regression cover for the pre-merge review fixes)
+
+    private func sleepTimelineUpdateCount(in context: ModelContext) -> Int {
+        ((try? context.fetch(FetchDescriptor<DerivedUpdateRow>())) ?? [])
+            .filter { $0.kind == "sleep_timeline" }
+            .count
+    }
+
+    /// A nap that syncs before the night it precedes lands under the day's earliest (container)
+    /// row, exactly as `persistSleepTimeline` would attach it. Reconcile must keep that row's
+    /// identity on the nap segment and spin the night into a fresh row — not flip the id onto the
+    /// night (which positional, sort-by-startAt matching used to do, misattributing anything keyed
+    /// to the SleepSession.id).
+    func testReconcileKeepsSessionIdentityWhenNightSyncsAfterNap() throws {
+        let context = try TestSupport.makeContext()
+        let day = TestSupport.day(0)
+
+        // Nap synced first: a single row at 14:00–15:00.
+        let napStart = at(14, 0)
+        let napRow = SleepSession(date: day, startAt: napStart, endAt: at(15, 0), totalMinutes: 60)
+        context.insert(napRow)
+        let napId = napRow.id
+        for i in 0..<2 {
+            let s = Calendar.current.date(byAdding: .minute, value: i * 30, to: napStart)!
+            context.insert(SleepStageBlock(sessionId: napId, startAt: s, startMinute: i * 30, durationMinutes: 30, stage: .light))
+        }
+        // The night arrives later and attaches to that container row, like `persistSleepTimeline`.
+        let nightStart = at(1, 0)
+        for i in 0..<3 {
+            let s = Calendar.current.date(byAdding: .minute, value: i * 60, to: nightStart)!
+            context.insert(SleepStageBlock(sessionId: napId, startAt: s, startMinute: 0, durationMinutes: 60, stage: .deep))
+        }
+        try? context.save()
+
+        SleepService.reconcileWakingDay(dateKey: day, context: context)
+
+        let rows = sessions(on: day, in: context)   // sorted by startAt
+        XCTAssertEqual(rows.count, 2)
+        let night = rows[0]
+        let nap = rows[1]
+        XCTAssertEqual(nap.id, napId, "the pre-existing row keeps its id on the overlapping nap segment")
+        XCTAssertNotEqual(night.id, napId, "the night gets a fresh row rather than stealing the nap's id")
+        XCTAssertEqual(nap.startAt, napStart)
+        XCTAssertEqual(night.startAt, nightStart)
+    }
+
+    /// Re-syncing an unchanged day must not spam the audit table: the second reconcile touches no
+    /// bounds and re-points no block, so it emits zero new `DerivedUpdateRow`s.
+    func testReconcileEmitsNoChangeSignalOnUnchangedResync() throws {
+        let context = try TestSupport.makeContext()
+        let seed = seedNightPlusNapSession(into: context)
+
+        SleepService.reconcileWakingDay(dateKey: seed.day, context: context)
+        let afterFirst = sleepTimelineUpdateCount(in: context)
+        XCTAssertGreaterThan(afterFirst, 0, "the first reconcile splits the day and signals the change")
+
+        SleepService.reconcileWakingDay(dateKey: seed.day, context: context)
+        XCTAssertEqual(sleepTimelineUpdateCount(in: context), afterFirst, "an unchanged re-sync is a true no-op")
     }
 }
