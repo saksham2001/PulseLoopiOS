@@ -145,65 +145,97 @@ private struct OnboardingTopBar: View {
     }
 }
 
+/// One icon + title + one-line detail + tint, shared by the Welcome feature tiles and the Baseline
+/// timeline. A named struct rather than a 4-tuple (SwiftLint `large_tuple`) — `title` is the identity.
+struct OnboardingItem: Identifiable {
+    let icon: String
+    let title: String
+    let detail: String
+    let tint: Color
+    var id: String { title }
+}
+
 struct OnboardingWelcomeView: View {
     let getStarted: () -> Void
     let exploreWithoutRing: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private let features = [
-        ("dollarsign.circle.fill", "No subscription", "Own your ring data", PulseColors.success),
-        ("lock.shield.fill", "Privacy first", "Data stays on device", PulseColors.info),
-        ("sparkles", "AI health coach", "Learns your baseline", PulseColors.accent),
-        ("waveform.path.ecg", "See your vitals", "HR, SpO₂, HRV & stress", PulseColors.heartRate),
-        ("moon.stars.fill", "Sleep tracking", "Stages and trends", PulseColors.sleep),
-        ("figure.run", "Activity recording", "Live workout tracking", PulseColors.steps),
+        OnboardingItem(icon: "dollarsign.circle.fill", title: "No subscription", detail: "Own your ring data", tint: PulseColors.success),
+        OnboardingItem(icon: "lock.shield.fill", title: "Privacy first", detail: "Stays on your device", tint: PulseColors.info),
+        OnboardingItem(icon: "sparkles", title: "AI coach", detail: "Learns your baseline", tint: PulseColors.accent),
+        OnboardingItem(icon: "waveform.path.ecg", title: "Your vitals", detail: "HR, SpO₂, HRV, stress", tint: PulseColors.heartRate),
+        OnboardingItem(icon: "moon.stars.fill", title: "Sleep tracking", detail: "Stages & trends", tint: PulseColors.sleep),
+        OnboardingItem(icon: "figure.run", title: "Workouts", detail: "Live activity tracking", tint: PulseColors.steps),
     ]
 
     private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10),
     ]
 
+    private let headerSubtitle = "Your health, on your terms — no subscription, no cloud."
+
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibilityBody
+            } else {
+                fittedBody
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter { footer }
+        }
+    }
+
+    // Fitted, no-scroll layout for standard Dynamic Type sizes.
+    private var fittedBody: some View {
+        OnboardingFittedBand { s in
+            VStack(spacing: 0) {
+                logo(size: (78 * s).rounded())
+
+                Spacer().frame(height: (14 * s).rounded())
+
+                FittedOnboardingHeader(title: "Set up PulseLoop", subtitle: headerSubtitle, s: s)
+
+                Spacer().frame(height: (16 * s).rounded())
+
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(features) { feature in
+                        tile(feature, s: s)
+                    }
+                }
+            }
+        }
+    }
+
+    // Accessibility fallback: keep the scrolling body so large type never clips.
+    private var accessibilityBody: some View {
         ScrollView {
             VStack(spacing: 18) {
-                Image("pulseloop-logo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 92, height: 92)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .shadow(color: PulseColors.accent.opacity(0.22), radius: 18)
-                    .accessibilityHidden(true)
-
-                CompactOnboardingHeader(
-                    title: "Set up PulseLoop"
-                )
-
+                logo(size: 92)
+                CompactOnboardingHeader(title: "Set up PulseLoop", subtitle: headerSubtitle)
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(features, id: \.1) { feature in
+                    ForEach(features) { feature in
                         VStack(spacing: 8) {
-                            Image(systemName: feature.0)
-                                .font(PulseFont.title3)
-                                .foregroundStyle(feature.3)
-                                .frame(width: 38, height: 38)
-                                .background(feature.3.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
-                            Text(feature.1)
+                            tileIcon(feature, s: 1)
+                            Text(feature.title)
                                 .font(PulseFont.headline)
                                 .foregroundStyle(PulseColors.textPrimary)
                                 .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                            Text(feature.2)
+                            Text(feature.detail)
                                 .font(PulseFont.footnote.weight(.regular))
                                 .foregroundStyle(PulseColors.textMuted)
                                 .multilineTextAlignment(.center)
-                                .lineLimit(2)
                         }
                         .frame(maxWidth: .infinity)
-                        .frame(height: 118, alignment: .center)
+                        .padding(.vertical, 14)
                         .padding(.horizontal, 13)
                         .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
-
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 24)
@@ -212,17 +244,55 @@ struct OnboardingWelcomeView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            OnboardingActionFooter {
-                VStack(spacing: 10) {
-                    PrimaryButton(title: "Get started", systemImage: "arrow.right", action: getStarted)
-                    SecondaryButton(
-                        title: "Explore without ring",
-                        systemImage: "square.grid.2x2",
-                        action: exploreWithoutRing
-                    )
-                }
-            }
+    }
+
+    private func logo(size: CGFloat) -> some View {
+        Image("pulseloop-logo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: PulseColors.accent.opacity(0.22), radius: 16)
+            .accessibilityHidden(true)
+    }
+
+    private func tileIcon(_ feature: OnboardingItem, s: CGFloat) -> some View {
+        Image(systemName: feature.icon)
+            .font(.system(size: (18 * s).rounded()))
+            .foregroundStyle(feature.tint)
+            .frame(width: (34 * s).rounded(), height: (34 * s).rounded())
+            .background(feature.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func tile(_ feature: OnboardingItem, s: CGFloat) -> some View {
+        VStack(spacing: 6) {
+            tileIcon(feature, s: s)
+            Text(feature.title)
+                .font(PulseFont.subheadline.weight(.semibold))
+                .foregroundStyle(PulseColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Text(feature.detail)
+                .font(PulseFont.caption)
+                .foregroundStyle(PulseColors.textMuted)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: (92 * s).rounded(), alignment: .center)
+        .padding(.horizontal, 13)
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var footer: some View {
+        VStack(spacing: 10) {
+            PrimaryButton(title: "Get started", systemImage: "arrow.right", action: getStarted)
+            Button("Explore without ring", action: exploreWithoutRing)
+                .font(PulseFont.subheadline.weight(.semibold))
+                .foregroundStyle(PulseColors.textSecondary)
+                .frame(height: 44)
         }
     }
 }
@@ -337,71 +407,100 @@ struct OnboardingGoalsView: View {
 struct OnboardingBaselineView: View {
     let finish: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // Drives the medallion (rings + checkmark) and staggered timeline reveal.
+    @State private var appeared = false
+
+    // icon / title / one-line description / node tint. "1" renders as a numbered chip.
     private let milestones = [
-        ("1", "Day 1", "Basic activity and vitals", PulseColors.info),
-        ("moon.fill", "After sleep", "Sleep trends", PulseColors.sleep),
-        ("chart.line.uptrend.xyaxis", "After 3–7 days", "Personalized baseline", PulseColors.success),
+        OnboardingItem(
+            icon: "1", title: "Today",
+            detail: "Activity and live vitals, right away", tint: PulseColors.info
+        ),
+        OnboardingItem(
+            icon: "moon.fill", title: "First sync",
+            detail: "Sleep stages and nightly trends", tint: PulseColors.sleep
+        ),
+        OnboardingItem(
+            icon: "chart.line.uptrend.xyaxis", title: "Days 3–7",
+            detail: "Your personalized baseline unlocks", tint: PulseColors.success
+        ),
     ]
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibilityBody
+            } else {
+                fittedBody
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            OnboardingActionFooter {
+                PrimaryButton(title: "Start using PulseLoop", systemImage: "arrow.right", action: finish)
+            }
+        }
+        .onAppear {
+            if reduceMotion {
+                appeared = true
+            } else {
+                withAnimation(PulseMotion.bouncy) { appeared = true }
+            }
+        }
+    }
+
+    private var fittedBody: some View {
+        OnboardingFittedBand { s in
+            VStack(spacing: 0) {
+                medallion(s: s)
+
+                Spacer().frame(height: (16 * s).rounded())
+
+                eyebrow
+
+                VStack(spacing: 6) {
+                    Text("You're all set")
+                        .font(PulseFont.largeTitle)
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text("Wear your ring today. Your baseline builds from here.")
+                        .font(PulseFont.callout)
+                        .foregroundStyle(PulseColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .padding(.top, 4)
+
+                Spacer().frame(height: (20 * s).rounded())
+
+                timeline(s: s)
+            }
+        }
+    }
+
+    // Accessibility fallback: linear scrolling layout, no scale, no motion gating needed
+    // (the .onAppear still sets `appeared = true` so nothing stays hidden).
+    private var accessibilityBody: some View {
         ScrollView {
             VStack(spacing: 20) {
-                CompactOnboardingHeader(
-                    title: "You're ready",
-                    subtitle: "A little context before your first day with PulseLoop."
-                )
-
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("PulseLoop learns your baseline over time")
-                            .font(PulseFont.numberM)
-                            .foregroundStyle(PulseColors.textPrimary)
-                        Text("Wear your ring during the day and sync after sleep. Trends become more personal after a few days.")
-                            .font(PulseFont.subheadline.weight(.regular))
-                            .foregroundStyle(PulseColors.textSecondary)
-                            .lineSpacing(4)
-                    }
-
-                    ForEach(milestones, id: \.1) { milestone in
-                        HStack(spacing: 12) {
-                            Group {
-                                if milestone.0 == "1" {
-                                    Text("1").font(PulseFont.footnote.weight(.bold))
-                                } else {
-                                    Image(systemName: milestone.0).font(PulseFont.footnote.weight(.semibold))
-                                }
-                            }
-                            .foregroundStyle(milestone.3)
-                            .frame(width: 34, height: 34)
-                            .background(milestone.3.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(milestone.1)
-                                    .font(PulseFont.subheadline.weight(.semibold))
-                                    .foregroundStyle(PulseColors.textPrimary)
-                                Text(milestone.2)
-                                    .font(PulseFont.footnote.weight(.regular))
-                                    .foregroundStyle(PulseColors.textMuted)
-                            }
-                            Spacer()
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
+                medallion(s: 1)
+                eyebrow
+                VStack(spacing: 6) {
+                    Text("You're all set")
+                        .font(PulseFont.largeTitle)
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .multilineTextAlignment(.center)
+                    Text("Wear your ring today. Your baseline builds from here.")
+                        .font(PulseFont.callout)
+                        .foregroundStyle(PulseColors.textSecondary)
+                        .multilineTextAlignment(.center)
                 }
-                .padding(20)
-                .background(
-                    LinearGradient(
-                        colors: [PulseColors.accent.opacity(0.14), PulseColors.card],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(PulseColors.borderSubtle, lineWidth: 1)
-                )
-
+                timeline(s: 1)
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 24)
@@ -410,11 +509,121 @@ struct OnboardingBaselineView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            OnboardingActionFooter {
-                PrimaryButton(title: "Go to app", systemImage: "arrow.right", action: finish)
+    }
+
+    // MARK: - Tier 1: animated success medallion
+
+    private func medallion(s: CGFloat) -> some View {
+        ZStack {
+            // Outer concentric ring.
+            Circle()
+                .stroke(PulseColors.accent.opacity(0.12), lineWidth: 2)
+                .frame(width: (140 * s).rounded(), height: (140 * s).rounded())
+                .scaleEffect(appeared ? 1.0 : 0.7)
+                .opacity(appeared ? 1.0 : 0.0)
+            // Inner concentric ring (staggered).
+            Circle()
+                .stroke(PulseColors.accent.opacity(0.25), lineWidth: 2)
+                .frame(width: (104 * s).rounded(), height: (104 * s).rounded())
+                .scaleEffect(appeared ? 1.0 : 0.7)
+                .opacity(appeared ? 1.0 : 0.0)
+                .animation(reduceMotion ? nil : PulseMotion.bouncy.delay(0.06), value: appeared)
+
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: (72 * s).rounded()))
+                .foregroundStyle(PulseColors.accent)
+                .padding((14 * s).rounded())
+                .pulseGlass(Circle())
+                .scaleEffect(appeared ? 1.0 : 0.3)
+                .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.6), value: appeared)
+        }
+        .pulseGlassContainer()
+        .accessibilityHidden(true)
+    }
+
+    private var eyebrow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(PulseFont.caption)
+            Text("Setup complete")
+                .font(PulseFont.caption.weight(.semibold))
+        }
+        .foregroundStyle(PulseColors.accent)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .pulseGlass(Capsule(), tint: PulseColors.accent.opacity(0.16))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Setup complete")
+    }
+
+    // MARK: - Tier 3: connected vertical glass timeline
+
+    private func timeline(s: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: (18 * s).rounded()) {
+            ForEach(Array(milestones.enumerated()), id: \.element.id) { index, milestone in
+                milestoneRow(milestone, index: index, s: s, isLast: index == milestones.count - 1)
             }
         }
+        .padding((20 * s).rounded())
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [PulseColors.accent.opacity(0.14), PulseColors.card],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: (22 * s).rounded(), style: .continuous)
+        )
+        .pulseGlass(RoundedRectangle(cornerRadius: (22 * s).rounded(), style: .continuous))
+    }
+
+    private func milestoneRow(
+        _ milestone: OnboardingItem,
+        index: Int,
+        s: CGFloat,
+        isLast: Bool
+    ) -> some View {
+        let node = (40 * s).rounded()
+        return HStack(alignment: .top, spacing: 12) {
+            // Glass node + connecting line to the next node.
+            VStack(spacing: 0) {
+                Group {
+                    if milestone.icon == "1" {
+                        Text("1").font(PulseFont.footnote.weight(.bold))
+                    } else {
+                        Image(systemName: milestone.icon).font(PulseFont.footnote.weight(.semibold))
+                    }
+                }
+                .foregroundStyle(milestone.tint)
+                .frame(width: node, height: node)
+                .pulseGlass(Circle(), tint: milestone.tint.opacity(0.18))
+
+                if !isLast {
+                    Rectangle()
+                        .fill(milestone.tint.opacity(0.35))
+                        .frame(width: 2)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: node)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(milestone.title)
+                    .font(PulseFont.subheadline.weight(.semibold))
+                    .foregroundStyle(PulseColors.textPrimary)
+                Text(milestone.detail)
+                    .font(PulseFont.footnote.weight(.regular))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, (node - 26) / 2) // vertically center title against the node
+            Spacer(minLength: 0)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .opacity(appeared ? 1.0 : 0.0)
+        .offset(y: appeared ? 0 : 8)
+        .animation(reduceMotion ? nil : PulseMotion.materialize.delay(0.12 * Double(index)), value: appeared)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -424,33 +633,6 @@ struct OnboardingPairView: View {
 
     var body: some View {
         PairingView(onConnected: connected, onSkip: skipped)
-    }
-}
-
-private struct CompactOnboardingHeader: View {
-    let title: String
-    let subtitle: String?
-
-    init(title: String, subtitle: String? = nil) {
-        self.title = title
-        self.subtitle = subtitle
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text(title)
-                .font(PulseFont.numberXL)
-                .foregroundStyle(PulseColors.textPrimary)
-                .multilineTextAlignment(.center)
-            if let subtitle {
-                Text(subtitle)
-                    .font(PulseFont.callout.weight(.regular))
-                    .foregroundStyle(PulseColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-            }
-        }
-        .frame(maxWidth: .infinity)
     }
 }
 
