@@ -85,6 +85,65 @@ struct SpotMeasurementGate {
     var modesInFlight: Set<UInt8> { Set(inFlight.keys.map(\.mode)) }
 }
 
+/// The bpm samples of one spot HR measurement, and the rule for whether they add up to a reading.
+///
+/// Two things make a raw bpm untrustworthy, and this owns both:
+///
+///  * **The cached echo.** The ring replies with its last stored bpm the instant the manual-HR command
+///    is sent — before the sensor has read anything. Everything inside `warmup` is therefore dropped;
+///    without that, a measurement "succeeds" in two seconds on a number from hours ago.
+///  * **Scatter.** Finger motion and poor contact make the PPG estimate jump around instead of holding
+///    within a few beats. A majority of the window must agree (`band`, `majority`) or we report nothing:
+///    a heart rate the user has no reason to doubt, but shouldn't trust, is worse than an honest retry.
+private struct HRSampleWindow {
+    /// Discard window for the cached echo described above.
+    private let warmup: TimeInterval = 5
+    /// A gap this long between collected samples means we've stopped getting real data (ring slipped).
+    private let contactGap: TimeInterval = 3
+    private let minSamples = 6
+    private let band = 8            // bpm neighbourhood around the median
+    private let majority = 0.6      // this much of the window must sit inside that band
+
+    private var startedAt: Date?
+    private var samples: [Int] = []
+    private var lastSampleAt: Date?
+
+    /// True once a *real* (post-warm-up) reading has landed — which is what distinguishes a fresh
+    /// measurement from the stale `latestHRValue` still on screen from the last one.
+    var receivedReading: Bool { !samples.isEmpty }
+
+    mutating func begin(at now: Date = Date()) {
+        startedAt = now
+        samples = []
+        lastSampleAt = nil
+    }
+
+    /// Collect a sample, unless it's still inside the warm-up echo.
+    mutating func collect(_ bpm: Int, at now: Date = Date()) {
+        guard let startedAt, now.timeIntervalSince(startedAt) >= warmup else { return }
+        samples.append(bpm)
+        lastSampleAt = now
+    }
+
+    /// Contact lost: readings had begun, and then stopped arriving. Never true during the warm-up,
+    /// since nothing has been collected yet.
+    func contactLost(at now: Date = Date()) -> Bool {
+        guard let lastSampleAt else { return false }
+        return now.timeIntervalSince(lastSampleAt) > contactGap
+    }
+
+    /// The settled reading: the median of the samples that agree with each other — or nil if they
+    /// never did.
+    var stableValue: Int? {
+        guard samples.count >= minSamples else { return nil }
+        let sorted = samples.sorted()
+        let median = sorted[sorted.count / 2]
+        let cluster = sorted.filter { abs($0 - median) <= band }   // stays sorted
+        guard Double(cluster.count) >= Double(samples.count) * majority else { return nil }
+        return cluster[cluster.count / 2]
+    }
+}
+
 /// High-level orchestration of ring command flows. Subscribes to `PulseEventBus` to track the
 /// latest measurement values and completion signals, and exposes app-facing actions
 /// (`syncNow`, `measureHR`, `measureSpO2`, `querySleep`, `setGoal`). It only *orchestrates*
@@ -164,9 +223,12 @@ final class RingSyncCoordinator {
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
     private var hrNoReadingReported = false
-    /// True once the *current* measurement has produced at least one real bpm — distinguishes a fresh
-    /// reading from a stale `latestHRValue` left on screen from a previous measurement.
-    private var measurementReceivedReading = false
+    /// The samples of the HR measurement in flight, and the rule for whether they settled — see
+    /// `HRSampleWindow`, which owns the warm-up echo and the consistency gate.
+    private var hrWindow = HRSampleWindow()
+    /// True once the current measurement has produced a real (post-warm-up) bpm. Drives the live value
+    /// in the measurement sheet, and keeps a stale `latestHRValue` from passing for a fresh reading.
+    var measurementReceivedReading: Bool { hrWindow.receivedReading }
 
     /// The spot measurements in flight, and which of them the ring has refused — see
     /// `SpotMeasurementGate`, which owns the rule that a refusal can only ever abort the measurement it
@@ -188,12 +250,16 @@ final class RingSyncCoordinator {
     // — plus enough headroom that a slow session is not a failed one. A window is a ceiling, never a
     // wait: every measurement returns the instant its value lands (and now, on a ring that refuses the
     // measurement outright, the instant it says so — see `SpotMeasurementGate`).
+    //
+    // **HR is the one exception**, and deliberately so: it samples its window to the end rather than
+    // returning on the first value, because the first value is a lie (see `hrWarmupSeconds`). It is
+    // therefore the only measurement whose duration is known up front — which is why it is the only one
+    // the UI can honestly count down. The rest finish when they finish.
 
-    /// A Colmi manual HR reading can need 15–30s of on-finger warm-up (observed: ~19 s).
-    private let hrMeasureSeconds: UInt64 = 30
-    /// After the first valid bpm, keep reading this long so the reported value is settled, not a jumpy
-    /// first sample.
-    private let hrSettleSeconds: Int = 4
+    /// A Colmi manual HR reading can need 15–30s of on-finger warm-up (observed: ~19 s). Not `private`:
+    /// this is the one real fixed window, and `MeasurementSheet` derives its countdown from it rather
+    /// than copying the literal (a copy would silently desync the ring's fill from the measurement).
+    let hrMeasureSeconds: UInt64 = 30
     /// **Raised from 40 s.** The R99's successful SpO₂ sweep took 38 s — inside a 40 s window by two
     /// seconds — and an earlier attempt in the same session ran past 41 s with no result. At 40 s the
     /// outcome was a coin toss: the user watched the ring's red LED work and got an error anyway. 60 s
@@ -401,8 +467,13 @@ final class RingSyncCoordinator {
         try? context.save()
     }
 
-    /// Start HR streaming, collect for the warm-up window, stop, and return the latest bpm.
-    /// Samples are persisted as they arrive by `EventPersistenceSubscriber`.
+    /// Start HR streaming, sample the whole window, stop, and return the median of the samples that
+    /// agree with each other — or nil if they never settled. Samples are persisted as they arrive by
+    /// `EventPersistenceSubscriber`.
+    ///
+    /// Unlike every other spot measurement, this one does **not** return on the first value: the ring
+    /// echoes its last *cached* bpm the instant the manual-HR command fires, so returning early reports
+    /// a stale number — a reading from hours ago, after a convincing two seconds of "measuring".
     @discardableResult
     func measureHR() async -> Int? {
         guard hrState != .measuring else { return nil }
@@ -411,32 +482,35 @@ final class RingSyncCoordinator {
         // NOTE: do *not* clear `latestHRValue` — it's the live value the workout UI shows, so a new
         // measurement keeps the last reading on screen until a fresh one replaces it (no blanking to —).
         hrNoReadingReported = false
-        measurementReceivedReading = false
+        hrWindow.begin()
         // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69
         // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
         let token = spot.begin(mode: YCBTMeasurementMode.heartRate)
         engine?.measureHeartRateSpot()
-        // Phase 1 — warm up: the manual stream emits bpm 0 for ~25s before a real reading. Poll the full
-        // window for the first reading *of this measurement* (not a stale prior value). Warm-up zeros are
-        // dropped by the decoder, so `hrNoReadingReported` only trips on a genuine error (worn wrong).
-        _ = await pollForValue(
-            window: hrMeasureSeconds,
-            value: { self.measurementReceivedReading ? self.latestHRValue : nil },
-            abort: { self.hrNoReadingReported || self.spot.isRejected(token) }
-        )
-        // Phase 2 — settle: keep reading briefly so the reported value is stable, not a first jump.
-        var result = measurementReceivedReading ? latestHRValue : nil
-        if result != nil {
-            for _ in 0..<(hrSettleSeconds * 2) {   // 0.5s granularity
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                if let v = latestHRValue { result = v }   // latest stable sample
-            }
+
+        // Sample the full window in 0.5s steps: `handle(_:)` discards everything inside the warm-up and
+        // collects the rest into `hrSamples`. We break out early only where continuing is pointless —
+        // and each of those is an abort, not a short-but-usable reading, so none of them report a value.
+        var aborted = false
+        let steps = Int(hrMeasureSeconds) * 2   // 0.5s granularity
+        for _ in 0..<steps {
+            if Task.isCancelled { aborted = true; break }
+            // The ring reported "worn incorrectly", or refused the measurement outright.
+            if hrNoReadingReported || spot.isRejected(token) { aborted = true; break }
+            // Ring removed / BLE dropped mid-measure → fail rather than average a truncated window.
+            if client.state != .connected { aborted = true; break }
+            // Contact lost after readings began (ring slipped / hand moved).
+            if hrWindow.contactLost() { aborted = true; break }
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
+
         spot.end(token)
         engine?.stopHeartRate()
         // A spot read's stop also tears down the realtime stream (Colmi stops both 0x69 and 0x1e);
         // if a workout stream is supposed to be running, bring it straight back.
         restartWorkoutHeartRateIfActive()
+
+        let result = aborted ? nil : hrWindow.stableValue
         hrState = result.map { .done($0) } ?? .failed
         return result
     }
@@ -446,6 +520,7 @@ final class RingSyncCoordinator {
     private func pollForValue(window: UInt64, value: () -> Int?, abort: () -> Bool) async -> Int? {
         let steps = Int(window) * 2   // 0.5s granularity
         for _ in 0..<steps {
+            if Task.isCancelled { return nil }
             if let v = value() { return v }
             if abort() { return nil }
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -579,7 +654,9 @@ final class RingSyncCoordinator {
         switch event {
         case let .heartRateSample(bpm, _):
             latestHRValue = bpm
-            if hrState == .measuring { measurementReceivedReading = true }
+            // `collect` drops anything still inside the warm-up echo — the stale cached bpm the ring
+            // fires back the instant the command lands, which is what used to end a measurement in ~2s.
+            if hrState == .measuring { hrWindow.collect(bpm) }
         case .heartRateComplete:
             // The ring reported a genuine error/no-reading (worn incorrectly). Only fast-fail if this
             // measurement hasn't already produced a real reading.
