@@ -15,6 +15,12 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     /// LuckRing / TK18 family (the "K6" vendor SDK, company ID `0xFF64`). Sold under simsonlab and other
     /// brands; TK18 is the hardware-tested unit. See `LuckRingCoordinator`.
     case luckRing
+    /// CRP ("crrepa"/CRPsmart) family — the proprietary `fdda`-profile rings whose official app is
+    /// Moyoung "Da Rings" (`com.moyoung.ring`). Notably the CRP-firmware Colmi R11: it advertises the
+    /// generic "SMART_RING" name with no service UUID, so it's classified jring at scan and only reveals
+    /// its `fdda` service post-connect (issue #29, zaggash's ring). Reached on iOS by picking the
+    /// "Colmi R11 (Da Rings app)" card. See `CRPCoordinator`.
+    case crp
 
     /// Human-facing default name when no advertised name is available.
     var displayName: String {
@@ -24,6 +30,7 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
         case .tk5: return "TK5 ring"
         case .colmiSmartHealth: return "Colmi ring (SmartHealth)"
         case .luckRing: return "LuckRing"
+        case .crp: return "Colmi / Moyoung ring (CRP)"
         }
     }
 }

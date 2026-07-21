@@ -239,6 +239,9 @@ struct DeviceHeroCard: View {
         case .colmiR02, .colmiSmartHealth: return nil
         case .tk5: return "tk5"
         case .luckRing: return "luckring-tk18"
+        // The connection reveals only the family; both R11 firmwares share the generic Colmi ring line,
+        // so the CRP family falls back to the generic ring here (the carousel card carries its own art).
+        case .crp: return nil
         case nil: return nil
         }
     }
