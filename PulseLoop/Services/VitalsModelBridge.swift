@@ -46,6 +46,16 @@ extension UserPhysiologyProfile {
             hasKnownLungCondition: profile.hasKnownLungCondition ?? false,
             preferredGlucoseUnit: profile.preferredGlucoseUnit
         )
+        hrZoneMode = profile.hrZoneMode
+        hrRestingBaseline = profile.hrRestingBaseline
+        if profile.hrZoneMode == .custom {
+            hrCustomThresholds = HeartRateThresholds(
+                lowUpper: profile.hrCustomLowUpper ?? (profile.athleteMode ? 40 : 50),
+                athleticUpper: profile.athleteMode ? (profile.hrCustomAthleticUpper ?? 60) : nil,
+                elevatedStart: profile.hrCustomElevatedStart ?? 90,
+                highStart: profile.hrCustomHighStart ?? 120
+            )
+        }
     }
 }
 

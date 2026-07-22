@@ -27,19 +27,21 @@ final class VitalsThresholdEngineTests: XCTestCase {
     // MARK: - Heart rate
 
     func testHeartRateBoundaries() {
-        XCTAssertEqual(severity(59, .heartRate, base), .watch, "59 is below the 60 normal floor")
-        XCTAssertEqual(severity(60, .heartRate, base), .normal)
-        XCTAssertEqual(severity(100, .heartRate, base), .normal)
-        XCTAssertEqual(severity(101, .heartRate, base), .watch, "101 is above the 100 normal ceiling")
+        XCTAssertEqual(severity(49, .heartRate, base), .watch, "49 is below the 50 normal floor")
+        XCTAssertEqual(severity(50, .heartRate, base), .normal)
+        XCTAssertEqual(severity(89, .heartRate, base), .normal)
+        XCTAssertEqual(severity(90, .heartRate, base), .watch, "90 is above the 50–90 normal band")
+        XCTAssertEqual(severity(120, .heartRate, base), .high)
     }
 
     func testAthleteLowHeartRateIsOptimal() {
         XCTAssertEqual(severity(48, .heartRate, athlete()), .optimal, "athletes' low resting HR is fine")
+        XCTAssertEqual(severity(38, .heartRate, athlete()), .watch, "below 40 is Low even for athletes")
     }
 
     func testBetaBlockerLowHeartRateNotAlarming() {
-        // 50 bpm on a beta-blocker should read as expected/normal, not a watch/concern.
-        XCTAssertEqual(severity(50, .heartRate, betaBlocker()), .normal)
+        // 45 bpm on a beta-blocker should read as expected/normal, not a watch/concern.
+        XCTAssertEqual(severity(45, .heartRate, betaBlocker()), .normal)
     }
 
     // MARK: - SpO₂
@@ -175,7 +177,16 @@ final class VitalsThresholdEngineTests: XCTestCase {
         XCTAssertEqual(token(45, .heartRate), .blue)                       // low
         XCTAssertEqual(token(72, .heartRate), .metricAccent(.heartRate))   // normal = pink accent
         XCTAssertEqual(token(110, .heartRate), .amber)                     // elevated
-        XCTAssertEqual(token(130, .heartRate), .brightRed)                 // high (deeper red; accent is already reddish)
+        XCTAssertEqual(token(130, .heartRate), .deepRed)                   // high (dark red, distinct from the pink accent)
+    }
+
+    func testAthleteHeartRateZoneStructure() {
+        let zones = VitalsThresholdEngine.zones(for: .heartRate, profile: athlete())
+        XCTAssertEqual(zones.map(\.id), ["hr.low", "hr.athletic", "hr.normal", "hr.elevated", "hr.high"])
+        XCTAssertEqual(VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: athlete()), [40, 60, 90, 120])
+        XCTAssertEqual(zones.first { $0.id == "hr.athletic" }?.colorToken, .mint)
+        XCTAssertEqual(zones.first { $0.id == "hr.low" }?.colorToken, .blue)
+        XCTAssertEqual(zones.first { $0.id == "hr.high" }?.colorToken, .deepRed)
     }
 
     func testSpO2ZoneColors() {
@@ -222,6 +233,79 @@ final class VitalsThresholdEngineTests: XCTestCase {
 
     func testZoneThresholdsAreSortedBoundaries() {
         let thresholds = VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: base)
-        XCTAssertEqual(thresholds, [60, 101, 120])   // the finite upper bounds, sorted
+        XCTAssertEqual(thresholds, [50, 90, 120])   // the finite upper bounds, sorted
+    }
+
+    // MARK: - HR threshold modes (standard / auto / custom)
+
+    func testUnknownProfileDefaultsToAutoMode() {
+        XCTAssertEqual(UserPhysiologyProfile.unknown.hrZoneMode, .auto)
+    }
+
+    func testAutoWithoutBaselineFallsBackToStandard() {
+        var profile = base
+        profile.hrZoneMode = .auto
+        profile.hrRestingBaseline = nil
+        let (thresholds, personalized) = VitalsThresholdEngine.heartRateThresholds(profile: profile)
+        XCTAssertFalse(personalized)
+        XCTAssertEqual(thresholds, HeartRateThresholds(lowUpper: 50, athleticUpper: nil, elevatedStart: 90, highStart: 120))
+        // The dashboard/detail consistency guarantee: identical zones to explicit standard mode.
+        var standard = profile
+        standard.hrZoneMode = .standard
+        XCTAssertEqual(VitalsThresholdEngine.zones(for: .heartRate, profile: profile),
+                       VitalsThresholdEngine.zones(for: .heartRate, profile: standard))
+    }
+
+    func testAutoPersonalizationFormulaAndClamps() {
+        func thresholds(rest: Double) -> HeartRateThresholds {
+            var profile = base
+            profile.hrZoneMode = .auto
+            profile.hrRestingBaseline = rest
+            let (t, personalized) = VitalsThresholdEngine.heartRateThresholds(profile: profile)
+            XCTAssertTrue(personalized)
+            return t
+        }
+        // rest 40 → low clamped up to 35, elevated clamped up to 85, high = elevated + 25.
+        XCTAssertEqual(thresholds(rest: 40), HeartRateThresholds(lowUpper: 35, athleticUpper: nil, elevatedStart: 85, highStart: 110))
+        // rest 52 → low 40, elevated 92, high 117.
+        XCTAssertEqual(thresholds(rest: 52), HeartRateThresholds(lowUpper: 40, athleticUpper: nil, elevatedStart: 92, highStart: 117))
+        // rest 70 → low 55 (clamped), elevated 105 (clamped), high 130.
+        XCTAssertEqual(thresholds(rest: 70), HeartRateThresholds(lowUpper: 55, athleticUpper: nil, elevatedStart: 105, highStart: 130))
+        // Extremes pin at the clamp bounds and stay ordered.
+        let extreme = thresholds(rest: 120)
+        XCTAssertEqual(extreme.lowUpper, 55)
+        XCTAssertEqual(extreme.elevatedStart, 105)
+        XCTAssertEqual(extreme.highStart, 130)
+    }
+
+    func testCustomThresholdsAreUsed() {
+        var profile = base
+        profile.hrZoneMode = .custom
+        profile.hrCustomThresholds = HeartRateThresholds(lowUpper: 55, athleticUpper: nil, elevatedStart: 95, highStart: 130)
+        XCTAssertEqual(VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: profile), [55, 95, 130])
+        XCTAssertEqual(severity(94, .heartRate, profile), .normal)
+        XCTAssertEqual(severity(95, .heartRate, profile), .watch)
+    }
+
+    func testInsaneCustomThresholdsFallBackToStandard() {
+        var profile = base
+        profile.hrZoneMode = .custom
+        // Unordered (elevated below low) must not produce unordered zones.
+        profile.hrCustomThresholds = HeartRateThresholds(lowUpper: 90, athleticUpper: nil, elevatedStart: 60, highStart: 120)
+        XCTAssertEqual(VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: profile), [50, 90, 120])
+        // Missing custom values in custom mode also fall back.
+        profile.hrCustomThresholds = nil
+        XCTAssertEqual(VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: profile), [50, 90, 120])
+    }
+
+    func testAutoAthleteKeepsAthleticBand() {
+        var profile = athlete()
+        profile.hrZoneMode = .auto
+        profile.hrRestingBaseline = 45
+        let (t, personalized) = VitalsThresholdEngine.heartRateThresholds(profile: profile)
+        XCTAssertTrue(personalized)
+        XCTAssertEqual(t.athleticUpper, 60)
+        XCTAssertLessThanOrEqual(t.lowUpper, 40, "athlete low bound stays below the athletic band")
+        XCTAssertEqual(severity(50, .heartRate, profile), .optimal, "inside the athletic band")
     }
 }

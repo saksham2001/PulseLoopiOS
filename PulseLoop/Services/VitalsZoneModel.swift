@@ -109,7 +109,8 @@ enum VitalColorToken: Equatable {
     case softAmber     // slight caution
     case orange        // elevated / low-oxygen / stage 1
     case red           // high / critical
-    case brightRed     // a deeper/brighter red where the plain accent is already reddish (HR high)
+    case brightRed     // legacy HR high — visually too close to the HR accent; kept for snapshot decode compat
+    case deepRed       // high where the plain red would collide with a reddish metric accent (HR)
     case neutral       // no information (building baseline)
     case metricAccent(MetricKind)
 
@@ -123,6 +124,7 @@ enum VitalColorToken: Equatable {
         case .orange: return PulseColors.zoneOrange
         case .red: return PulseColors.zoneRed
         case .brightRed: return PulseColors.zoneCritical
+        case .deepRed: return PulseColors.zoneDeepRed
         case .neutral: return PulseColors.textMuted
         case .metricAccent(let metric): return metric.accentColor
         }
@@ -192,6 +194,35 @@ enum GlucoseUnit: String, Codable, CaseIterable, Identifiable {
     var label: String { self == .mgdl ? "mg/dL" : "mmol/L" }
 }
 
+/// How the resting-HR zone boundaries are chosen. `auto` personalizes from the learned resting-HR
+/// baseline once about a week of wear establishes it (falling back to `standard` until then);
+/// `custom` uses user-edited boundaries.
+enum HRZoneMode: String, Codable, CaseIterable, Identifiable {
+    case standard
+    case auto
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .auto: return "Auto"
+        case .custom: return "Custom"
+        }
+    }
+}
+
+/// The interior boundaries of the resting-HR zones, low to high. `athleticUpper` exists only in
+/// athlete mode (the Athletic → Normal boundary); everywhere else the Low band hands straight over
+/// to Normal at `lowUpper`.
+struct HeartRateThresholds: Equatable {
+    var lowUpper: Double
+    var athleticUpper: Double?
+    var elevatedStart: Double
+    var highStart: Double
+}
+
 /// The physiology inputs that shift reference ranges. Built from `UserProfile`; every field is
 /// optional so the engine degrades gracefully when the profile is incomplete. Athlete mode,
 /// altitude, beta-blockers, lung condition, and glucose unit come from new `UserProfile` fields.
@@ -203,6 +234,14 @@ struct UserPhysiologyProfile {
     let usesBetaBlockers: Bool
     let hasKnownLungCondition: Bool
     let preferredGlucoseUnit: GlucoseUnit
+    // HR-zone configuration. Defaulted `var`s so the memberwise initializer keeps its original
+    // parameter list (`.unknown` and existing call sites stay source-compatible).
+    var hrZoneMode: HRZoneMode = .auto
+    /// Learned resting HR (10th percentile of ~30 days), set only once established; nil ⇒ `auto`
+    /// falls back to the standard boundaries.
+    var hrRestingBaseline: Double?
+    /// User-edited boundaries, only meaningful when `hrZoneMode == .custom`.
+    var hrCustomThresholds: HeartRateThresholds?
 
     /// A neutral default used when no profile exists yet (onboarding not done).
     static let unknown = UserPhysiologyProfile(

@@ -7,8 +7,10 @@ import Foundation
 /// IMPORTANT: nothing here is a diagnosis. Labels are conservative ("Typical", "Elevated", "Low")
 /// and ring-estimated metrics (blood pressure, glucose, fatigue) always carry `isEstimated`.
 ///
-/// Reference ranges encoded (defaults; users can later override via profile):
-/// - HR: resting adult 60–100 bpm normal; athletes lower; effort zones from `220 − age`.
+/// Reference ranges encoded (defaults; users can override via Settings → Heart Rate Zones):
+/// - HR: 50–90 bpm normal (Spodick 1996 / large cohort data; guidelines cite 60–100); athletes
+///   lower; personalized from the learned resting baseline in `.auto` mode; effort zones from
+///   `220 − age`.
 /// - SpO₂: 95–100 normal; <95 watch; ≤92 high; ≤88 critical (altitude shifts expectations).
 /// - HRV: baseline-deviation, NOT absolute cutoffs (highly individual).
 /// - Stress / Fatigue: device 0–100 scores, quartile zones.
@@ -120,43 +122,95 @@ enum VitalsThresholdEngine {
 
     // MARK: - Heart rate
 
+    /// The effective resting-HR boundaries for this profile, plus whether `.auto` actually
+    /// personalized them (`false` ⇒ auto fell back to standard because no baseline is established).
+    /// Public so the Settings screen can show the effective thresholds and what Auto learned.
+    static func heartRateThresholds(profile: UserPhysiologyProfile)
+        -> (thresholds: HeartRateThresholds, isPersonalized: Bool) {
+        let standard = HeartRateThresholds(
+            lowUpper: profile.athleteMode ? 40 : 50,
+            athleticUpper: profile.athleteMode ? 60 : nil,
+            elevatedStart: 90,
+            highStart: 120
+        )
+        switch profile.hrZoneMode {
+        case .standard:
+            return (standard, false)
+        case .auto:
+            guard let rest = profile.hrRestingBaseline else { return (standard, false) }
+            // Personalize around the learned resting rate. Clamps keep ordering guaranteed:
+            // lowUpper ≤ 55 < 60 ≤ 85 ≤ elevatedStart < highStart.
+            let elevatedStart = min(max(rest + 40, 85), 105)
+            return (HeartRateThresholds(
+                lowUpper: min(max(rest - 12, 35), profile.athleteMode ? 40 : 55),
+                athleticUpper: profile.athleteMode ? 60 : nil,
+                elevatedStart: elevatedStart,
+                highStart: elevatedStart + 25
+            ), true)
+        case .custom:
+            guard let custom = profile.hrCustomThresholds, isSane(custom) else { return (standard, false) }
+            return (custom, false)
+        }
+    }
+
+    /// Custom boundaries must be ordered with a minimum 5-bpm gap inside 30…220. The Settings UI
+    /// prevents violations by construction; the engine still refuses to emit unordered zones.
+    private static func isSane(_ t: HeartRateThresholds) -> Bool {
+        var bounds = [t.lowUpper]
+        if let athletic = t.athleticUpper { bounds.append(athletic) }
+        bounds.append(contentsOf: [t.elevatedStart, t.highStart])
+        guard bounds.first! >= 30, bounds.last! <= 220 else { return false }
+        return zip(bounds, bounds.dropFirst()).allSatisfy { $1 - $0 >= 5 }
+    }
+
     private static func heartRateZones(profile: UserPhysiologyProfile) -> [MetricZone] {
-        // Athletes commonly rest below 60 (and even near 40) — that is optimal, not a concern.
-        // Beta-blockers also lower resting HR; we relabel rather than alarm.
+        let (t, personalized) = heartRateThresholds(profile: profile)
+        // Athletes commonly rest below 60 (and even near 40) — the mint Athletic band carries that
+        // meaning. Beta-blockers also lower resting HR; we relabel the Low band rather than alarm.
         let lowLabel: String
         let lowSeverity: ZoneSeverity
         let lowExplanation: String
-        let lowColor: VitalColorToken
-        if profile.athleteMode {
-            lowLabel = "Athletic"
-            lowSeverity = .optimal
-            lowColor = .metricAccent(.heartRate)   // a low athletic HR is good, not a caution
-            lowExplanation = "A low resting heart rate is common with high fitness."
-        } else if profile.usesBetaBlockers {
+        if profile.usesBetaBlockers && !profile.athleteMode {
             lowLabel = "Low (medication)"
             lowSeverity = .normal
-            lowColor = .blue
             lowExplanation = "Beta-blockers lower heart rate; this is expected on that medication."
         } else {
             lowLabel = "Low"
             lowSeverity = .watch
-            lowColor = .blue
-            lowExplanation = "Below the typical resting range. Often fine, but worth noting if you feel faint."
+            lowExplanation = "Below your normal resting range. Often fine, but worth noting if you feel faint."
         }
-        return [
-            MetricZone(id: "hr.low", label: lowLabel, lower: nil, upper: 60,
-                       severity: lowSeverity, colorToken: lowColor, explanation: lowExplanation),
-            // 60–100 inclusive is normal, so the half-open upper bound is 101.
-            MetricZone(id: "hr.normal", label: "Normal", lower: 60, upper: 101,
-                       severity: .normal, colorToken: .metricAccent(.heartRate),
-                       explanation: "A typical resting heart rate for adults is 60–100 bpm."),
-            MetricZone(id: "hr.elevated", label: "Elevated", lower: 101, upper: 120,
-                       severity: .watch, colorToken: .amber,
-                       explanation: "Above the typical resting range. Activity, caffeine, or stress can raise it."),
-            MetricZone(id: "hr.high", label: "High", lower: 120, upper: nil,
-                       severity: .high, colorToken: .brightRed,
-                       explanation: "A high resting heart rate. Talk to a clinician if it persists at rest."),
+        let normalExplanation: String
+        switch profile.hrZoneMode {
+        case .custom where profile.hrCustomThresholds != nil:
+            normalExplanation = "Your custom normal range."
+        case .auto where personalized:
+            normalExplanation = "A typical range personalized from your resting heart rate."
+        default:
+            normalExplanation = "Most healthy adults rest between 50 and 90 bpm."
+        }
+        var zones = [
+            MetricZone(id: "hr.low", label: lowLabel, lower: nil, upper: t.lowUpper,
+                       severity: lowSeverity, colorToken: .blue, explanation: lowExplanation)
         ]
+        var normalLower = t.lowUpper
+        if let athleticUpper = t.athleticUpper {
+            zones.append(MetricZone(id: "hr.athletic", label: "Athletic", lower: t.lowUpper, upper: athleticUpper,
+                                    severity: .optimal, colorToken: .mint,
+                                    explanation: "A low resting heart rate is common with high fitness."))
+            normalLower = athleticUpper
+        }
+        zones.append(contentsOf: [
+            MetricZone(id: "hr.normal", label: "Normal", lower: normalLower, upper: t.elevatedStart,
+                       severity: .normal, colorToken: .metricAccent(.heartRate),
+                       explanation: normalExplanation),
+            MetricZone(id: "hr.elevated", label: "Elevated", lower: t.elevatedStart, upper: t.highStart,
+                       severity: .watch, colorToken: .amber,
+                       explanation: "Above your normal resting range. Activity, caffeine, or stress can raise it."),
+            MetricZone(id: "hr.high", label: "High", lower: t.highStart, upper: nil,
+                       severity: .high, colorToken: .deepRed,
+                       explanation: "Well above resting. Talk to a clinician if it persists at rest."),
+        ])
+        return zones
     }
 
     // MARK: - SpO₂
