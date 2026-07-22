@@ -164,6 +164,7 @@ extension VitalColorToken {
         case .orange: return "orange"
         case .red: return "red"
         case .brightRed: return "brightRed"
+        case .deepRed: return "deepRed"
         case .neutral: return "neutral"
         case .metricAccent(let metric): return Self.accentPrefix + metric.rawValue
         }
@@ -179,6 +180,7 @@ extension VitalColorToken {
         case "orange": self = .orange
         case "red": self = .red
         case "brightRed": self = .brightRed
+        case "deepRed": self = .deepRed
         default:
             if tokenString.hasPrefix(Self.accentPrefix),
                let metric = MetricKind(rawValue: String(tokenString.dropFirst(Self.accentPrefix.count))) {

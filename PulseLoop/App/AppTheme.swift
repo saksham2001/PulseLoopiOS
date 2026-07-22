@@ -19,6 +19,7 @@ enum AppRoute: Hashable {
     case settingsActivityTracking
     case settingsGoals
     case settingsVitals
+    case settingsHeartRateZones
     case settingsToday
     case settingsCalibration
     case settingsHealth
@@ -91,7 +92,8 @@ enum PulseColors {
     static let zoneSoftAmber = Color(hex: "#FFD9A0") // slight caution (distinct from amber)
     static let zoneOrange = Color(hex: "#FF8A4C")   // elevated / low-oxygen / stage 1
     static let zoneRed = Color(hex: "#FF4D6D")      // high / critical
-    static let zoneCritical = Color(hex: "#FF1744") // brighter/deeper red for HR high vs the HR accent
+    static let zoneCritical = Color(hex: "#FF1744") // no longer used by HR (too close to the HR accent); kept for snapshot decode compat
+    static let zoneDeepRed = Color(hex: "#B3261E")  // HR high — dark red, CVD-safe separation from the pink-red HR accent
     static let borderSubtle = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
 }

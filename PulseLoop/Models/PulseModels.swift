@@ -425,6 +425,18 @@ final class UserProfile {
     var hasKnownLungCondition: Bool?
     /// Preferred glucose display unit.
     var preferredGlucoseUnitRaw: String = GlucoseUnit.mgdl.rawValue
+    /// How resting-HR zone boundaries are chosen (standard / auto / custom). Defaulted for the same
+    /// additive lightweight-migration reason as the fields above.
+    var hrZoneModeRaw: String = HRZoneMode.auto.rawValue
+    /// Learned resting HR (p10 of ~30 days), written by `RestingHRBaselineService` once established.
+    var hrRestingBaseline: Double?
+    /// When the baseline was last recomputed (throttles the refresh; set even when not established).
+    var hrRestingBaselineUpdatedAt: Date?
+    // Custom HR zone boundaries; only read when `hrZoneMode == .custom`.
+    var hrCustomLowUpper: Double?
+    var hrCustomAthleticUpper: Double?
+    var hrCustomElevatedStart: Double?
+    var hrCustomHighStart: Double?
 
     var units: UnitsPreference {
         get { UnitsPreference(rawValue: unitsRaw) ?? .metric }
@@ -434,6 +446,11 @@ final class UserProfile {
     var preferredGlucoseUnit: GlucoseUnit {
         get { GlucoseUnit(rawValue: preferredGlucoseUnitRaw) ?? .mgdl }
         set { preferredGlucoseUnitRaw = newValue.rawValue }
+    }
+
+    var hrZoneMode: HRZoneMode {
+        get { HRZoneMode(rawValue: hrZoneModeRaw) ?? .auto }
+        set { hrZoneModeRaw = newValue.rawValue }
     }
 
     init(

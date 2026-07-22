@@ -58,7 +58,7 @@ final class WidgetSnapshotTests: XCTestCase {
     }
 
     func testColorTokenStringBridgeRoundTripsAllTokens() {
-        var tokens: [VitalColorToken] = [.blue, .mint, .cyan, .amber, .softAmber, .orange, .red, .brightRed, .neutral]
+        var tokens: [VitalColorToken] = [.blue, .mint, .cyan, .amber, .softAmber, .orange, .red, .brightRed, .deepRed, .neutral]
         tokens += MetricKind.allCases.map { .metricAccent($0) }
         for token in tokens {
             XCTAssertEqual(VitalColorToken(tokenString: token.tokenString), token)

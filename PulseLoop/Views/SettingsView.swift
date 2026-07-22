@@ -108,6 +108,9 @@ struct SettingsView: View {
             SettingsRowItem(icon: "heart.text.square", tint: PulseColors.heartRate, title: "Vitals") {
                 path.append(AppRoute.settingsVitals)
             },
+            SettingsRowItem(icon: "waveform.path.ecg", tint: PulseColors.heartRate, title: "Heart Rate Zones") {
+                path.append(AppRoute.settingsHeartRateZones)
+            },
             SettingsRowItem(icon: "figure.run", tint: PulseColors.success, title: "Activity Tracking") {
                 path.append(AppRoute.settingsActivityTracking)
             },

@@ -106,6 +106,10 @@ struct PulseLoopApp: App {
         // components directly with their own fixtures; the app host just needs to launch cleanly.
         guard !runningTests else { return }
 
+        // Learn/refresh the resting-HR baseline that personalizes the auto HR zones (throttled
+        // internally, so this is a cheap no-op most launches).
+        RestingHRBaselineService.refreshIfStale(context: container.mainContext)
+
         // Start persistence + coordinator draining the bus; auto-reconnect happens when
         // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).
         subscriber.start()
@@ -147,6 +151,10 @@ struct PulseLoopApp: App {
                 healthSyncPublisher.kick()
             }
             guard phase == .active else { return }
+            // Refresh the learned resting-HR baseline on foreground (6h-throttled no-op usually).
+            if !Self.isRunningUnitTests {
+                RestingHRBaselineService.refreshIfStale(context: container.mainContext)
+            }
             // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
             // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the
             // last-known ring if it isn't actually connected. (Android foreground-reconnect parity.)

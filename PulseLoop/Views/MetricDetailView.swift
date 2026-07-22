@@ -208,7 +208,16 @@ struct MetricDetailView: View {
     private var legend: some View {
         let zones = VitalsThresholdEngine.zones(for: metric, profile: profile, baseline: baselineForChart)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("REFERENCE ZONES").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+            HStack {
+                Text("REFERENCE ZONES").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Spacer()
+                // HR zones are user-configurable (Standard / Auto / Custom) — deep-link to the editor.
+                if metric == .heartRate {
+                    Button("Edit") { path.append(AppRoute.settingsHeartRateZones) }
+                        .font(PulseFont.caption.weight(.semibold))
+                        .foregroundStyle(PulseColors.accent)
+                }
+            }
             ForEach(zones) { zone in
                 HStack(spacing: 10) {
                     Circle().fill(zone.color).frame(width: 8, height: 8)
@@ -312,8 +321,9 @@ struct MetricDetailView: View {
     private var explainerText: String {
         switch metric {
         case .heartRate:
-            return "Resting heart rate reflects how hard your heart works at rest. A typical adult range is 60–100 bpm; "
-                + "fitness, medication, caffeine, and stress all shift it."
+            return "Resting heart rate reflects how hard your heart works at rest. Guidelines cite 60–100 bpm, "
+                + "but most healthy adults rest between 50 and 90; fitness, medication, caffeine, and stress all shift it. "
+                + "You can adjust your zones from the legend above."
         case .spo2:
             return "Blood oxygen (SpO₂) is the percentage of oxygen your blood carries. 95–100% is normal; "
                 + "altitude and lung conditions can lower it."
