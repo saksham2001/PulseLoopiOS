@@ -244,14 +244,56 @@ final class CoachNotificationSyncGatingTests: XCTestCase {
         if case .sent = outcome {} else { XCTFail("expected sent, got \(outcome)") }
     }
 
-    /// Same timeout, but `.skip` policy → skippedNoData.
+    /// Same timeout, but `.skip` policy → skippedStaleData (unrecorded, so the data trigger can
+    /// still fire the slot once a background sync lands).
     func testTimeoutWithSkipPolicySkips() async throws {
         let c = try TestSupport.makeContext()
         TestSupport.insertMeasurement(kind: .heartRate, value: 60, timestamp: Date().addingTimeInterval(-5 * 3600), into: c)
         let gate = FakeSyncGate(connected: true)
         gate.onAwait = { false }
         let outcome = await service(c, gate: gate, policy: .skip).runDueSlot(now: morning())
-        XCTAssertEqual(outcome, .skippedNoData)
+        XCTAssertEqual(outcome, .skippedStaleData)
+        // Nothing recorded: a later attempt in the same window must still be able to send.
+        let records = (try? c.fetch(FetchDescriptor<CoachNotificationRecord>())) ?? []
+        XCTAssertTrue(records.isEmpty)
+    }
+
+    /// `.skip` is the default policy — stale data must not send unless a caller opts in.
+    func testDefaultPolicySkipsOnStaleData() async throws {
+        let c = try TestSupport.makeContext()
+        TestSupport.insertMeasurement(kind: .heartRate, value: 60, timestamp: Date().addingTimeInterval(-5 * 3600), into: c)
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = { false }
+        let svc = CoachNotificationService(
+            modelContext: c, coordinator: gate,
+            keyStore: StubKeyStore(key: "sk-test"), settingsStore: enabledStore(),
+            syncWaitTimeout: 1,
+            clientFactory: { _ in StubResponsesClient([
+                OpenAIResponse(id: "n", outputItems: [.message(text: notificationJSON())])
+            ]) }
+        )
+        let outcome = await svc.runDueSlot(now: morning())
+        XCTAssertEqual(outcome, .skippedStaleData)
+    }
+
+    /// Two concurrent entries (BGTask + data trigger): the second must bounce off the in-flight
+    /// guard as `.skippedDuplicate` instead of double-generating inside the dedupe race window.
+    func testConcurrentRunsAreSerializedByInFlightGuard() async throws {
+        let c = try TestSupport.makeContext()
+        let gate = FakeSyncGate(connected: true)
+        gate.onAwait = {
+            TestSupport.insertMeasurement(kind: .heartRate, value: 70, timestamp: Date(), into: c)
+            return true
+        }
+        let first = service(c, gate: gate)
+        let second = service(c, gate: gate)
+        let now = morning()
+        async let a = first.runDueSlot(now: now)
+        async let b = second.runDueSlot(now: now)
+        let outcomes = await [a, b]
+        XCTAssertTrue(outcomes.contains { if case .sent = $0 { return true } else { return false } },
+                      "one entry should send, got \(outcomes)")
+        XCTAssertTrue(outcomes.contains(.skippedDuplicate), "the other should hit the guard, got \(outcomes)")
     }
 
     /// Timeout AND a truly empty store → skippedNoData even under sendWithLastKnown.

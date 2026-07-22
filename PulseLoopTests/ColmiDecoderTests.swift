@@ -473,3 +473,30 @@ private final class NullWriter: RingCommandWriter {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
     func enqueue(_ command: Data) {}
 }
+
+// MARK: - Sync engine re-sync guard
+
+@MainActor
+final class ColmiSyncEngineResyncTests: XCTestCase {
+
+    private final class RecordingWriter: RingCommandWriter {
+        nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+        private(set) var frames: [Data] = []
+        func enqueue(_ command: Data) { frames.append(command) }
+    }
+
+    /// `syncHistory()` from idle kicks the full history chain (first request goes out), but a second
+    /// call while a stage is in flight must be a no-op — the coordinator's periodic kick can't cut a
+    /// running transfer short.
+    func testSyncHistoryRefusesReentry() {
+        let writer = RecordingWriter()
+        let engine = ColmiSyncEngine(writer: writer, decoder: ColmiDecoder())
+
+        engine.syncHistory()
+        let framesAfterFirst = writer.frames.count
+        XCTAssertGreaterThan(framesAfterFirst, 0, "first kick should request the activity stage")
+
+        engine.syncHistory()   // stage is now .activity — must not restart the chain
+        XCTAssertEqual(writer.frames.count, framesAfterFirst, "re-entrant kick must write nothing")
+    }
+}

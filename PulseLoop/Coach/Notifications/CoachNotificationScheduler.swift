@@ -15,15 +15,17 @@ final class CoachNotificationScheduler {
     /// `BGTaskSchedulerPermittedIdentifiers`.
     static let processingTaskIdentifier = "com.pulseloop.coach.process"
 
-    /// Builds a service bound to the live model context + ring coordinator.
-    private var serviceProvider: (() -> CoachNotificationService)?
+    /// Builds a service bound to the live model context + ring coordinator. The parameter is the
+    /// sync-wait budget (seconds) — how long the service's pre-notification sync may run, sized to
+    /// the wake that's driving it (short for an app-refresh task, longer for a processing task).
+    private var serviceProvider: ((TimeInterval) -> CoachNotificationService)?
     /// Submitting a `BGTaskRequest` whose identifier wasn't registered is a hard
     /// assertion crash. Registration is skipped under XCTest (the live subsystems
     /// don't start), so gate scheduling on it — otherwise the test host app's
     /// scene-phase `scheduleNext()` crashes.
     private var isRegistered = false
 
-    func register(serviceProvider: @escaping () -> CoachNotificationService) {
+    func register(serviceProvider: @escaping (TimeInterval) -> CoachNotificationService) {
         self.serviceProvider = serviceProvider
         isRegistered = true
         let handler: (BGTask) -> Void = { task in
@@ -73,17 +75,21 @@ final class CoachNotificationScheduler {
 
     private func handle(_ task: BGTask) {
         scheduleNext()  // always queue the following window first
-        guard let service = serviceProvider?() else {
+        // A processing task's budget is minutes, not ~30s — give its pre-notification sync long
+        // enough for a BLE connect + paged history transfer instead of the app-refresh 15s.
+        let syncBudget: TimeInterval = task is BGProcessingTask ? 120 : 15
+        guard let service = serviceProvider?(syncBudget) else {
             task.setTaskCompleted(success: false)
             return
         }
         let work = Task {
             let outcome = await service.runDueSlot()
-            // Morning skipped because last night's sleep hasn't synced yet — queue one
-            // short retry so we catch the check-in once the sync lands (instead of
-            // waiting for the next full window).
-            if outcome == .skippedNoSleepData {
-                submitSleepRetry()
+            // Skipped on missing/stale data (morning sleep not synced yet, or no completed sync in
+            // the freshness window) — queue one short retry so we catch the check-in once the data
+            // lands, instead of waiting for the next full window. The sync-completion data trigger
+            // usually beats it; this covers a sync that completes while the app stays suspended.
+            if outcome == .skippedNoSleepData || outcome == .skippedStaleData {
+                submitShortRetry()
             }
             // Background is a good moment to also catch a proactive alert; the
             // call self-gates (on-device only, enabled, deduped).
@@ -93,10 +99,10 @@ final class CoachNotificationScheduler {
         task.expirationHandler = { work.cancel() }
     }
 
-    /// One +45min app-refresh wake to retry a morning check-in that was skipped
-    /// because last night's sleep hadn't synced. Best-effort; the foreground
-    /// catch-up covers the case where the retry doesn't run.
-    private func submitSleepRetry() {
+    /// One +45min app-refresh wake to retry a check-in that was skipped for
+    /// missing/stale data. Best-effort; the foreground catch-up and the
+    /// sync-completion data trigger cover the case where the retry doesn't run.
+    private func submitShortRetry() {
         guard isRegistered else { return }
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = Date().addingTimeInterval(45 * 60)

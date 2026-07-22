@@ -14,6 +14,11 @@ final class CoachNotificationService {
         case skippedDuplicate
         case skippedDisabled
         case skippedNoData
+        /// A slot was due but the store's data is stale (no completed sync inside the freshness
+        /// window) and the pre-notification sync couldn't refresh it in time. Deliberately NOT
+        /// recorded, so the data trigger (or a +45min retry / foreground catch-up) can fire the
+        /// slot once a background sync lands — distinct from `skippedNoData` (empty store).
+        case skippedStaleData
         /// The morning slot was due but last night's sleep hasn't fully synced yet.
         /// Deliberately NOT recorded, so a foreground catch-up (or a scheduled +45min
         /// retry) can fire it once the sync lands.
@@ -26,9 +31,10 @@ final class CoachNotificationService {
         case noAnomaly
     }
 
-    /// What to do when a pre-notification sync can't produce fresh data in time. The user chose to
-    /// send anyway with last-known data (guaranteed non-garbage by validation upstream); flipping to
-    /// `.skip` restores the old "stay quiet" behaviour in one line.
+    /// What to do when a pre-notification sync can't produce fresh data in time. `.skip` stays quiet
+    /// and leaves the slot unrecorded so the data trigger can fire it the moment a background sync
+    /// completes — a check-in built on this morning's numbers at 8pm is worse than a late one.
+    /// `.sendWithLastKnown` (the old default) sends anyway; kept for tests and as an escape hatch.
     enum StaleDataPolicy { case sendWithLastKnown, skip }
 
     private let modelContext: ModelContext
@@ -61,7 +67,7 @@ final class CoachNotificationService {
         minimaxKeyStore: APIKeyStore = MiniMaxKeychainStore(),
         settingsStore: CoachSettingsStore = .shared,
         syncWaitTimeout: TimeInterval = 15,
-        staleDataPolicy: StaleDataPolicy = .sendWithLastKnown,
+        staleDataPolicy: StaleDataPolicy = .skip,
         clientFactory: @escaping (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) {
         self.modelContext = modelContext
@@ -76,10 +82,20 @@ final class CoachNotificationService {
         self.clientFactory = clientFactory
     }
 
+    /// Whether some service instance is already inside `runDueSlot`. Static because each entry point
+    /// (BGTask, foreground catch-up, sync-completion data trigger) builds its own instance, and
+    /// generation awaits for seconds — plenty of room for a second entry to pass `isDuplicate` before
+    /// the first one `record`s.
+    private static var runInFlight = false
+
     /// Run the due slot. `force` bypasses the slot-window, dedupe, enabled, and
     /// freshness gates (used by the Settings test button).
     @discardableResult
     func runDueSlot(force: Bool = false, now: Date = Date()) async -> Outcome {
+        guard !Self.runInFlight else { return .skippedDuplicate }
+        Self.runInFlight = true
+        defer { Self.runInFlight = false }
+
         let settings = settingsStore.settings
 
         let resolved = CoachNotificationSlot.current(
@@ -103,7 +119,9 @@ final class CoachNotificationService {
             let fresh = await ensureFreshData(now: now)
             if Task.isCancelled { return .skippedNoData }          // BGTask expired mid-wait
             if !fresh {
-                if staleDataPolicy == .skip { return .skippedNoData }
+                // Skip WITHOUT recording (like `.skippedNoSleepData`), so the sync-completion data
+                // trigger or a retry can still fire this slot once fresh data lands.
+                if staleDataPolicy == .skip { return .skippedStaleData }
                 // sendWithLastKnown: proceed, but never with a totally empty store.
                 if latestMeasurementTimestamp() == nil { return .skippedNoData }
             }
@@ -259,7 +277,11 @@ final class CoachNotificationService {
                     _ = await gate.awaitSyncCompletion(timeout: syncWaitTimeout)
                 }
             } else if !hasRecentData(now: now) {
-                // Disconnected and stale: try to (re)connect and sync before falling back.
+                // Disconnected and stale: try to (re)connect and sync before falling back. Even when
+                // the wait below times out, this call's pending connect stays armed — the ring
+                // re-links whenever it comes back in range, that connect runs the full sync in the
+                // background, and the sync-completion data trigger fires the deferred slot. That
+                // side effect is load-bearing; don't "optimize" the call away on timeout.
                 await gate.connectAndSync()
                 _ = await gate.awaitSyncCompletion(timeout: syncWaitTimeout)
             }
