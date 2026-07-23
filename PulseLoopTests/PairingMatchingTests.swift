@@ -677,6 +677,57 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertNil(RingAppVariant(family: .luckRing), "single-firmware family — no app picker")
     }
 
+    // MARK: - CRP / Colmi R11 (Da Rings app)
+
+    /// A CRP ring advertising its family-exclusive `fdda` service.
+    private var crpServiceAdv: AdvertisementInfo {
+        AdvertisementInfo(serviceUUIDs: [CRPUUIDs.serviceCBUUID], manufacturerData: nil)
+    }
+
+    /// The CRP R11 has no scan signature (generic `SMART_RING`, no service UUID), so it is reached only
+    /// by the carousel card — not by any name or (in practice) service match. The coordinator still
+    /// claims a ring that *does* advertise `fdda`, so such a ring lands on the CRP driver, not jring.
+    func testCRPClaimsOnlyTheFddaServiceAndNeverTheSmartRingName() {
+        XCTAssertTrue(CRPCoordinator.matches(name: "SMART_RING", advertisement: crpServiceAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "Unlabeled", advertisement: crpServiceAdv), .crp)
+        // The bare `SMART_RING` the CRP R11 actually advertises is claimed by jring, as before — the
+        // CRP driver is reached by the user's pick, not the scan.
+        XCTAssertFalse(CRPCoordinator.matches(name: "SMART_RING", advertisement: noAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "SMART_RING", advertisement: noAdv), .jring)
+        // jring claims the *named* `SMART_RING` even alongside the `fdda` service — it matches on the
+        // name alone — so a named CRP R11 lands on jring at scan, which is why the pick is the entry
+        // point. Only an *unlabeled* `fdda` ring is unambiguously the CRP driver's.
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "SMART_RING", advertisement: crpServiceAdv), .jring)
+        XCTAssertFalse(JringCoordinator.matches(name: "Unlabeled", advertisement: crpServiceAdv))
+        XCTAssertFalse(ColmiCoordinator.matches(name: "Unlabeled", advertisement: crpServiceAdv))
+    }
+
+    /// The card carries no name pattern, so it resolves purely from the family + selected model id —
+    /// the explicit-pick path a `preferredFamily = .crp` connect takes.
+    func testCRPModelResolvesFromTheExplicitPick() {
+        XCTAssertEqual(WearableModel.colmiR11CRP.family, .crp)
+        XCTAssertTrue(WearableModel.colmiR11CRP.advertisedNamePatterns.isEmpty)
+        XCTAssertEqual(
+            WearableModel.resolve(advertisedName: "SMART_RING", selectedModelID: "colmi-r11-crp", family: .crp)?.id,
+            "colmi-r11-crp"
+        )
+        // The CRP coordinator serves the CRP family, so picking the card can't silently fall back to jring.
+        XCTAssertEqual(RingBLEClient.coordinatorType(preferredFamily: .crp, autoMatched: .jring).deviceType, .crp)
+    }
+
+    func testCRPSupportLevelIsLimitedAndHasNoAppPicker() {
+        XCTAssertEqual(RingDeviceType.crp.supportLevel, .limited)
+        XCTAssertEqual(WearableModel.colmiR11CRP.supportLevel, .limited)
+        XCTAssertNil(RingAppVariant(family: .crp), "single-firmware family — no app picker")
+        XCTAssertTrue(WearableModel.colmiR11CRP.appVariants.isEmpty)
+        XCTAssertEqual(RingDeviceType.crp.displayName, "Colmi / Moyoung ring (CRP)")
+    }
+
+    /// The CRP card reuses the Yawell R11 art (same physical ring as the QRing-firmware `colmiR11`).
+    func testCRPReusesYawellR11Image() {
+        XCTAssertEqual(WearableModel.colmiR11CRP.imageName, WearableModel.yawellR11.imageName)
+    }
+
     // MARK: - Support level
 
     func testSupportLevelIsPerFamily() {
@@ -690,7 +741,9 @@ final class PairingMatchingTests: XCTestCase {
     /// family (only the TK18 unit is proven). The SmartHealth-Colmi graduated to `.full` once an R99
     /// ran against the driver on hardware, so neither Colmi picker position wears a badge anymore.
     func testLimitedSupportFamiliesCarryTheBadge() {
-        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.luckRingTK18.id]
+        let limitedByDefault: Set<String> = [
+            WearableModel.tk5.id, WearableModel.luckRingTK18.id, WearableModel.colmiR11CRP.id,
+        ]
         for model in WearableModel.catalog {
             let expected: WearableSupportLevel = limitedByDefault.contains(model.id) ? .limited : .full
             XCTAssertEqual(model.supportLevel, expected, model.displayName)

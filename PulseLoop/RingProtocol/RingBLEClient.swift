@@ -42,6 +42,11 @@ final class RingBLEClient: NSObject {
         ColmiCoordinator.self,
         LuckRingCoordinator.self,
         TK5Coordinator.self,
+        // CRP matches only its family-exclusive `fdda` service, which the CRP R11 doesn't advertise
+        // pre-connect — so its position is not load-bearing and it never auto-claims at scan. It's
+        // reached by an explicit "Colmi R11 (Da Rings app)" carousel pick (`preferredFamily = .crp`),
+        // iOS having no post-connect driver re-route like the Android app's.
+        CRPCoordinator.self,
     ]
 
     /// Which coordinator serves a connection. Pure, so the pairing rules are testable without a

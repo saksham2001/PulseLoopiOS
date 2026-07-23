@@ -53,7 +53,7 @@ enum RingAppVariant: String, CaseIterable, Identifiable, Sendable {
         switch family {
         case .colmiR02: self = .qring
         case .colmiSmartHealth: self = .smartHealth
-        case .jring, .tk5, .luckRing: return nil
+        case .jring, .tk5, .luckRing, .crp: return nil
         }
     }
 
@@ -114,6 +114,9 @@ extension RingDeviceType {
         case .tk5: return .limited
         // TK18 is the only hardware-tested LuckRing; every 0xFF64 sibling is still a prediction.
         case .luckRing: return .limited
+        // The CRP driver is a conservative v1 reconstruction from the decompiled "Da Rings" app,
+        // not yet proven against zaggash's ring on hardware — so it wears the "Limited support" badge.
+        case .crp: return .limited
         }
     }
 }
@@ -181,6 +184,18 @@ extension WearableModel {
         id: "luckring-tk18", displayName: "TK18", brand: "LuckRing", family: .luckRing,
         tint: PulseColors.accent, blurb: "HR · SpO₂ · HRV · Temp · BP · Sleep · Steps",
         advertisedNamePatterns: ["^TK18([ _-].*)?$"], imageName: "luckring-tk18"
+    )
+
+    /// The **CRP-firmware** R11 — the same physical ring as `colmiR11`, but its official app is
+    /// Moyoung "Da Rings" and it speaks the proprietary `fdda` CRP protocol, not the Colmi/QRing UART
+    /// (see `CRPCoordinator`). "R11 / SMART_RING" is sold under both firmwares; a unit is this one when
+    /// the user picks this card. No usable name pattern — the ring advertises the same generic
+    /// `SMART_RING` as jring, so there is nothing for the scan to match on and the pick is the only
+    /// entry point. Reuses the `yawell-r11` art (same hardware as `colmiR11`).
+    static let colmiR11CRP = WearableModel(
+        id: "colmi-r11-crp", displayName: "Colmi R11 (Da Rings app)", brand: "Colmi", family: .crp,
+        tint: PulseColors.hrv, blurb: "HR · Steps",
+        advertisedNamePatterns: [], imageName: "yawell-r11"
     )
 
     // Yawell-branded variants of the same hardware.
@@ -312,6 +327,7 @@ extension WearableModel {
         yawellR05, yawellR10, yawellR11, h59,
         tk5,
         luckRingTK18,
+        colmiR11CRP,
     ]
 
     static func model(id: String?) -> WearableModel? {
