@@ -116,6 +116,14 @@ struct SettingsView: View {
             },
             SettingsRowItem(icon: "target", tint: PulseColors.readiness, title: "Goals") {
                 path.append(AppRoute.settingsGoals)
+            },
+            // The only discovery point for the (off-by-default) nutrition feature — every other
+            // surface hides entirely while the master toggle is off.
+            SettingsRowItem(
+                icon: "fork.knife", tint: PulseColors.calories, title: "Nutrition",
+                trailingValue: NutritionPrefsStore.shared.prefs.masterEnabled ? "On" : "Off"
+            ) {
+                path.append(AppRoute.settingsNutrition)
             }
         ]
     }

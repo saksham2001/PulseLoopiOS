@@ -498,8 +498,16 @@ final class UserGoal {
     /// Daily distance goal in canonical metres (converted to km/mi for display, like all stored distance).
     /// Defaulted so this is a safe additive SwiftData migration for existing rows.
     var distanceMeters: Double = 8000
-    /// Daily active-energy goal in kcal. Defaulted for the same additive-migration reason.
+    /// Daily active-energy *burn* goal in kcal (not intake — that's `intakeCalories`).
+    /// Defaulted for the same additive-migration reason.
     var calories: Int = 500
+    // Daily nutrition *intake* goals. Optional with nil defaults: additive lightweight migration,
+    // and nil means "not set" — the app must never invent a calorie target for the user.
+    /// Daily calorie intake goal in kcal — distinct from `calories`, the active-energy burn goal.
+    var intakeCalories: Int?
+    var intakeProteinG: Int?
+    var intakeCarbsG: Int?
+    var intakeFatG: Int?
     var updatedAt: Date
 
     init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4, distanceMeters: Double = 8000, calories: Int = 500) {
@@ -816,6 +824,10 @@ final class CoachMessage {
     /// produced this message. Drives the in-chat workout card. Optional with a
     /// default keeps the SwiftData migration lightweight.
     var loggedActivityIdsJSON: String? = nil
+    /// Encoded `[UUID]` of meal entries logged/edited by the turn that produced
+    /// this message. Drives the in-chat meal card. Optional with a default keeps
+    /// the SwiftData migration lightweight.
+    var loggedMealIdsJSON: String? = nil
     var createdAt: Date
 
     init(
@@ -823,7 +835,8 @@ final class CoachMessage {
         pendingActionJSON: String? = nil, attachmentsJSON: String? = nil,
         inputTokens: Int? = nil, outputTokens: Int? = nil, costUSD: Double? = nil,
         modelUsed: String? = nil, providerUsed: String? = nil,
-        loggedActivityIdsJSON: String? = nil, createdAt: Date = Date()
+        loggedActivityIdsJSON: String? = nil, loggedMealIdsJSON: String? = nil,
+        createdAt: Date = Date()
     ) {
         self.id = id
         self.conversationId = conversationId
@@ -838,6 +851,7 @@ final class CoachMessage {
         self.modelUsed = modelUsed
         self.providerUsed = providerUsed
         self.loggedActivityIdsJSON = loggedActivityIdsJSON
+        self.loggedMealIdsJSON = loggedMealIdsJSON
         self.createdAt = createdAt
     }
 }

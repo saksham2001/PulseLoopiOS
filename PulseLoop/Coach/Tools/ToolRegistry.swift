@@ -17,6 +17,12 @@ struct ToolRegistry {
         if flags.liveMeasurementsEnabled {
             all += ActionTools.measurementTools
         }
+        if flags.nutritionContextEnabled {
+            all += NutritionTools.readTools
+        }
+        if flags.nutritionWriteEnabled {
+            all += NutritionTools.writeTools
+        }
         self.tools = Dictionary(uniqueKeysWithValues: all.map { ($0.name, $0) })
     }
 

@@ -79,7 +79,12 @@ enum MetricsService {
             metricStates: metricStates,
             calibration: calibration,
             goals: goals,
-            isDemo: isDemo
+            isDemo: isDemo,
+            // Consumed nutrition rides the summary only when the feature is on; nil otherwise so
+            // every consumer (tiles, cards, widgets, coach) inherits the master-toggle gate.
+            nutrition: NutritionPrefsStore.shared.prefs.masterEnabled
+                ? NutritionRepository.dayTotals(on: Date(), context: context)
+                : nil
         )
     }
     
@@ -534,7 +539,11 @@ enum MetricsService {
                 sleepHours: Double(goal.sleepMinutes) / 60,
                 exerciseDaysWeekly: goal.workoutsPerWeek,
                 distanceMetersDaily: goal.distanceMeters,
-                caloriesDaily: goal.calories
+                caloriesDaily: goal.calories,
+                intakeCalories: goal.intakeCalories,
+                intakeProteinG: goal.intakeProteinG,
+                intakeCarbsG: goal.intakeCarbsG,
+                intakeFatG: goal.intakeFatG
             )
         }
         return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4, distanceMetersDaily: 8000, caloriesDaily: 500)

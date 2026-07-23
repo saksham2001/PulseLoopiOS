@@ -18,6 +18,9 @@ enum MetricKey: String, CaseIterable {
     case bloodPressureDiastolic = "bp_dia"
     case fatigue
     case bloodSugar = "glucose"
+    // Calorie-intake tracking. No wearable capability — gated instead on the
+    // NutritionPrefs master toggle (see TodayStore / TodaySettingsView).
+    case nutrition
 
     /// The wearable capability that must be present for this metric to be shown.
     var requiredCapability: WearableCapability? {
@@ -33,6 +36,7 @@ enum MetricKey: String, CaseIterable {
         case .steps, .calories, .distance, .activeMinutes: return .steps
         case .sleep: return .sleep
         case .battery: return .battery
+        case .nutrition: return nil
         }
     }
 
@@ -109,7 +113,13 @@ struct GoalsSummary {
     let sleepHours: Double
     let exerciseDaysWeekly: Int
     let distanceMetersDaily: Double
+    /// Daily active-energy *burn* goal (kcal) — not intake.
     let caloriesDaily: Int
+    // Nutrition intake goals (nil = not set — the app never invents a target).
+    var intakeCalories: Int? = nil
+    var intakeProteinG: Int? = nil
+    var intakeCarbsG: Int? = nil
+    var intakeFatG: Int? = nil
 }
 
 struct TrendsSummary {
@@ -233,6 +243,8 @@ struct TodaySummary {
     var calibration: CalibrationState
     var goals: GoalsSummary
     var isDemo: Bool
-    
+    /// Consumed nutrition for the day. nil when the nutrition feature is disabled.
+    var nutrition: NutritionDayTotals? = nil
+
     var sevenDaySteps: [DailyMetricPoint] { trends.steps7d }
 }

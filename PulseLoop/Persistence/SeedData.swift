@@ -36,7 +36,16 @@ enum SeedData {
             baselineCompleted: false
         )
         context.insert(profile)
-        context.insert(UserGoal(steps: 10000, sleepMinutes: 480, activeMinutes: 45, workoutsPerWeek: 4))
+        let goal = UserGoal(steps: 10000, sleepMinutes: 480, activeMinutes: 45, workoutsPerWeek: 4)
+        // Demo intake goals — only visible when the nutrition feature is enabled in Settings.
+        goal.intakeCalories = 2200
+        goal.intakeProteinG = 140
+        goal.intakeCarbsG = 230
+        goal.intakeFatG = 70
+        context.insert(goal)
+
+        // Demo meals for today + yesterday (dormant until the nutrition feature is enabled).
+        seedDemoMeals(context, calendar: calendar, now: now)
         // Advertise the full sensor suite so the demo surfaces every vital (stress/HRV/BP/fatigue/
         // glucose/temperature are capability-gated and stay hidden otherwise).
         context.insert(Device(
@@ -174,6 +183,48 @@ enum SeedData {
         try? context.save()
     }
 
+    /// One demo meal to insert.
+    private struct MealSeed {
+        let dayOffset: Int
+        let hour: Int
+        let name: String
+        let type: MealType
+        let kcal: Double
+        let protein: Double
+        let carbs: Double
+        let fat: Double
+        let source: MealEntrySource
+    }
+
+    /// Demo meals for today + yesterday. Dormant until the nutrition feature is enabled in Settings.
+    @MainActor
+    private static func seedDemoMeals(_ context: ModelContext, calendar: Calendar, now: Date) {
+        let seeds: [MealSeed] = [
+            MealSeed(dayOffset: 0, hour: 8, name: "Greek yogurt bowl", type: .breakfast,
+                     kcal: 320, protein: 22, carbs: 38, fat: 9, source: .offSearch),
+            MealSeed(dayOffset: 0, hour: 13, name: "Chicken salad", type: .lunch,
+                     kcal: 520, protein: 38, carbs: 24, fat: 28, source: .llmEstimate),
+            MealSeed(dayOffset: 0, hour: 16, name: "Oat latte", type: .snack,
+                     kcal: 120, protein: 6, carbs: 10, fat: 6, source: .manual),
+            MealSeed(dayOffset: -1, hour: 8, name: "Overnight oats", type: .breakfast,
+                     kcal: 380, protein: 18, carbs: 52, fat: 11, source: .offSearch),
+            MealSeed(dayOffset: -1, hour: 13, name: "Turkey sandwich", type: .lunch,
+                     kcal: 540, protein: 32, carbs: 55, fat: 20, source: .manual),
+            MealSeed(dayOffset: -1, hour: 19, name: "Salmon & rice", type: .dinner,
+                     kcal: 680, protein: 42, carbs: 60, fat: 26, source: .llmEstimate),
+        ]
+        for seed in seeds {
+            guard let day = calendar.date(byAdding: .day, value: seed.dayOffset, to: now),
+                  let timestamp = calendar.date(bySettingHour: seed.hour, minute: 15, second: 0, of: day)
+            else { continue }
+            context.insert(MealEntry(
+                timestamp: timestamp, name: seed.name, mealType: seed.type,
+                calories: seed.kcal, proteinG: seed.protein, carbsG: seed.carbs, fatG: seed.fat,
+                source: seed.source
+            ))
+        }
+    }
+
     /// Seeds every vital's measurement history for the demo. Each series is deterministic (no RNG) and
     /// deliberately walks through its threshold zones — including over-threshold extremes — so the
     /// zone-colored charts show their full color range. HR/SpO₂ are dense over the last 24h (the
@@ -295,6 +346,8 @@ enum SeedData {
         deleteAll(CoachMessage.self, context)
         deleteAll(CoachMemory.self, context)
         deleteAll(CoachToolCall.self, context)
+        deleteAll(MealEntry.self, context)
+        deleteAll(CachedFoodProduct.self, context)
         try? context.save()
     }
     

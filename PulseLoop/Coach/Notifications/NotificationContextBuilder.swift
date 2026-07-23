@@ -23,6 +23,9 @@ struct NotificationContextPacket: Encodable {
     var memories: [CoachContextPacket.MemoryContext]
     var dataQualityWarnings: [String]
     var environment: CoachContextPacket.EnvironmentContext?
+    /// Present only when nutrition tracking is on, shared with the coach, AND the
+    /// check-in sub-toggle allows it.
+    var nutrition: CoachContextPacket.NutritionContext?
 }
 
 @MainActor
@@ -31,7 +34,11 @@ enum NotificationContextBuilder {
         slot: CoachNotificationSlot, context: ModelContext, now: Date = Date(),
         environment: CoachContextPacket.EnvironmentContext? = nil
     ) -> NotificationContextPacket {
-        let packet = CoachContextBuilder.build(context: context, now: now)
+        // Check-ins honor their own nutrition sub-toggle on top of the share-with-coach gate.
+        let packet = CoachContextBuilder.build(
+            context: context, now: now,
+            includeNutrition: NutritionPrefsStore.shared.prefs.includeInNotifications
+        )
         let cutoff = now.addingTimeInterval(-12 * 3600)
 
         // Windowed DB queries for the last 12h instead of fetching the whole table and filtering.
@@ -54,7 +61,8 @@ enum NotificationContextBuilder {
             recentWorkouts: packet.recentWorkouts,
             memories: packet.memories,
             dataQualityWarnings: packet.dataQualityWarnings,
-            environment: environment
+            environment: environment,
+            nutrition: packet.nutrition
         )
     }
 }

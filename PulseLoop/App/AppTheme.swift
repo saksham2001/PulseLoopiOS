@@ -25,6 +25,9 @@ enum AppRoute: Hashable {
     case settingsHealth
     case settingsPrivacyData
     case settingsAbout
+    case settingsNutrition
+    case nutrition
+    case mealDetail(UUID)
     case pairing
     case debug
     case componentGallery
@@ -79,6 +82,11 @@ enum PulseColors {
     static let stress = Color(hex: "#FF8A4C")
     static let hrv = Color(hex: "#9D7CFF")
     static let temperature = Color(hex: "#2DD4D8")
+    // Nutrition macros (intake energy reuses `calories`). Hues picked to be CVD-separable from
+    // each other and from the kcal orange in macro bars/pills.
+    static let macroProtein = Color(hex: "#4DA3FF")   // blue
+    static let macroCarbs = Color(hex: "#35E0A1")     // mint
+    static let macroFat = Color(hex: "#FFD166")       // gold
     // jring/56ff metrics
     static let bloodPressure = Color(hex: "#FF6B9D")
     static let bloodSugar = Color(hex: "#FFB84D")

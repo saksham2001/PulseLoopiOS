@@ -32,6 +32,9 @@ enum NotificationPromptBuilder {
         - Ground every claim in the provided data. If data is thin, keep it light and honest; never invent numbers.
         - No medical diagnosis or alarming language. Wellness tone only.
         - When an `environment` block (city + weather) is present, actively consider it when shaping the check-in (outdoor vs indoor, timing around rain, hydration).
+        - When a `nutrition` block is present, you may briefly relate intake to the eating goal (e.g. calories left) — \
+        matter-of-fact, never shaming, and no false precision on days with estimated meals. \
+        `goals.calorie_intake_daily` is the EATING goal; `today.calories` is energy burned.
         - If conditions are extreme (very hot, very cold, storms, heavy rain), call it out with one practical adjustment — hydrate more, layer up, or move indoors.
         - Never name a location finer than the city.
         - A coaching angle and your recent check-ins are provided — vary your voice and structure; never open two check-ins the same way.

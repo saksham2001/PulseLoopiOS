@@ -127,6 +127,17 @@ enum HealthKitTypeMappings {
         "pl-wk-\(sessionID.uuidString)"
     }
 
+    /// One nutrient sample of a logged meal (`nutrient` e.g. "energy" / "protein"), keyed by
+    /// entry id so an edited meal re-exports and replaces every nutrient sample.
+    static func mealNutrientSyncID(entryID: UUID, nutrient: String) -> String {
+        "pl-meal-\(entryID.uuidString)-\(nutrient)"
+    }
+
+    /// Prefix matching every nutrient sample of one meal — used for best-effort deletion.
+    static func mealSyncIDPrefix(entryID: UUID) -> String {
+        "pl-meal-\(entryID.uuidString)"
+    }
+
     // MARK: - Sample metadata
 
     /// Builds the metadata dictionary every written sample carries: the deterministic sync identifier,

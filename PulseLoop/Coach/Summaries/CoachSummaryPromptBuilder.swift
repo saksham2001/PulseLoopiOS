@@ -23,6 +23,8 @@ enum CoachSummaryPromptBuilder {
         - Be warm, specific, and genuinely useful — not generic. Ground every claim in the provided data; if data is thin, say so lightly and never invent numbers.
         - No medical diagnosis or alarming language. Wellness tone. At most one emoji, only if it fits.
         - When an `environment` block (city + weather) is present, you may use it for concrete advice (outdoor vs indoor, hydration, rain). Never name a location finer than the city; don't force it.
+        - When a `nutrition` block is present, you may fold intake into the insight (calories vs the eating goal, protein). \
+        Matter-of-fact, never shaming; `goals.calorie_intake_daily` is the EATING goal, `today.calories` is energy burned.
         - A coaching angle and your recent cards are provided — vary your voice and structure; never open two cards the same way.
         """
     }

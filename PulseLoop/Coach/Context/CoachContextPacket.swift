@@ -25,6 +25,9 @@ struct CoachContextPacket: Encodable {
     /// permission is denied, or WeatherKit is unavailable. Raw coordinates NEVER
     /// appear here — only the reverse-geocoded city/region.
     var environment: EnvironmentContext?
+    /// Opt-in nutrition tracking summary. Nil when the feature is off or the user
+    /// doesn't share it with the coach — absent from the JSON entirely.
+    var nutrition: NutritionContext?
 
     struct ProfileContext: Encodable {
         var name: String?
@@ -51,6 +54,11 @@ struct CoachContextPacket: Encodable {
         var activeMinutesDaily: Int
         var sleepHours: Double
         var exerciseDaysWeekly: Int
+        // Nutrition intake goals (nil = not set; only present while nutrition is shared).
+        var calorieIntakeDaily: Int?
+        var proteinGDaily: Int?
+        var carbsGDaily: Int?
+        var fatGDaily: Int?
     }
 
     struct DayContext: Encodable {
@@ -107,6 +115,28 @@ struct CoachContextPacket: Encodable {
         var key: String
         var value: String
         var importance: Int
+    }
+
+    /// Today's consumed nutrition + goals + meal list. Only present when the user
+    /// enabled nutrition tracking AND sharing it with the coach.
+    struct NutritionContext: Encodable {
+        var caloriesConsumed: Double
+        var proteinG: Double
+        var carbsG: Double
+        var fatG: Double
+        var mealsLoggedToday: Int
+        var mealsToday: [MealBrief]
+        var yesterdayCalories: Double?
+
+        struct MealBrief: Encodable {
+            var mealId: String
+            var name: String
+            var mealType: String
+            var time: String
+            var kcal: Double
+            /// "off_barcode" | "off_search" | "llm_estimate" | "manual"
+            var source: String
+        }
     }
 
     /// City-level location + current/forecast weather. City-only privacy: never a

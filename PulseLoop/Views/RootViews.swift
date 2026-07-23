@@ -41,6 +41,17 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                // Test tooling: flip the (off-by-default) nutrition feature on via launch arg.
+                if UserDefaults.standard.bool(forKey: "enableNutrition") {
+                    NutritionPrefsStore.shared.prefs.masterEnabled = true
+                    PulseDataChange.shared.notify()
+                }
+                if UserDefaults.standard.bool(forKey: "openNutrition") {
+                    path.append(AppRoute.nutrition)
+                }
+                if UserDefaults.standard.bool(forKey: "openNutritionSettings") {
+                    path.append(AppRoute.settingsNutrition)
+                }
                 // Test tooling: deep-link straight to a seeded workout's detail (route map).
                 if UserDefaults.standard.bool(forKey: "openWorkout"),
                    let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
@@ -114,6 +125,12 @@ struct RootAppView: View {
                     PrivacyDataSettingsView()
                 case .settingsAbout:
                     AboutSettingsView(path: $path)
+                case .settingsNutrition:
+                    NutritionSettingsView()
+                case .nutrition:
+                    NutritionView(path: $path)
+                case let .mealDetail(id):
+                    MealDetailView(mealId: id, path: $path)
                 case .pairing:
                     PairingView(onConnected: { path.removeLast() })
                 case .debug:
@@ -181,11 +198,11 @@ struct MainTabView: View {
         }
     }
 
-    /// A workout card tapped inside the chat can't push onto `path` directly: the sheet
+    /// A card tapped inside the chat can't push onto `path` directly: the sheet
     /// sits outside this NavigationStack, so the detail would slide in behind it. Park
     /// the route and dismiss; `pushPendingCoachRoute` runs once the sheet is gone.
-    private func requestCoachRoute(_ activityId: UUID) {
-        pendingCoachRoute = .activityDetail(activityId)
+    private func requestCoachRoute(_ route: AppRoute) {
+        pendingCoachRoute = route
         nav.showCoach = false
     }
 
@@ -268,7 +285,10 @@ struct MainTabView: View {
         // Coach opens as a sheet (swipe-to-dismiss) instead of a tab, so it never
         // crowds the tab bar. All entry points set `nav.showCoach`.
         .sheet(isPresented: $nav.showCoach, onDismiss: pushPendingCoachRoute) {
-            CoachView(onOpenWorkout: requestCoachRoute)
+            CoachView(
+                onOpenWorkout: { requestCoachRoute(.activityDetail($0)) },
+                onOpenMeal: { requestCoachRoute(.mealDetail($0)) }
+            )
                 .presentationDragIndicator(.visible) // grabber ("pull tab") at the top of the sheet
         }
         .background(PulseColors.background.ignoresSafeArea())

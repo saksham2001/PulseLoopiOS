@@ -103,10 +103,17 @@ enum CoachNotificationGenerator {
                 let goal = packet.goals.stepsDaily
                 let hit = steps >= goal ? "You hit your \(goal) step goal — nice work." : "\(goal - steps) steps to your goal."
                 return CoachNotification(title: "Evening check-in",
-                                         body: "\(steps) steps today. \(hit) Time to start winding down.")
+                                         body: "\(steps) steps today. \(hit)\(scriptedNutritionLine(packet)) Time to start winding down.")
             }
             return CoachNotification(title: "Evening check-in",
-                                     body: "How did today feel? Sync your ring and I'll recap your day.")
+                                     body: "How did today feel?\(scriptedNutritionLine(packet)) Sync your ring and I'll recap your day.")
         }
+    }
+
+    /// One grounded nutrition sentence for the scripted fallback, when meals were logged today.
+    private static func scriptedNutritionLine(_ packet: NotificationContextPacket) -> String {
+        guard let nutrition = packet.nutrition, nutrition.mealsLoggedToday > 0 else { return "" }
+        let meals = "\(nutrition.mealsLoggedToday) meal\(nutrition.mealsLoggedToday == 1 ? "" : "s")"
+        return " Logged \(meals), ~\(Int(nutrition.caloriesConsumed)) kcal."
     }
 }

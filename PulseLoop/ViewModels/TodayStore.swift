@@ -170,13 +170,26 @@ final class TodayStore {
         let goal = MetricsRepository.goals(context: context)
         let goalSig = goal.map { "\($0.steps)/\($0.activeMinutes)/\($0.distanceMeters)/\($0.calories)/\($0.sleepMinutes)/\($0.workoutsPerWeek)" } ?? "·"
 
+        // Nutrition tile inputs: feature toggles, today's entry count (catches deletes), the
+        // newest entry stamp (catches inserts/edits), and the intake goals. All cheap probes;
+        // collapses to a constant while the feature is off.
+        let nPrefs = NutritionPrefsStore.shared.prefs
+        let nutritionSig: String
+        if nPrefs.masterEnabled {
+            let count = NutritionRepository.entries(on: Date(), context: context).count
+            let intakeSig = goal.map { "\($0.intakeCalories ?? 0)/\($0.intakeProteinG ?? 0)/\($0.intakeCarbsG ?? 0)/\($0.intakeFatG ?? 0)" } ?? "·"
+            nutritionSig = "n\(nPrefs.showOnToday)/\(count)@\(stamp(NutritionRepository.latestEntryUpdate(context: context)))/\(intakeSig)"
+        } else {
+            nutritionSig = "off"
+        }
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             activity.map { "\($0.steps)/\(Int($0.distanceMeters))/\($0.activeMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             sleep.map { "\($0.totalMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)@\(stamp($0.lastSyncAt))" } ?? "·",
-            calSig, profileSig, prefSig, goalSig,
+            calSig, profileSig, prefSig, goalSig, nutritionSig,
         ].joined(separator: "|")
     }
 }

@@ -25,9 +25,12 @@ enum ActionTools {
         .make(
             name: "set_goal",
             label: "Saving your goal",
-            description: "Create or update a daily/weekly fitness goal.",
+            description: "Create or update a daily/weekly fitness goal. Nutrition intake goals (calorie_intake and the per-macro gram targets) apply to the calorie-tracking feature.",
             parameters: JSONSchema.object([
-                "goal_type": JSONSchema.enumString(["steps", "sleep_hours", "active_minutes", "exercise_days"]),
+                "goal_type": JSONSchema.enumString([
+                    "steps", "sleep_hours", "active_minutes", "exercise_days",
+                    "calorie_intake", "protein_g", "carbs_g", "fat_g",
+                ]),
                 "target": JSONSchema.number,
                 "reason": JSONSchema.string,
             ], required: ["goal_type", "target", "reason"]),
@@ -41,10 +44,16 @@ enum ActionTools {
             case "sleep_hours": goal.sleepMinutes = Int(args.target * 60)
             case "active_minutes": goal.activeMinutes = Int(args.target)
             case "exercise_days": goal.workoutsPerWeek = Int(args.target)
+            // Intake goals (NOT `goal.calories`, which is the active-energy burn goal).
+            case "calorie_intake": goal.intakeCalories = Int(args.target)
+            case "protein_g": goal.intakeProteinG = Int(args.target)
+            case "carbs_g": goal.intakeCarbsG = Int(args.target)
+            case "fat_g": goal.intakeFatG = Int(args.target)
             default: return .error("invalid goal_type '\(args.goalType)'")
             }
             goal.updatedAt = Date()
             try? ctx.modelContext.save()
+            PulseDataChange.shared.notify()
             return .object(["ok": true, "goal_type": args.goalType, "target": args.target])
         }
     }

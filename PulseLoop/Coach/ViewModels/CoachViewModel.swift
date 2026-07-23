@@ -60,7 +60,9 @@ final class CoachViewModel {
         try? context.save()
 
         let (apiKey, activeClient) = resolveClient()
-        let flags = CoachFeatureFlags(settings: settingsStore.settings, hasAPIKey: apiKey != nil)
+        let flags = CoachFeatureFlags(
+            settings: settingsStore.settings, hasAPIKey: apiKey != nil,
+            nutritionPrefs: NutritionPrefsStore.shared.prefs)
         let budget = flags.contextBudget
         let environment = await CoachEnvironmentContextService.shared.snapshot()
         let packet = CoachContextBuilder.build(context: context, budget: budget, environment: environment)
@@ -72,7 +74,9 @@ final class CoachViewModel {
             client: activeClient,
             registry: ToolRegistry(flags: flags),
             flags: flags,
-            toolContext: ToolExecutionContext(modelContext: context, flags: flags, coordinator: coordinator)
+            toolContext: ToolExecutionContext(
+                modelContext: context, flags: flags, coordinator: coordinator,
+                foodClient: flags.nutritionContextEnabled ? OpenFoodFactsClient() : nil)
         )
 
         let result = await orchestrator.runTurn(
@@ -107,14 +111,18 @@ final class CoachViewModel {
         guard let action = PendingAction.decode(fromJSON: message.pendingActionJSON) else { return }
         let resultText = PendingActionExecutor.execute(action, context: context)
         message.pendingActionJSON = nil
-        // A confirmed edit still touches a real workout — surface its card. Deletes
+        // A confirmed edit still touches a real row — surface its card. Deletes
         // have nothing left to show, so skip them.
-        let loggedIds: String? = action.kind == .updateActivitySession
-            ? UUID(uuidString: action.activityId).map { Self.encodeActivityIds([$0]) } ?? nil
+        let editedId = UUID(uuidString: action.activityId)
+        let loggedActivityIds: String? = action.kind == .updateActivitySession
+            ? editedId.map { Self.encodeActivityIds([$0]) } ?? nil
+            : nil
+        let loggedMealIds: String? = action.kind == .updateMealEntry
+            ? editedId.map { Self.encodeActivityIds([$0]) } ?? nil
             : nil
         context.insert(CoachMessage(
             conversationId: message.conversationId, role: "assistant", body: resultText,
-            loggedActivityIdsJSON: loggedIds))
+            loggedActivityIdsJSON: loggedActivityIds, loggedMealIdsJSON: loggedMealIds))
         try? context.save()
     }
 
@@ -152,7 +160,8 @@ final class CoachViewModel {
             body: result.assistant.plainText,
             cardsJSON: result.assistant.encodedJSON(),
             pendingActionJSON: result.pendingActions.first?.encodedJSON(),
-            loggedActivityIdsJSON: Self.encodeActivityIds(result.loggedActivityIds)
+            loggedActivityIdsJSON: Self.encodeActivityIds(result.loggedActivityIds),
+            loggedMealIdsJSON: Self.encodeActivityIds(result.loggedMealIds)
         )
         applyUsage(result.usage, to: assistant, flags: flags)
         context.insert(assistant)
