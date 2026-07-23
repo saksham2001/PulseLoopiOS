@@ -291,6 +291,9 @@ final class RingSyncCoordinator {
     /// that cadence. The ring has no cursor — it always dumps everything it holds for a type — so a
     /// tighter interval would just re-transfer the same records for nothing.
     private let periodicSyncInterval: TimeInterval = 30 * 60
+    /// When `resyncHistoryIfStale` last kicked the engine — a light throttle so a burst of samples
+    /// (each one an event-handler entry) can't re-enter while the kicked sync is still spinning up.
+    private var lastResyncKickAt: Date?
 
     init(client: RingBLEClient, context: ModelContext) {
         self.client = client
@@ -657,24 +660,15 @@ final class RingSyncCoordinator {
             // `collect` drops anything still inside the warm-up echo — the stale cached bpm the ring
             // fires back the instant the command lands, which is what used to end a measurement in ~2s.
             if hrState == .measuring { hrWindow.collect(bpm) }
+            resyncHistoryIfStale()
+        case .activityUpdate, .batteryLevel:
+            // All-day cadence events (≤5 min apart): each one is a BLE wake — the only execution
+            // window a backgrounded app reliably gets — so it doubles as the re-sync heartbeat.
+            resyncHistoryIfStale()
         case .heartRateComplete:
             // The ring reported a genuine error/no-reading (worn incorrectly). Only fast-fail if this
             // measurement hasn't already produced a real reading.
             if hrState == .measuring, !measurementReceivedReading { hrNoReadingReported = true }
-        case let .spo2Result(value, _):
-            latestSpO2Value = value
-        case let .spo2Progress(percent, _):
-            if let percent { latestSpO2Value = percent }
-        case let .hrvSample(value, _):
-            latestHRVValue = value
-        case let .bloodPressureSample(systolic, diastolic, _):
-            latestBloodPressureValue = BloodPressureReading(systolic: systolic, diastolic: diastolic)
-        case let .fatigueSample(value, _):
-            latestFatigueValue = value
-        case let .stressSample(value, _):
-            latestStressValue = value
-        case let .bloodSugarSample(mgdl, _):
-            latestBloodSugarValue = mgdl
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was
@@ -696,7 +690,7 @@ final class RingSyncCoordinator {
             guard direction == .incoming, case let .measurementRejected(mode) = decoded else { break }
             spot.noteRejected(mode: mode)
         default:
-            break
+            mirrorLiveValue(event)
         }
     }
 
@@ -784,6 +778,33 @@ final class RingSyncCoordinator {
     }
 }
 
+// MARK: - Live value mirroring
+
+private extension RingSyncCoordinator {
+    /// Mirror a live spot-measurement value for the UI (`latest*Value`). Split out of `handle(_:)`
+    /// purely to keep that switch's complexity down — these cases share one shape: store and done.
+    func mirrorLiveValue(_ event: PulseEvent) {
+        switch event {
+        case let .spo2Result(value, _):
+            latestSpO2Value = value
+        case let .spo2Progress(percent, _):
+            if let percent { latestSpO2Value = percent }
+        case let .hrvSample(value, _):
+            latestHRVValue = value
+        case let .bloodPressureSample(systolic, diastolic, _):
+            latestBloodPressureValue = BloodPressureReading(systolic: systolic, diastolic: diastolic)
+        case let .fatigueSample(value, _):
+            latestFatigueValue = value
+        case let .stressSample(value, _):
+            latestStressValue = value
+        case let .bloodSugarSample(mgdl, _):
+            latestBloodSugarValue = mgdl
+        default:
+            break
+        }
+    }
+}
+
 // MARK: - Long-lived background tasks
 
 /// The coordinator's two open-ended tasks, kept out of the (already large) class body: both are armed
@@ -817,18 +838,18 @@ private extension RingSyncCoordinator {
         }
     }
 
-    /// Top up the app's copy of the ring's log every 30 minutes **while connected**.
+    /// Top up the app's copy of the ring's log every ~30 minutes **while connected** — including in the
+    /// background. While the link is up under `bluetooth-central`, every all-day sample the ring pushes
+    /// wakes the app for a few seconds; `resyncHistoryIfStale` runs in those wakes (the `Task.sleep`
+    /// timer below can't fire while suspended, so it only covers the foreground/idle case). While the
+    /// ring is *disconnected* the pending connect re-links it when back in range and the connect
+    /// handshake runs the full sync — the true dead zones are force-quit and Bluetooth off.
     ///
-    /// This is emphatically *not* background sync: iOS gives us no BLE time while the ring is
-    /// disconnected, so a ring worn away from the phone still only hands over its log on the next
-    /// connect, and the docs must keep saying so. This only closes the "app has been open for hours and
-    /// the data is still from the connect handshake" gap.
-    ///
-    /// Suppressed while a transfer is already running (`isSyncing`) or a workout is streaming live HR — a
-    /// history dump would compete with the stream for the link, and `syncWorkoutVitals()` already covers
-    /// that window at finish. `YCBTHistoryTransfer.start` refuses a re-entrant transfer anyway, so this is
-    /// the polite half of a belt-and-braces pair. Rings whose history only comes down with the handshake
-    /// (jring/Colmi) get a no-op `syncHistory()`, so the timer costs them nothing.
+    /// Kicks are suppressed while a transfer is already running (`isSyncing`) or a workout is streaming
+    /// live HR — a history dump would compete with the stream for the link, and `syncWorkoutVitals()`
+    /// already covers that window at finish. `YCBTHistoryTransfer.start` and `ColmiSyncEngine`'s stage
+    /// guard refuse a re-entrant transfer anyway, so this is the polite half of a belt-and-braces pair.
+    /// jring keeps the no-op `syncHistory()`: it streams samples continuously instead of paging history.
     ///
     /// Armed from `.deviceStateChanged(.connected,)`, which is re-published on every `02 00` reply and not
     /// just on the first connect — hence the idempotence guard.
@@ -839,14 +860,27 @@ private extension RingSyncCoordinator {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: interval)
                 guard !Task.isCancelled, let self else { return }
-                guard self.isConnected, !self.isSyncing, !self.workoutHRActive else { continue }
-                // The engine's own `.syncProgress` stages drive the progress bar (and its `"done"` stage
-                // clears it), so a ring with no new records shows nothing. They also stamp `lastSyncAt`
-                // — the tick itself must not, or a family whose `syncHistory()` is a no-op (jring/Colmi)
-                // would show "Synced just now" every 30 minutes without a byte on the wire.
-                self.engine?.syncHistory()
+                self.resyncHistoryIfStale()
             }
         }
+    }
+
+    /// Kick a history re-sync when the last *completed* full sync is older than `periodicSyncInterval`.
+    /// Called from data events (the BLE wakes a backgrounded app actually gets) and the foreground
+    /// timer, so one set of guards serves both. Gates on `Device.lastFullSyncAt` — the stamp written
+    /// only when a sync finishes — not `lastSyncAt`, which every bare connect refreshes.
+    ///
+    /// The engine's own `.syncProgress` stages drive the progress bar and stamp `lastSyncAt`; the kick
+    /// itself must not, or a family whose `syncHistory()` is a no-op (jring) would show "Synced just
+    /// now" without a byte on the wire.
+    func resyncHistoryIfStale(now: Date = Date()) {
+        guard isConnected, !isSyncing, !workoutHRActive else { return }
+        // A kicked sync takes a moment before `isSyncing` reflects it; don't re-enter meanwhile.
+        if let last = lastResyncKickAt, now.timeIntervalSince(last) < 60 { return }
+        let lastFullSync = DeviceRepository.current(context: context)?.lastFullSyncAt ?? .distantPast
+        guard now.timeIntervalSince(lastFullSync) > periodicSyncInterval else { return }
+        lastResyncKickAt = now
+        engine?.syncHistory()
     }
 
     func stopPeriodicSync() {

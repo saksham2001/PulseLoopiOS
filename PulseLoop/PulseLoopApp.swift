@@ -33,6 +33,8 @@ struct PulseLoopApp: App {
     private let healthSyncPublisher: HealthSyncPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
+    /// Retained so a completed background sync can fire the due check-in on fresh data.
+    private let notificationDataTrigger: CoachNotificationDataTrigger
 
     /// True when the app host is launched by the XCTest runner. Unit tests build their own
     /// in-memory stores and never touch the live BLE/notification stack, so the app host must
@@ -95,6 +97,10 @@ struct PulseLoopApp: App {
         self.widgetPublisher = widgetPublisher
         let healthSyncPublisher = HealthSyncPublisher(context: container.mainContext)
         self.healthSyncPublisher = healthSyncPublisher
+        let mainContext = container.mainContext
+        self.notificationDataTrigger = CoachNotificationDataTrigger {
+            CoachNotificationService(modelContext: mainContext, coordinator: coordinator)
+        }
 
         // Skip the live subsystems entirely under XCTest — the test target exercises these
         // components directly with their own fixtures; the app host just needs to launch cleanly.
@@ -114,12 +120,13 @@ struct PulseLoopApp: App {
         diagnostics.start()
         widgetPublisher.start()
         healthSyncPublisher.start()
+        notificationDataTrigger.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate
         let ctx = container.mainContext
-        CoachNotificationScheduler.shared.register {
-            CoachNotificationService(modelContext: ctx, coordinator: coordinator)
+        CoachNotificationScheduler.shared.register { syncBudget in
+            CoachNotificationService(modelContext: ctx, coordinator: coordinator, syncWaitTimeout: syncBudget)
         }
     }
 

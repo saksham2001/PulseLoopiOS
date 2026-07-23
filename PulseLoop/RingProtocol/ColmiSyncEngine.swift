@@ -142,6 +142,15 @@ final class ColmiSyncEngine: RingSyncEngine {
         armWatchdog()
     }
 
+    /// Periodic re-sync while connected (the coordinator's 30-min staleness kick). The ring has no
+    /// cursor — a re-run dumps everything it holds — but persistence upserts on (kind, timestamp) and
+    /// `startHistorySync` resets the activity days it re-sums, so repeating is safe. Guarded so a kick
+    /// can never cut a run already in flight short.
+    func syncHistory() {
+        guard stage == .idle || stage == .done else { return }
+        startHistorySync()
+    }
+
     /// Targeted post-workout backfill: pull only today's HR log and the all-day SpO2 log so samples
     /// the ring recorded while the phone was away land in the just-finished session (via the
     /// finished-session window in `linkSample`). Reuses the normal stage machine + watchdogs. A full
