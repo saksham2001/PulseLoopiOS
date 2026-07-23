@@ -26,7 +26,9 @@ enum ModelContainerFactory {
             CoachToolCall.self,
             CoachNotificationRecord.self,
             CoachSummary.self,
-            WearableLog.self
+            WearableLog.self,
+            MealEntry.self,
+            CachedFoodProduct.self
         ])
         
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)

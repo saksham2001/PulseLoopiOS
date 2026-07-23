@@ -33,6 +33,13 @@ enum CoachDataAccess {
         return f.string(from: date)
     }
 
+    static func localTimeString(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        f.timeZone = .current
+        return f.string(from: date)
+    }
+
     static func isoString(_ date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]

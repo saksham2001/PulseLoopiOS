@@ -6,6 +6,14 @@ import SwiftData
 @MainActor
 enum PendingActionExecutor {
     static func execute(_ action: PendingAction, context: ModelContext) -> String {
+        // Meal actions target a MealEntry, not an ActivitySession.
+        switch action.kind {
+        case .deleteMealEntry, .updateMealEntry:
+            return executeMeal(action, context: context)
+        case .deleteActivitySession, .updateActivitySession:
+            break
+        }
+
         guard let id = UUID(uuidString: action.activityId),
               let session = ActivityRepository.sessions(context: context).first(where: { $0.id == id }) else {
             return "That workout no longer exists."
@@ -29,6 +37,30 @@ enum PendingActionExecutor {
             try? context.save()
             PulseDataChange.shared.notify()
             return "Updated the \(typeLabel) session."
+
+        case .deleteMealEntry, .updateMealEntry:
+            return "" // handled by executeMeal above
+        }
+    }
+
+    private static func executeMeal(_ action: PendingAction, context: ModelContext) -> String {
+        guard let id = UUID(uuidString: action.activityId),
+              let entry = NutritionRepository.entry(id: id, context: context) else {
+            return "That meal no longer exists."
+        }
+        switch action.kind {
+        case .deleteMealEntry:
+            let name = entry.name
+            NutritionRepository.delete(id: id, context: context)
+            return "Deleted \"\(name)\"."
+        case .updateMealEntry:
+            if let updates = action.mealUpdates {
+                NutritionTools.apply(updates, to: entry)
+            }
+            NutritionRepository.update(entry, context: context)
+            return "Updated \"\(entry.name)\"."
+        case .deleteActivitySession, .updateActivitySession:
+            return ""
         }
     }
 

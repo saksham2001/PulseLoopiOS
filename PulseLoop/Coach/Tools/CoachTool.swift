@@ -14,11 +14,23 @@ final class ToolExecutionContext {
     /// Activity sessions created/edited during this turn (immediate writes, not
     /// confirmation-gated ones). Drives the in-chat workout card.
     var loggedActivityIds: [UUID] = []
+    /// Meal entries created/edited during this turn (immediate writes). Drives the
+    /// in-chat meal card, mirroring `loggedActivityIds`.
+    var loggedMealIds: [UUID] = []
+    /// Food-database client for the nutrition grounding tool. Nil default keeps
+    /// existing construction sites/tests compiling (tool errors gracefully).
+    let foodClient: FoodDatabaseClient?
 
-    init(modelContext: ModelContext, flags: CoachFeatureFlags, coordinator: RingSyncCoordinator? = nil) {
+    init(
+        modelContext: ModelContext,
+        flags: CoachFeatureFlags,
+        coordinator: RingSyncCoordinator? = nil,
+        foodClient: FoodDatabaseClient? = nil
+    ) {
         self.modelContext = modelContext
         self.flags = flags
         self.coordinator = coordinator
+        self.foodClient = foodClient
     }
 }
 

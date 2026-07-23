@@ -61,6 +61,26 @@ enum CoachPromptBuilder {
     Return only the structured JSON matching the coach_response schema. No prose, no hidden reasoning.
     """
 
+    /// Nutrition-tracking guidance, appended to the developer message only when the packet
+    /// carries a `nutrition` block (feature on + shared with the coach). Encodes the
+    /// "grounded or labeled, never silently guessed" contract.
+    static let nutritionAddendum = """
+    Nutrition tracking is enabled (see `nutrition` in the packet: today's intake, meals, and intake goals; note `goals.calorie_intake_daily` is the EATING goal — `today.calories` is energy BURNED).
+    - When the user tells you what they ate (text or photo), log it with log_meal — one call per meal, not per ingredient unless they itemize.
+    - Ground nutrition numbers: for packaged or nameable foods, call search_food_database first and use the verified per-100g values scaled to the stated portion (source "database"). For home-cooked or unverifiable food, estimate — but set source "estimate", give honest confidence, and state your portion assumptions in the reply.
+    - For a meal photo: identify each food, estimate portion sizes, optionally ground components via search_food_database, then call log_meal once with the totals.
+    - If portion size is genuinely unknowable, ask one short clarifying question before logging.
+    - After logging, briefly confirm what was logged and that the user can tap the meal card to adjust it.
+    - Use get_nutrition_log for questions about what was eaten on any day.
+    - Never log a meal the user didn't state, and never claim estimated numbers are exact.
+    - When asked to set calorie/macro goals, you may compute a recommendation from the profile (weight, activity) — explain the reasoning and use set_goal with calorie_intake / protein_g / carbs_g / fat_g.
+    """
+
+    /// One-line compact variant for the tool-less on-device path (can't call tools).
+    static let nutritionAddendumCompact = """
+    Nutrition tracking is on: the packet's `nutrition` block has today's intake, meals, and eating goals (`goals.calorie_intake_daily` is the eating goal; `today.calories` is energy burned). You cannot log meals in this mode — if asked to log, say meal logging needs a cloud provider or the Nutrition page, and answer questions from the packet data.
+    """
+
     /// Developer message embedding the context packet + rolling summary. The budget
     /// only changes what the caller packed into `packet`; the message text is the
     /// same, minus the tool guidance the compact (tool-less) path can't use.
@@ -70,6 +90,9 @@ enum CoachPromptBuilder {
         let guidance = budget == .compact
             ? "Answer from the context packet above. Today's date and the user's timezone are in the packet."
             : "Use the provided tools to retrieve, analyze, chart, search, or act. Prefer compact retrieval first, then deeper analysis only if needed. Today's date and the user's timezone are in the context packet."
+        let nutrition = packet.nutrition == nil
+            ? ""
+            : "\n\n" + (budget == .compact ? nutritionAddendumCompact : nutritionAddendum)
         return """
         Current context packet:
         \(json)
@@ -77,7 +100,7 @@ enum CoachPromptBuilder {
         Conversation summary:
         \(summary)
 
-        \(guidance)
+        \(guidance)\(nutrition)
         """
     }
     // swiftlint:enable line_length

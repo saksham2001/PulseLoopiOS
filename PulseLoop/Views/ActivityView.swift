@@ -51,6 +51,18 @@ struct ActivityView: View {
                         path.append(AppRoute.activityTrends)
                     }
 
+                    // Calorie-intake sibling of the daily summary. `summary.nutrition` is only
+                    // populated while the nutrition feature is enabled — nothing renders otherwise.
+                    if let nutrition = summary.nutrition {
+                        NutritionSummaryCard(
+                            totals: nutrition,
+                            goals: summary.goals,
+                            burned: summary.calories
+                        ) {
+                            path.append(AppRoute.nutrition)
+                        }
+                    }
+
                     HStack(spacing: 12) {
                     Button { path.append(AppRoute.recordSelect) } label: {
                         Text("+ Record Activity")

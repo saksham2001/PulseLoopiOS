@@ -298,6 +298,185 @@ enum CoachRepository {
     }
 }
 
+/// Summed nutrition for one day. Optional nutrients are nil when *no* entry that day reported
+/// them (unknown ≠ 0); otherwise the sum over the entries that did.
+struct NutritionDayTotals: Equatable {
+    var calories: Double = 0
+    var proteinG: Double = 0
+    var carbsG: Double = 0
+    var fatG: Double = 0
+    var fiberG: Double? = nil
+    var sugarG: Double? = nil
+    var sodiumMg: Double? = nil
+    var entryCount: Int = 0
+}
+
+enum NutritionRepository {
+    /// LRU cap for the Open Food Facts product cache.
+    nonisolated static let maxCachedProducts = 500
+
+    @MainActor
+    static func entries(on date: Date, context: ModelContext) -> [MealEntry] {
+        let day = Calendar.current.startOfDay(for: date)
+        let descriptor = FetchDescriptor<MealEntry>(
+            predicate: #Predicate { $0.date == day },
+            sortBy: [SortDescriptor(\.timestamp)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// Entries whose day-bucket falls in `[start, end)` (both are normalized to startOfDay).
+    @MainActor
+    static func entries(from start: Date, to end: Date, context: ModelContext) -> [MealEntry] {
+        let lower = Calendar.current.startOfDay(for: start)
+        let upper = Calendar.current.startOfDay(for: end)
+        let descriptor = FetchDescriptor<MealEntry>(
+            predicate: #Predicate { $0.date >= lower && $0.date < upper },
+            sortBy: [SortDescriptor(\.timestamp)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    @MainActor
+    static func entry(id: UUID, context: ModelContext) -> MealEntry? {
+        var descriptor = FetchDescriptor<MealEntry>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    /// Whether any meal has ever been logged (drives the first-run explainer card). Probe, not a scan.
+    @MainActor
+    static func hasAnyEntry(context: ModelContext) -> Bool {
+        var descriptor = FetchDescriptor<MealEntry>()
+        descriptor.fetchLimit = 1
+        return ((try? context.fetch(descriptor))?.isEmpty == false)
+    }
+
+    /// Most recent `updatedAt` across all meal entries — a cheap change stamp for rebuild
+    /// signatures (insert, edit, and re-dated entries all bump it). `fetchLimit 1` probe.
+    @MainActor
+    static func latestEntryUpdate(context: ModelContext) -> Date? {
+        var descriptor = FetchDescriptor<MealEntry>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first?.updatedAt
+    }
+
+    /// Summed totals for a day, computed at read time (≤ ~a dozen rows — matches the app's
+    /// lazy "today is recomputed at read time" convention; no stored daily row to keep in sync).
+    @MainActor
+    static func dayTotals(on date: Date, context: ModelContext) -> NutritionDayTotals {
+        totals(of: entries(on: date, context: context))
+    }
+
+    static func totals(of entries: [MealEntry]) -> NutritionDayTotals {
+        var result = NutritionDayTotals()
+        for entry in entries {
+            result.calories += entry.calories
+            result.proteinG += entry.proteinG
+            result.carbsG += entry.carbsG
+            result.fatG += entry.fatG
+            if let fiber = entry.fiberG { result.fiberG = (result.fiberG ?? 0) + fiber }
+            if let sugar = entry.sugarG { result.sugarG = (result.sugarG ?? 0) + sugar }
+            if let sodium = entry.sodiumMg { result.sodiumMg = (result.sodiumMg ?? 0) + sodium }
+            result.entryCount += 1
+        }
+        return result
+    }
+
+    @MainActor
+    static func insert(_ entry: MealEntry, context: ModelContext) {
+        context.insert(entry)
+        try? context.save()
+        PulseDataChange.shared.notify()
+    }
+
+    /// Save after in-place edits to `entry` (the caller mutated the row already).
+    @MainActor
+    static func update(_ entry: MealEntry, context: ModelContext) {
+        entry.updatedAt = Date()
+        try? context.save()
+        PulseDataChange.shared.notify()
+    }
+
+    @MainActor
+    static func delete(id: UUID, context: ModelContext) {
+        guard let row = entry(id: id, context: context) else { return }
+        context.delete(row)
+        try? context.save()
+        // Best-effort removal of the exported dietary samples (no-op when export is off —
+        // orphaned samples in that case are a documented limitation).
+        if AppleHealthPrefsStore.shared.prefs.masterEnabled && AppleHealthPrefsStore.shared.prefs.syncNutrition {
+            HealthSyncService.shared.deleteExportedMeal(entryId: id)
+        }
+        PulseDataChange.shared.notify()
+    }
+
+    // MARK: Open Food Facts product cache
+
+    @MainActor
+    static func cachedProduct(code: String, context: ModelContext) -> CachedFoodProduct? {
+        var descriptor = FetchDescriptor<CachedFoodProduct>(predicate: #Predicate { $0.code == code })
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    /// Most recently used cached products for the quick-log "recent foods" list.
+    @MainActor
+    static func recentProducts(limit: Int = 12, context: ModelContext) -> [CachedFoodProduct] {
+        var descriptor = FetchDescriptor<CachedFoodProduct>(sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)])
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// Mark a cached product as used (bumps the frequency/recency signals). Does not save —
+    /// callers batch the save with the meal insert.
+    @MainActor
+    static func touchProduct(_ product: CachedFoodProduct) {
+        product.useCount += 1
+        product.lastUsedAt = Date()
+    }
+
+    /// Insert or refresh a fetched product in the cache (keyed on its OFF code), keeping the
+    /// LRU bounded. Saves — cache freshness shouldn't depend on a later meal insert.
+    @discardableResult
+    @MainActor
+    static func upsertCachedProduct(_ product: FoodProduct, context: ModelContext) -> CachedFoodProduct {
+        if let existing = cachedProduct(code: product.code, context: context) {
+            existing.name = product.name
+            existing.brand = product.brand
+            existing.energyKcal100g = product.energyKcal100g
+            existing.protein100g = product.protein100g
+            existing.carbs100g = product.carbs100g
+            existing.fat100g = product.fat100g
+            existing.fiber100g = product.fiber100g
+            existing.sugars100g = product.sugars100g
+            existing.saturatedFat100g = product.saturatedFat100g
+            existing.sodiumMg100g = product.sodiumMg100g
+            existing.servingSizeText = product.servingSizeText
+            existing.servingQuantityG = product.servingQuantityG
+            existing.fetchedAt = Date()
+            try? context.save()
+            return existing
+        }
+        let fresh = product.asCachedProduct()
+        context.insert(fresh)
+        try? context.save()
+        pruneProductCache(context: context)
+        return fresh
+    }
+
+    /// Keep the product cache a bounded LRU: drop least-recently-used rows beyond the cap.
+    @MainActor
+    static func pruneProductCache(maxRows: Int = maxCachedProducts, context: ModelContext) {
+        var descriptor = FetchDescriptor<CachedFoodProduct>(sortBy: [SortDescriptor(\.lastUsedAt, order: .reverse)])
+        descriptor.fetchOffset = maxRows
+        let stale = (try? context.fetch(descriptor)) ?? []
+        guard !stale.isEmpty else { return }
+        for row in stale { context.delete(row) }
+        try? context.save()
+    }
+}
+
 struct DebugPacketFilter {
     var direction: PacketDirection? = nil
     var commandId: Int? = nil

@@ -116,6 +116,72 @@ struct WidgetActivityContent: View {
     }
 }
 
+// MARK: - Nutrition (calorie-intake ring + macro mini-bars, from `NutritionTileView`)
+
+struct WidgetNutritionContent: View {
+    let payload: WidgetNutritionPayload?
+    let rolledOver: Bool
+
+    private var active: WidgetNutritionPayload? { rolledOver ? nil : payload }
+
+    var body: some View {
+        if let payload = active {
+            HStack(spacing: 12) {
+                ActivityRingsView(
+                    rings: [ActivityRing(value: payload.kcal, goal: payload.kcalGoal, color: Color(hex: payload.ringColorHex))],
+                    size: 88, stroke: 9, spacing: 0
+                )
+                .overlay {
+                    VStack(spacing: 0) {
+                        Text(payload.centerText)
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(PulseColors.textPrimary)
+                        Text(payload.centerLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(payload.macroRows.enumerated()), id: \.offset) { _, row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 3) {
+                                Text(row.letter)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color(hex: row.colorHex))
+                                Text(row.text)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .monospacedDigit()
+                                    .foregroundStyle(PulseColors.textMuted)
+                                    .lineLimit(1)
+                            }
+                            GeometryReader { proxy in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(PulseColors.elevated)
+                                    if row.goal > 0, row.value > 0 {
+                                        Capsule()
+                                            .fill(Color(hex: row.colorHex))
+                                            .frame(width: max(4, proxy.size.width * min(1, row.value / row.goal)))
+                                    }
+                                }
+                            }
+                            .frame(height: 4)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+        } else {
+            WidgetEmptyMessage(systemImage: "fork.knife",
+                               message: rolledOver ? "No meals yet today"
+                                   : (payload == nil ? "Enable nutrition in PulseLoop" : "Open PulseLoop to sync"),
+                               color: PulseColors.calories)
+        }
+    }
+}
+
 // MARK: - Activity (full-width: labeled metrics left, big rings right, from `DailyActivitySummaryCard`)
 
 struct WidgetActivityFullContent: View {
@@ -347,6 +413,8 @@ struct WidgetMetricTileView: View {
         switch metric.tileStyle {
         case .rings:
             WidgetActivityContent(payload: entry.snapshot?.activity, rolledOver: entry.rolledOver)
+        case .nutrition:
+            WidgetNutritionContent(payload: entry.snapshot?.nutrition, rolledOver: entry.rolledOver)
         case .sleep:
             WidgetSleepContent(payload: entry.snapshot?.sleep, rolledOver: entry.rolledOver)
         case .chart, .gauge, .bloodPressure:

@@ -21,6 +21,8 @@ struct CoachOrchestrator {
         /// Activity sessions created/edited during this turn (immediate writes).
         /// Drives the in-chat workout card.
         var loggedActivityIds: [UUID] = []
+        /// Meal entries created/edited during this turn. Drives the in-chat meal card.
+        var loggedMealIds: [UUID] = []
         /// Summed token usage across every model call in the turn (initial send +
         /// tool-loop rounds + JSON-repair sends). `nil` when no call reported usage
         /// (e.g. Apple on-device) or the turn never reached the client.
@@ -153,7 +155,8 @@ struct CoachOrchestrator {
             onTrace(CoachTraceEvent(label: "", status: .done))
             return TurnResult(
                 assistant: assistant, trace: trace, pendingActions: toolContext.pendingActions,
-                loggedActivityIds: toolContext.loggedActivityIds, usage: tally.total)
+                loggedActivityIds: toolContext.loggedActivityIds,
+                loggedMealIds: toolContext.loggedMealIds, usage: tally.total)
         } catch let parseError as ParseExhausted {
             // The model never produced valid coach_response JSON. Surface it as an
             // error bubble, but keep the trace from the tools that did run.

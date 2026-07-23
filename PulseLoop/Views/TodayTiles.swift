@@ -109,6 +109,77 @@ struct ActivityTileView: View {
     }
 }
 
+// MARK: - Nutrition tile (calorie intake vs goal + macro bars)
+
+/// Calorie-intake tile: eaten-vs-goal ring with remaining kcal in the center, macro mini-rows
+/// on the right. Only rendered when the nutrition feature is enabled (`summary.nutrition` set).
+struct NutritionTileView: View {
+    let totals: NutritionDayTotals
+    let goals: GoalsSummary
+    var onTap: () -> Void
+
+    private var goal: Int? { goals.intakeCalories }
+    private var remaining: Double? { goal.map { Double($0) - totals.calories } }
+    private var ringColor: Color {
+        goal.map { NutritionFormat.progressColor(consumed: totals.calories, goal: Double($0), base: PulseColors.calories) }
+            ?? PulseColors.calories
+    }
+
+    var body: some View {
+        TodayTile(label: "Nutrition", color: PulseColors.calories, onTap: onTap) {
+            Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                ProgressRingView(
+                    value: totals.calories,
+                    max: Double(goal ?? 0),
+                    size: 88,
+                    stroke: 9,
+                    color: ringColor
+                ) {
+                    VStack(spacing: 0) {
+                        Text(NutritionFormat.kcal(remaining.map { Swift.max(0, $0) } ?? totals.calories))
+                            .font(PulseFont.numberM)
+                            .monospacedDigit()
+                            .foregroundStyle(PulseColors.textPrimary)
+                        Text(centerLabel)
+                            .font(PulseFont.micro.weight(.semibold))
+                            .tracking(0.8)
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                }
+                .padding(.leading, -2)
+                VStack(alignment: .leading, spacing: 6) {
+                    macroRow(.protein, value: totals.proteinG, goal: goals.intakeProteinG)
+                    macroRow(.carbs, value: totals.carbsG, goal: goals.intakeCarbsG)
+                    macroRow(.fat, value: totals.fatG, goal: goals.intakeFatG)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var centerLabel: String {
+        guard let remaining else { return "KCAL" }
+        return remaining >= 0 ? "LEFT" : "OVER"
+    }
+
+    private func macroRow(_ kind: MacroKind, value: Double, goal: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 3) {
+                Text(kind.letter)
+                    .font(PulseFont.micro.weight(.semibold))
+                    .foregroundStyle(kind.color)
+                Text(goal.map { "\(NutritionFormat.grams(value))/\($0)g" } ?? "\(NutritionFormat.grams(value))g")
+                    .font(PulseFont.micro.weight(.medium).monospacedDigit())
+                    .foregroundStyle(PulseColors.textMuted)
+                    .lineLimit(1)
+            }
+            MacroMiniBar(value: value, goal: goal.map(Double.init), color: kind.color)
+        }
+    }
+}
+
 // MARK: - Sleep tile (duration + stage distribution bar + score)
 
 /// A single stacked bar of proportional deep/light/REM/awake segments (sleep-page colors), the total

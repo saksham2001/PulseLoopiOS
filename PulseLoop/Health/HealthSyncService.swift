@@ -58,10 +58,20 @@ final class HealthSyncService {
     }
 
     private var quantityWriteTypes: [HKQuantityType] {
-        [
+        var identifiers: [HKQuantityTypeIdentifier] = [
             .heartRate, .oxygenSaturation, .heartRateVariabilitySDNN, .bodyTemperature,
             .stepCount, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling
-        ].compactMap { HKQuantityType.quantityType(forIdentifier: $0) }
+        ]
+        // Dietary types join the share set only once the nutrition feature is enabled, so users
+        // who never opted in never see dietary rows on the Health authorization sheet. Enabling
+        // nutrition later re-runs authorization from the settings screen (the only auth path).
+        if NutritionPrefsStore.shared.prefs.masterEnabled {
+            identifiers += [
+                .dietaryEnergyConsumed, .dietaryProtein, .dietaryCarbohydrates,
+                .dietaryFatTotal, .dietaryFiber, .dietarySugar, .dietarySodium
+            ]
+        }
+        return identifiers.compactMap { HKQuantityType.quantityType(forIdentifier: $0) }
     }
 
     private var shareTypes: Set<HKSampleType> {
@@ -112,6 +122,8 @@ final class HealthSyncService {
         catch { log.error("Sleep export failed: \(error.localizedDescription)") }
         do { try await exportWorkouts(context: context, state: &state, counts: &counts, now: now, device: device) }
         catch { log.error("Workout export failed: \(error.localizedDescription)") }
+        do { try await exportNutrition(context: context, state: &state, counts: &counts, now: now) }
+        catch { log.error("Nutrition export failed: \(error.localizedDescription)") }
 
         let summary = counts.summary
         state.lastSyncAt = now
@@ -143,7 +155,8 @@ final class HealthSyncService {
     /// throws `NSGenericException` ("unable to create default source from entitlements"). Deletion and
     /// removal run inside fire-and-forget `Task`s, so an unguarded throw there surfaces asynchronously
     /// against whatever unrelated test happens to be running at the time.
-    private var isRunningUnitTests: Bool {
+    /// Internal (not private) so the export-pass extensions in sibling files share the guard.
+    var isRunningUnitTests: Bool {
         #if DEBUG
         return NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -487,6 +500,7 @@ final class HealthSyncService {
         var sleepSegments = 0
         var dailyTotals = 0
         var workouts = 0
+        var meals = 0
 
         var summary: String {
             var parts: [String] = []
@@ -494,6 +508,7 @@ final class HealthSyncService {
             if sleepSegments > 0 { parts.append("\(sleepSegments) sleep segment\(sleepSegments == 1 ? "" : "s")") }
             if dailyTotals > 0 { parts.append("\(dailyTotals) daily total\(dailyTotals == 1 ? "" : "s")") }
             if workouts > 0 { parts.append("\(workouts) workout\(workouts == 1 ? "" : "s")") }
+            if meals > 0 { parts.append("\(meals) meal\(meals == 1 ? "" : "s")") }
             guard !parts.isEmpty else { return "Nothing new to sync." }
             return "Synced " + parts.joined(separator: ", ") + " to Apple Health."
         }

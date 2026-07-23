@@ -466,6 +466,7 @@ extension MetricKey {
         case .distance: return "Distance"
         case .activeMinutes: return "Active minutes"
         case .battery: return "Battery"
+        case .nutrition: return "Nutrition"
         }
     }
 
@@ -486,6 +487,7 @@ extension MetricKey {
         case .distance: return "location.fill"
         case .activeMinutes: return "figure.run"
         case .battery: return "battery.100"
+        case .nutrition: return "fork.knife"
         }
     }
 }

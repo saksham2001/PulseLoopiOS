@@ -16,6 +16,9 @@ struct CoachView: View {
     /// so it reads the same whether it's presented as a tab or (as now) as a sheet —
     /// the presenter decides how to get to the activity detail.
     var onOpenWorkout: ((UUID) -> Void)?
+    /// Called when a meal card in the chat is tapped — same presenter-decides
+    /// routing contract as `onOpenWorkout`.
+    var onOpenMeal: ((UUID) -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \CoachMessage.createdAt) private var allMessages: [CoachMessage]
@@ -84,7 +87,8 @@ struct CoachView: View {
                                 onChipTap: { send($0) },
                                 onConfirm: { viewModel.confirmPendingAction(message, context: modelContext) },
                                 onCancel: { viewModel.cancelPendingAction(message, context: modelContext) },
-                                onOpenWorkout: { openWorkout($0) }
+                                onOpenWorkout: { openWorkout($0) },
+                                onOpenMeal: { openMeal($0) }
                             ).id(message.id)
                         }
                         if viewModel.isSending {
@@ -180,6 +184,12 @@ struct CoachView: View {
     private func openWorkout(_ id: UUID) {
         composerFocused = false
         onOpenWorkout?(id)
+    }
+
+    /// Open the meal detail for a meal logged in chat, mirroring `openWorkout`.
+    private func openMeal(_ id: UUID) {
+        composerFocused = false
+        onOpenMeal?(id)
     }
 
     private var header: some View {
@@ -462,10 +472,20 @@ struct CoachBubble: View {
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
     var onOpenWorkout: ((UUID) -> Void)?
+    var onOpenMeal: ((UUID) -> Void)?
 
     /// Activity ids logged/edited by this turn — drive the in-chat workout card.
     private var loggedActivityIds: [UUID] {
-        guard let json = message.loggedActivityIdsJSON, let data = json.data(using: .utf8) else { return [] }
+        Self.decodeIds(message.loggedActivityIdsJSON)
+    }
+
+    /// Meal ids logged/edited by this turn — drive the in-chat meal card.
+    private var loggedMealIds: [UUID] {
+        Self.decodeIds(message.loggedMealIdsJSON)
+    }
+
+    private static func decodeIds(_ json: String?) -> [UUID] {
+        guard let json, let data = json.data(using: .utf8) else { return [] }
         return (try? JSONDecoder().decode([UUID].self, from: data)) ?? []
     }
 
@@ -505,6 +525,9 @@ struct CoachBubble: View {
                 if isAssistantOrError {
                     ForEach(loggedActivityIds, id: \.self) { id in
                         CoachWorkoutCard(activityId: id, onOpen: { onOpenWorkout?($0) })
+                    }
+                    ForEach(loggedMealIds, id: \.self) { id in
+                        CoachMealCard(mealId: id, onOpen: { onOpenMeal?($0) })
                     }
                     CoachToolTraceDisclosure(messageId: message.id)
                 }

@@ -11,7 +11,8 @@ enum CoachContextBuilder {
         conversationSummary: String? = nil,
         now: Date = Date(),
         budget: CoachContextBudget = .full,
-        environment: CoachContextPacket.EnvironmentContext? = nil
+        environment: CoachContextPacket.EnvironmentContext? = nil,
+        includeNutrition: Bool = true
     ) -> CoachContextPacket {
         let summary = MetricsService.buildTodaySummary(context: context)
         let profile = ProfileRepository.profile(context: context)
@@ -38,11 +39,20 @@ enum CoachContextBuilder {
             lastSyncAt: device?.lastSyncAt.map(iso)
         )
 
+        // Nutrition rides the packet only when the feature is on AND shared with the coach;
+        // callers can additionally opt out (notification path honors its own sub-toggle).
+        let nutritionPrefs = NutritionPrefsStore.shared.prefs
+        let shareNutrition = includeNutrition && nutritionPrefs.masterEnabled && nutritionPrefs.shareWithCoach
+
         let goals = CoachContextPacket.GoalContext(
             stepsDaily: summary.goals.stepsDaily,
             activeMinutesDaily: summary.goals.activeMinutesDaily,
             sleepHours: summary.goals.sleepHours,
-            exerciseDaysWeekly: summary.goals.exerciseDaysWeekly
+            exerciseDaysWeekly: summary.goals.exerciseDaysWeekly,
+            calorieIntakeDaily: shareNutrition ? summary.goals.intakeCalories : nil,
+            proteinGDaily: shareNutrition ? summary.goals.intakeProteinG : nil,
+            carbsGDaily: shareNutrition ? summary.goals.intakeCarbsG : nil,
+            fatGDaily: shareNutrition ? summary.goals.intakeFatG : nil
         )
 
         let today = CoachContextPacket.DayContext(
@@ -114,7 +124,36 @@ enum CoachContextBuilder {
             memories: memories(context: context, limit: budget.maxMemories, valueCap: budget.memoryValueCap),
             conversationSummary: cap(conversationSummary, to: budget.conversationSummaryCap),
             dataQualityWarnings: Array(warnings.prefix(budget.maxWarnings)),
-            environment: environment
+            environment: environment,
+            nutrition: shareNutrition ? nutritionContext(summary: summary, context: context, now: now) : nil
+        )
+    }
+
+    private static func nutritionContext(
+        summary: TodaySummary, context: ModelContext, now: Date
+    ) -> CoachContextPacket.NutritionContext {
+        let totals = summary.nutrition ?? NutritionRepository.dayTotals(on: now, context: context)
+        let entries = NutritionRepository.entries(on: now, context: context)
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now).map {
+            NutritionRepository.dayTotals(on: $0, context: context)
+        }
+        return CoachContextPacket.NutritionContext(
+            caloriesConsumed: totals.calories.rounded(),
+            proteinG: totals.proteinG.rounded(),
+            carbsG: totals.carbsG.rounded(),
+            fatG: totals.fatG.rounded(),
+            mealsLoggedToday: totals.entryCount,
+            mealsToday: entries.map { entry in
+                .init(
+                    mealId: entry.id.uuidString,
+                    name: entry.name,
+                    mealType: entry.mealTypeRaw,
+                    time: CoachDataAccess.localTimeString(entry.timestamp),
+                    kcal: entry.calories.rounded(),
+                    source: entry.sourceRaw
+                )
+            },
+            yesterdayCalories: (yesterday?.entryCount ?? 0) > 0 ? yesterday?.calories.rounded() : nil
         )
     }
 

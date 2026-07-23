@@ -20,7 +20,11 @@ struct MetricPrefsSettingsView: View {
     let toggleable: [(metric: MetricKey, label: String, color: Color)]
 
     private var supported: [(metric: MetricKey, label: String, color: Color)] {
-        toggleable.filter { MetricsService.supports($0.metric, context: modelContext) }
+        toggleable.filter {
+            // Nutrition is feature-gated (master toggle), not device-gated.
+            if $0.metric == .nutrition { return NutritionPrefsStore.shared.prefs.masterEnabled }
+            return MetricsService.supports($0.metric, context: modelContext)
+        }
     }
 
     var body: some View {
@@ -114,6 +118,7 @@ struct TodaySettingsView: View {
             visibilityBlurb: "Choose which tiles appear on the Today screen. This only changes the Today layout — your data and the Vitals screen are unaffected.",
             toggleable: [
                 (.steps, "Activity", PulseColors.steps),
+                (.nutrition, "Nutrition", PulseColors.calories),
                 (.sleep, "Sleep", PulseColors.sleep),
                 (.heartRate, "Heart rate", PulseColors.heartRate),
                 (.spo2, "Blood oxygen", PulseColors.spo2),

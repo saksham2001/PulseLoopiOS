@@ -36,7 +36,34 @@ enum SeedData {
             baselineCompleted: false
         )
         context.insert(profile)
-        context.insert(UserGoal(steps: 10000, sleepMinutes: 480, activeMinutes: 45, workoutsPerWeek: 4))
+        let goal = UserGoal(steps: 10000, sleepMinutes: 480, activeMinutes: 45, workoutsPerWeek: 4)
+        // Demo intake goals — only visible when the nutrition feature is enabled in Settings.
+        goal.intakeCalories = 2200
+        goal.intakeProteinG = 140
+        goal.intakeCarbsG = 230
+        goal.intakeFatG = 70
+        context.insert(goal)
+
+        // Demo meals for today + yesterday (dormant until the nutrition feature is enabled).
+        let mealSeeds: [(dayOffset: Int, hour: Int, name: String, type: MealType,
+                         kcal: Double, p: Double, c: Double, f: Double, source: MealEntrySource)] = [
+            (0, 8, "Greek yogurt bowl", .breakfast, 320, 22, 38, 9, .offSearch),
+            (0, 13, "Chicken salad", .lunch, 520, 38, 24, 28, .llmEstimate),
+            (0, 16, "Oat latte", .snack, 120, 6, 10, 6, .manual),
+            (-1, 8, "Overnight oats", .breakfast, 380, 18, 52, 11, .offSearch),
+            (-1, 13, "Turkey sandwich", .lunch, 540, 32, 55, 20, .manual),
+            (-1, 19, "Salmon & rice", .dinner, 680, 42, 60, 26, .llmEstimate),
+        ]
+        for seed in mealSeeds {
+            guard let day = calendar.date(byAdding: .day, value: seed.dayOffset, to: now),
+                  let timestamp = calendar.date(bySettingHour: seed.hour, minute: 15, second: 0, of: day)
+            else { continue }
+            context.insert(MealEntry(
+                timestamp: timestamp, name: seed.name, mealType: seed.type,
+                calories: seed.kcal, proteinG: seed.p, carbsG: seed.c, fatG: seed.f,
+                source: seed.source
+            ))
+        }
         // Advertise the full sensor suite so the demo surfaces every vital (stress/HRV/BP/fatigue/
         // glucose/temperature are capability-gated and stay hidden otherwise).
         context.insert(Device(
@@ -295,6 +322,8 @@ enum SeedData {
         deleteAll(CoachMessage.self, context)
         deleteAll(CoachMemory.self, context)
         deleteAll(CoachToolCall.self, context)
+        deleteAll(MealEntry.self, context)
+        deleteAll(CachedFoodProduct.self, context)
         try? context.save()
     }
     

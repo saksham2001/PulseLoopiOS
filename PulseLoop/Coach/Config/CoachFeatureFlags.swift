@@ -6,6 +6,10 @@ import Foundation
 struct CoachFeatureFlags {
     let settings: CoachSettings
     let hasAPIKey: Bool
+    /// Snapshot of the nutrition feature's prefs, bridged in so tool/context gating
+    /// composes with the coach gates. Defaulted so existing construction sites and
+    /// tests keep compiling (default = feature off).
+    var nutritionPrefs: NutritionPrefs = .default
 
     /// User-facing master switch — when off, the coach tab, summaries and
     /// notifications are all hidden. This is the gate the UI checks; the
@@ -35,6 +39,12 @@ struct CoachFeatureFlags {
     var writeToolsEnabled: Bool { settings.enableWriteTools }
     var liveMeasurementsEnabled: Bool { settings.enableLiveMeasurements }
     var imageInputEnabled: Bool { settings.enableImageInput }
+
+    /// Nutrition data may reach the coach (context packet + read tools): the feature is on
+    /// AND the user shares it with the coach.
+    var nutritionContextEnabled: Bool { nutritionPrefs.masterEnabled && nutritionPrefs.shareWithCoach }
+    /// The coach may log/edit meals: nutrition context is shared AND write tools are on.
+    var nutritionWriteEnabled: Bool { nutritionContextEnabled && writeToolsEnabled }
 
     var maxToolCalls: Int { max(1, settings.maxToolCalls) }
     var maxRounds: Int { max(1, settings.maxRounds) }

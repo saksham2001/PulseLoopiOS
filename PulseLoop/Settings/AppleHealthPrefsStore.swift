@@ -30,6 +30,9 @@ struct AppleHealthPrefs: Codable, Equatable {
     var syncActivity = true
     /// Whether finished workout sessions export as `HKWorkout`s (calories, distance, HR stats, GPS route).
     var exportWorkouts = true
+    /// Whether logged meals export as dietary samples (energy + macros). Only effective when the
+    /// nutrition feature's own master toggle is also on.
+    var syncNutrition = true
     /// Backfill decision captured on first enable. Default `.notAsked`.
     var backfillChoice: HealthBackfillChoice = .notAsked
 
@@ -50,6 +53,7 @@ struct AppleHealthPrefs: Codable, Equatable {
         syncSleep = try c.decodeIfPresent(Bool.self, forKey: .syncSleep) ?? d.syncSleep
         syncActivity = try c.decodeIfPresent(Bool.self, forKey: .syncActivity) ?? d.syncActivity
         exportWorkouts = try c.decodeIfPresent(Bool.self, forKey: .exportWorkouts) ?? d.exportWorkouts
+        syncNutrition = try c.decodeIfPresent(Bool.self, forKey: .syncNutrition) ?? d.syncNutrition
         backfillChoice = try c.decodeIfPresent(HealthBackfillChoice.self, forKey: .backfillChoice) ?? d.backfillChoice
     }
 }
@@ -77,6 +81,8 @@ struct AppleHealthSyncState: Codable, Equatable {
     var sleepExportedThrough: Date?
     /// High-water mark on `ActivitySession.updatedAt`.
     var workoutsExportedThrough: Date?
+    /// High-water mark on `MealEntry.updatedAt` (edited meals re-export and replace).
+    var nutritionExportedThrough: Date?
     var lastSyncAt: Date?
     var lastSyncSummary: String?
 
@@ -92,6 +98,7 @@ struct AppleHealthSyncState: Codable, Equatable {
         activityExportedThrough = try c.decodeIfPresent(Date.self, forKey: .activityExportedThrough) ?? d.activityExportedThrough
         sleepExportedThrough = try c.decodeIfPresent(Date.self, forKey: .sleepExportedThrough) ?? d.sleepExportedThrough
         workoutsExportedThrough = try c.decodeIfPresent(Date.self, forKey: .workoutsExportedThrough) ?? d.workoutsExportedThrough
+        nutritionExportedThrough = try c.decodeIfPresent(Date.self, forKey: .nutritionExportedThrough) ?? d.nutritionExportedThrough
         lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt) ?? d.lastSyncAt
         lastSyncSummary = try c.decodeIfPresent(String.self, forKey: .lastSyncSummary) ?? d.lastSyncSummary
     }
@@ -150,11 +157,13 @@ final class AppleHealthPrefsStore {
             state.activityExportedThrough = date
             state.sleepExportedThrough = date
             state.workoutsExportedThrough = date
+            state.nutritionExportedThrough = date
         } else {
             state.measurementWatermarks = [:]
             state.activityExportedThrough = nil
             state.sleepExportedThrough = nil
             state.workoutsExportedThrough = nil
+            state.nutritionExportedThrough = nil
         }
         syncState = state
     }
