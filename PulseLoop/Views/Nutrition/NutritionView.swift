@@ -63,6 +63,8 @@ struct NutritionView: View {
             VStack(spacing: 16) {
                 dayHeader
 
+                logActions
+
                 if !hasEverLogged && isToday {
                     NutritionEmptyStateCard()
                 }
@@ -77,8 +79,6 @@ struct NutritionView: View {
                     }
                     .padding(.top, 14)
                 }
-
-                logActions
 
                 mealGroups
             }
@@ -108,7 +108,9 @@ struct NutritionView: View {
         }
     }
 
-    /// Quick log actions: AI photo / AI describe (gated on provider capability) + search/manual.
+    /// Quick log actions: compact method-picker capsules (AI photo / describe gated on
+    /// provider capability, plus search). Deliberately light-weight — these are controls,
+    /// not content, so they must not compete with the cards below.
     private var logActions: some View {
         HStack(spacing: 10) {
             if photoAnalysisAvailable {
@@ -124,18 +126,18 @@ struct NutritionView: View {
 
     private func logPill(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            HStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(PulseFont.title3.weight(.regular))
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.calories)
                 Text(label)
-                    .font(PulseFont.caption)
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.textPrimary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.compact, style: .continuous), interactive: true)
-            .contentShape(Rectangle())
+            .frame(height: 40)
+            .pulseGlass(Capsule(), interactive: true)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -158,15 +160,10 @@ struct NutritionView: View {
         HStack {
             dayChevron("chevron.left", enabled: true) { shiftDay(-1) }
             Spacer()
-            VStack(spacing: 2) {
-                Text(dayTitle.uppercased())
-                    .font(PulseFont.caption2)
-                    .tracking(1.4)
-                    .foregroundStyle(PulseColors.textMuted)
-                Text("\(totals.entryCount) \(totals.entryCount == 1 ? "entry" : "entries")")
-                    .font(PulseFont.caption.weight(.regular))
-                    .foregroundStyle(PulseColors.textSecondary)
-            }
+            Text(dayTitle.uppercased())
+                .font(PulseFont.caption2)
+                .tracking(1.4)
+                .foregroundStyle(PulseColors.textMuted)
             Spacer()
             dayChevron("chevron.right", enabled: !isToday) { shiftDay(1) }
         }
@@ -222,21 +219,9 @@ struct NutritionView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Add \(mealType.label.lowercased())")
             }
-            if groupEntries.isEmpty {
-                Button { logSheet = LogSheetRequest(mealType: mealType) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle")
-                            .font(PulseFont.subheadline)
-                        Text("Add \(mealType.label.lowercased())")
-                            .font(PulseFont.subheadline)
-                    }
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.compact, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            } else {
+            // Empty groups show just the header + "+" — a ghost "Add …" row duplicated
+            // the same action right under a button that already offers it.
+            if !groupEntries.isEmpty {
                 ForEach(groupEntries) { entry in
                     MealEntryRow(entry: entry) { path.append(AppRoute.mealDetail(entry.id)) }
                         .contextMenu {

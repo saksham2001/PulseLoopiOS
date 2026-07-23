@@ -26,7 +26,7 @@ struct MealLogSheet: View {
     @State private var results: [FoodProduct] = []
     @State private var recents: [FoodProduct] = []
     @State private var searching = false
-    @State private var searchFailed = false
+    @State private var searchError: String?
     @State private var showScanner = false
     @State private var scanLookupFailed = false
     @State private var loaded = false
@@ -38,13 +38,23 @@ struct MealLogSheet: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            // One meal-type picker for the whole sheet (search and manual paths share it —
+            // it used to repeat inside the manual form).
+            VStack(spacing: 0) {
+                Picker("Meal", selection: $mealType) {
+                    ForEach(MealType.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
                 if editingId != nil || showManualForm {
                     ManualMealForm(day: day, mealType: $mealType, editingId: editingId) { dismiss() }
                 } else {
                     searchScreen
                 }
             }
+            .background(PulseColors.background)
             .navigationTitle(editingId == nil ? "Log meal" : "Edit meal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -75,11 +85,6 @@ struct MealLogSheet: View {
     private var searchScreen: some View {
         ScrollView {
             VStack(spacing: 16) {
-                Picker("Meal", selection: $mealType) {
-                    ForEach(MealType.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
                 HStack(spacing: 10) {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
@@ -117,8 +122,8 @@ struct MealLogSheet: View {
                     .accessibilityLabel("Scan barcode")
                 }
 
-                if searchFailed {
-                    inlineNotice("Couldn't reach the food database. Try again or enter the meal manually.")
+                if let searchError {
+                    inlineNotice(searchError)
                 }
                 if scanLookupFailed {
                     inlineNotice("Product not found for that barcode. Enter it manually instead.")
@@ -167,7 +172,7 @@ struct MealLogSheet: View {
     private var resultsList: some View {
         if !results.isEmpty {
             productSection("RESULTS", products: results, viaBarcode: false)
-        } else if !searching && !searchFailed {
+        } else if !searching && searchError == nil {
             Text("No matches — try another name or enter it manually.")
                 .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
@@ -203,7 +208,7 @@ struct MealLogSheet: View {
 
     private func runSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        searchFailed = false
+        searchError = nil
         guard trimmed.count >= 2 else {
             results = []
             searching = false
@@ -218,14 +223,17 @@ struct MealLogSheet: View {
             let found = try await client.search(query: trimmed, pageSize: 10)
             guard !Task.isCancelled else { return }
             results = found
-            // Cache results so repeat picks and coach grounding stay off the network.
-            for product in found { NutritionRepository.upsertCachedProduct(product, context: modelContext) }
+            // Deliberately NOT cached here: caching every transient result did up to ~20
+            // main-actor SwiftData saves per search (visible keyboard jank). The picked
+            // product is cached on save in ServingPickerView instead.
         } catch is CancellationError {
             // superseded by newer input
         } catch {
             guard !Task.isCancelled else { return }
             results = []
-            searchFailed = true
+            searchError = (error as? OpenFoodFactsError) == .rateLimited
+                ? "The food database is busy — try again in a minute, or enter the meal manually."
+                : "Food search hit a snag. Try again, or enter the meal manually."
         }
     }
 
@@ -248,7 +256,7 @@ struct MealLogSheet: View {
                 scanLookupFailed = true
             }
         } catch {
-            searchFailed = true
+            searchError = "Couldn't look up that barcode. Check your connection or enter the meal manually."
         }
     }
 }
@@ -469,9 +477,10 @@ struct ServingPickerView: View {
             servingGrams: perServingGrams,
             quantity: quantity
         )
-        if let cached = NutritionRepository.cachedProduct(code: product.code, context: modelContext) {
-            NutritionRepository.touchProduct(cached)
-        }
+        // Cache-on-pick: only foods the user actually logs enter the recents cache
+        // (search results are never cached — that write storm caused typing jank).
+        let cached = NutritionRepository.upsertCachedProduct(product, context: modelContext)
+        NutritionRepository.touchProduct(cached)
         NutritionRepository.insert(entry, context: modelContext)
         onSaved()
     }
@@ -510,10 +519,6 @@ struct ManualMealForm: View {
         Form {
             Section {
                 TextField("Name", text: $name)
-                Picker("Meal", selection: $mealType) {
-                    ForEach(MealType.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
                 DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
             }
             Section("Nutrition") {

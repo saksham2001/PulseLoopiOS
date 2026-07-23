@@ -112,52 +112,23 @@ struct MealDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Energy headline only — the Nutrition Facts card below owns the full macro
+    /// breakdown, so repeating P/C/F here just restated the table.
     private func kcalMacroCard(_ entry: MealEntry) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(NutritionFormat.kcal(entry.calories))
-                        .activityValueStyle(size: 40)
-                    Text("kcal")
-                        .font(PulseFont.subheadline)
-                        .foregroundStyle(PulseColors.textMuted)
-                }
-                Text("ENERGY")
-                    .font(PulseFont.micro.weight(.semibold))
-                    .tracking(1.0)
-                    .foregroundStyle(PulseColors.calories)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(MacroKind.allCases, id: \.self) { kind in
-                macroStat(kind, grams: grams(kind, entry))
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(NutritionFormat.kcal(entry.calories))
+                .activityValueStyle(size: 40)
+            Text("kcal")
+                .font(PulseFont.subheadline)
+                .foregroundStyle(PulseColors.textMuted)
+            Spacer()
+            Text("ENERGY")
+                .font(PulseFont.micro.weight(.semibold))
+                .tracking(1.0)
+                .foregroundStyle(PulseColors.calories)
         }
         .padding(16)
         .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
-    }
-
-    private func grams(_ kind: MacroKind, _ entry: MealEntry) -> Double {
-        switch kind {
-        case .protein: return entry.proteinG
-        case .carbs: return entry.carbsG
-        case .fat: return entry.fatG
-        }
-    }
-
-    private func macroStat(_ kind: MacroKind, grams: Double) -> some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 5) {
-                Circle().fill(kind.color).frame(width: 6, height: 6)
-                Text(kind.letter)
-                    .font(PulseFont.micro.weight(.semibold))
-                    .foregroundStyle(kind.color)
-            }
-            Text("\(NutritionFormat.grams(grams))g")
-                .font(PulseFont.numberM)
-                .monospacedDigit()
-                .foregroundStyle(PulseColors.textPrimary)
-        }
-        .frame(minWidth: 44)
     }
 
     private func servingCard(_ entry: MealEntry) -> some View {
@@ -179,8 +150,8 @@ struct MealDetailView: View {
     private func factsCard(_ entry: MealEntry) -> some View {
         DetailCard(title: "Nutrition Facts", color: PulseColors.calories) {
             VStack(spacing: 0) {
-                factDividedRow("Calories", "\(NutritionFormat.kcal(entry.calories)) kcal", first: true)
-                factDividedRow("Protein", "\(NutritionFormat.grams(entry.proteinG)) g")
+                // No Calories row — the hero strip above owns energy.
+                factDividedRow("Protein", "\(NutritionFormat.grams(entry.proteinG)) g", first: true)
                 factDividedRow("Carbohydrates", "\(NutritionFormat.grams(entry.carbsG)) g")
                 if let fiber = entry.fiberG {
                     factDividedRow("Fiber", "\(NutritionFormat.grams(fiber)) g", indented: true)

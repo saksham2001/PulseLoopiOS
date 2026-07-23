@@ -22,40 +22,46 @@ struct NutritionSettingsView: View {
                     FormToggleRow(title: "Track nutrition", isOn: prefs.masterEnabled)
                 }
 
+                // Plain conditional reveal (the Coach settings idiom) — SettingsGroup already
+                // paints its own glass, so no extra glass/materialize here (a second glass layer
+                // rendered capsule artifacts over the groups on iOS 26 devices).
                 if store.prefs.masterEnabled {
-                    NutritionGoalsGroup()
-                        .pulseMaterialize()
+                    Group {
+                        NutritionGoalsGroup()
 
-                    SettingsGroup(
-                        header: "Integrations",
-                        footer: "Sharing with the coach adds your meals and goals to its context and check-ins. "
-                            + "Apple Health export writes dietary energy and macros (requires Apple Health sync to be on)."
-                    ) {
-                        FormToggleRow(title: "Share meals with Coach", isOn: prefs.shareWithCoach)
-                        if store.prefs.shareWithCoach {
-                            FormToggleRow(title: "Mention in check-ins", isOn: prefs.includeInNotifications)
-                            FormToggleRow(title: "Allow meal photo analysis", isOn: prefs.photoAnalysisEnabled)
-                        }
-                        FormToggleRow(
-                            title: "Export to Apple Health",
-                            isOn: Binding(
-                                get: { healthStore.prefs.syncNutrition },
-                                set: { healthStore.prefs.syncNutrition = $0 }
+                        SettingsGroup(
+                            header: "Integrations",
+                            footer: "Sharing with the coach adds your meals and goals to its context and check-ins. "
+                                + "Apple Health export writes dietary energy and macros (requires Apple Health sync to be on)."
+                        ) {
+                            FormToggleRow(title: "Share meals with Coach", isOn: prefs.shareWithCoach)
+                            if store.prefs.shareWithCoach {
+                                FormToggleRow(title: "Mention in check-ins", isOn: prefs.includeInNotifications)
+                                FormToggleRow(title: "Allow meal photo analysis", isOn: prefs.photoAnalysisEnabled)
+                            }
+                            FormToggleRow(
+                                title: "Export to Apple Health",
+                                isOn: Binding(
+                                    get: { healthStore.prefs.syncNutrition },
+                                    set: { healthStore.prefs.syncNutrition = $0 }
+                                )
                             )
-                        )
-                    }
-                    .pulseMaterialize()
+                        }
 
-                    SettingsGroup(header: "Display") {
-                        FormToggleRow(title: "Show on Today & widgets", isOn: prefs.showOnToday)
+                        SettingsGroup(header: "Display") {
+                            FormToggleRow(title: "Show on Today & widgets", isOn: prefs.showOnToday)
+                        }
                     }
-                    .pulseMaterialize()
+                    .transition(.opacity)
                 }
             }
             .padding()
+            .padding(.bottom, PulseLayout.scrollBottomInset)
+            .animation(.default, value: store.prefs.masterEnabled)
         }
         .background(PulseColors.background)
         .pageChrome("Nutrition")
+        .pulseScrollEdges()
         .onChange(of: store.prefs.masterEnabled) { _, _ in
             // Tiles/cards/widgets gate on the master toggle — nudge dependents immediately.
             PulseDataChange.shared.notify()

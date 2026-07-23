@@ -159,7 +159,9 @@ struct CalorieBudgetGauge: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
+        // No footer restating the ring's own inputs — the ring + EATEN/BURNED columns are
+        // the whole story (Oura/Whoop idiom). Only the goal-less state gets one hint line.
+        VStack(spacing: 12) {
             HStack(spacing: 12) {
                 stat("EATEN", NutritionFormat.kcal(totals.calories), PulseColors.calories)
                 Spacer(minLength: 8)
@@ -195,26 +197,15 @@ struct CalorieBudgetGauge: View {
                 Spacer(minLength: 8)
                 stat("BURNED", burned.map { NutritionFormat.kcal($0) } ?? "—", PulseColors.textMuted)
             }
-            Text(footerText)
-                .font(PulseFont.caption.weight(.regular).monospacedDigit())
-                .foregroundStyle(PulseColors.textMuted)
+            if goal == nil {
+                Text("No calorie goal set — add one in Nutrition settings")
+                    .font(PulseFont.caption.weight(.regular))
+                    .foregroundStyle(PulseColors.textMuted)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(16)
         .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
-    }
-
-    private var footerText: String {
-        var parts: [String] = []
-        if let goal {
-            parts.append("\(NutritionFormat.kcal(totals.calories)) of \(goal.formatted()) kcal")
-        } else {
-            parts.append("No calorie goal set")
-        }
-        if let burned, burned > 0 {
-            parts.append("net \(NutritionFormat.kcal(totals.calories - burned))")
-        }
-        return parts.joined(separator: " · ")
     }
 
     private func stat(_ label: String, _ value: String, _ color: Color) -> some View {
@@ -316,13 +307,13 @@ struct MealEntryRow: View {
                             .font(PulseFont.caption2.weight(.regular).monospacedDigit())
                             .foregroundStyle(PulseColors.textMuted)
                     }
+                    // One headline metric per row (kcal); macros live on the detail page —
+                    // per-row P/C/F tags made the list noisy. The sparkle stays: it's the
+                    // at-a-glance provenance marker for unreviewed AI estimates.
                     HStack(spacing: 8) {
                         Text("\(NutritionFormat.kcal(entry.calories)) kcal")
                             .font(PulseFont.caption.weight(.regular).monospacedDigit())
                             .foregroundStyle(PulseColors.textMuted)
-                        macroTag(.protein, entry.proteinG)
-                        macroTag(.carbs, entry.carbsG)
-                        macroTag(.fat, entry.fatG)
                         if entry.source == .llmEstimate && !entry.userEdited {
                             Image(systemName: "sparkles")
                                 .font(PulseFont.micro)
@@ -337,15 +328,6 @@ struct MealEntryRow: View {
         }
         .buttonStyle(.plain)
         .disabled(onTap == nil)
-    }
-
-    private func macroTag(_ kind: MacroKind, _ grams: Double) -> some View {
-        HStack(spacing: 2) {
-            Text(kind.letter).font(PulseFont.caption.weight(.semibold)).foregroundStyle(kind.color)
-            Text(NutritionFormat.grams(grams))
-                .font(PulseFont.caption.weight(.regular).monospacedDigit())
-                .foregroundStyle(PulseColors.textMuted)
-        }
     }
 }
 

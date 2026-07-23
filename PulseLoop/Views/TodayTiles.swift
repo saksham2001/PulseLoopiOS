@@ -170,7 +170,9 @@ struct NutritionTileView: View {
                 Text(kind.letter)
                     .font(PulseFont.micro.weight(.semibold))
                     .foregroundStyle(kind.color)
-                Text(goal.map { "\(NutritionFormat.grams(value))/\($0)g" } ?? "\(NutritionFormat.grams(value))g")
+                // Consumed grams only — "/goal" truncated at tile width; the bar fill
+                // already conveys progress against the goal.
+                Text("\(NutritionFormat.grams(value))g")
                     .font(PulseFont.micro.weight(.medium).monospacedDigit())
                     .foregroundStyle(PulseColors.textMuted)
                     .lineLimit(1)

@@ -461,7 +461,12 @@ enum NutritionRepository {
         let fresh = product.asCachedProduct()
         context.insert(fresh)
         try? context.save()
-        pruneProductCache(context: context)
+        // Prune only when actually over the cap (cheap count probe) — the old
+        // prune-on-every-insert did a full-table sort per upsert.
+        let count = (try? context.fetchCount(FetchDescriptor<CachedFoodProduct>())) ?? 0
+        if count > maxCachedProducts {
+            pruneProductCache(context: context)
+        }
         return fresh
     }
 

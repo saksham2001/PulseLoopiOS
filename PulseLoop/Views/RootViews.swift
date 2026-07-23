@@ -49,6 +49,9 @@ struct RootAppView: View {
                 if UserDefaults.standard.bool(forKey: "openNutrition") {
                     path.append(AppRoute.nutrition)
                 }
+                if UserDefaults.standard.bool(forKey: "openNutritionSettings") {
+                    path.append(AppRoute.settingsNutrition)
+                }
                 // Test tooling: deep-link straight to a seeded workout's detail (route map).
                 if UserDefaults.standard.bool(forKey: "openWorkout"),
                    let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {

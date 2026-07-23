@@ -58,12 +58,53 @@ struct OFFProductResponse: Decodable {
 }
 
 /// Search envelope. Search-a-licious returns `hits`; the legacy v1/v2 search returns
-/// `products` — decode both.
+/// `products` — decode both, and decode each hit *independently* (lossy) so one malformed
+/// community-edited product can never fail the whole response.
 struct OFFSearchResponse: Decodable {
     let hits: [OFFProductDTO]?
     let products: [OFFProductDTO]?
 
     var results: [OFFProductDTO] { hits ?? products ?? [] }
+
+    enum CodingKeys: String, CodingKey { case hits, products }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hits = try c.decodeIfPresent(LossyArray<OFFProductDTO>.self, forKey: .hits)?.elements
+        products = try c.decodeIfPresent(LossyArray<OFFProductDTO>.self, forKey: .products)?.elements
+    }
+}
+
+/// Array decode that drops undecodable elements instead of throwing.
+struct LossyArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var out: [Element] = []
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                out.append(element)
+            } else {
+                // Skip the bad element (decode into a throwaway) so the iterator advances.
+                _ = try? container.decode(OFFAnyDecodable.self)
+            }
+        }
+        elements = out
+    }
+}
+
+/// Decodes and discards any JSON value — used to skip malformed array elements.
+struct OFFAnyDecodable: Decodable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { return }
+        if (try? container.decode(Bool.self)) != nil { return }
+        if (try? container.decode(Double.self)) != nil { return }
+        if (try? container.decode(String.self)) != nil { return }
+        if (try? container.decode([String: OFFAnyDecodable].self)) != nil { return }
+        _ = try container.decode([OFFAnyDecodable].self)
+    }
 }
 
 struct OFFProductDTO: Decodable {
@@ -81,6 +122,24 @@ struct OFFProductDTO: Decodable {
         case nutriments
         case servingSize = "serving_size"
         case servingQuantity = "serving_quantity"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        productName = try c.decodeIfPresent(String.self, forKey: .productName)
+        // `brands` is a comma-separated string on the v2 product API but an ARRAY of strings
+        // on Search-a-licious — accept both (this mismatch used to fail every search).
+        if let string = try? c.decodeIfPresent(String.self, forKey: .brands) {
+            brands = string
+        } else if let list = try? c.decodeIfPresent([String].self, forKey: .brands) {
+            brands = list.joined(separator: ", ")
+        } else {
+            brands = nil
+        }
+        nutriments = try c.decodeIfPresent(OFFNutriments.self, forKey: .nutriments)
+        servingSize = try c.decodeIfPresent(String.self, forKey: .servingSize)
+        servingQuantity = try c.decodeIfPresent(OFFNumber.self, forKey: .servingQuantity)
     }
 
     /// Normalize to the domain product. Returns nil for unusable rows (no name, or no
@@ -127,6 +186,8 @@ struct OFFNutriments: Decodable {
     enum CodingKeys: String, CodingKey {
         case energyKcal100g = "energy-kcal_100g"
         case energyKJ100g = "energy_100g"
+        // Search-a-licious names the kJ field differently from the v2 product API.
+        case energyKJAlt100g = "energy-kj_100g"
         case proteins100g = "proteins_100g"
         case carbohydrates100g = "carbohydrates_100g"
         case fat100g = "fat_100g"
@@ -134,6 +195,22 @@ struct OFFNutriments: Decodable {
         case sugars100g = "sugars_100g"
         case saturatedFat100g = "saturated-fat_100g"
         case sodium100g = "sodium_100g"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        energyKcal100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .energyKcal100g)
+        // kJ: v2 uses `energy_100g`, Search-a-licious uses `energy-kj_100g` — take either.
+        energyKJ100g = (try? c.decodeIfPresent(OFFNumber.self, forKey: .energyKJ100g))
+            ?? (try? c.decodeIfPresent(OFFNumber.self, forKey: .energyKJAlt100g))
+            ?? nil
+        proteins100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .proteins100g)
+        carbohydrates100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .carbohydrates100g)
+        fat100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .fat100g)
+        fiber100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .fiber100g)
+        sugars100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .sugars100g)
+        saturatedFat100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .saturatedFat100g)
+        sodium100g = try? c.decodeIfPresent(OFFNumber.self, forKey: .sodium100g)
     }
 }
 

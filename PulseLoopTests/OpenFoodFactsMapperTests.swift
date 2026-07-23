@@ -83,6 +83,38 @@ final class OpenFoodFactsMapperTests: XCTestCase {
         XCTAssertNil(noName.asFoodProduct())
     }
 
+    func testBrandsDecodesStringAndArray() throws {
+        // v2 product API: comma-separated string.
+        let fromString = try decodeProduct(
+            #"{"code": "1", "product_name": "A", "brands": "Nutella, Ferrero", "nutriments": {"energy-kcal_100g": 100}}"#
+        )
+        XCTAssertEqual(try XCTUnwrap(fromString.asFoodProduct()).brand, "Nutella")
+        // Search-a-licious: array of strings (this shape used to fail every search).
+        let fromArray = try decodeProduct(
+            #"{"code": "2", "product_name": "B", "brands": ["Chobani", "Other"], "nutriments": {"energy-kcal_100g": 100}}"#
+        )
+        XCTAssertEqual(try XCTUnwrap(fromArray.asFoodProduct()).brand, "Chobani")
+    }
+
+    func testSearchALiciousKJKeyFallback() throws {
+        // Search-a-licious names kJ `energy-kj_100g` (v2 uses `energy_100g`).
+        let dto = try decodeProduct(
+            #"{"code": "3", "product_name": "KJ only", "nutriments": {"energy-kj_100g": 2092}}"#
+        )
+        XCTAssertEqual(try XCTUnwrap(dto.asFoodProduct()).energyKcal100g, 2092 / 4.184, accuracy: 0.01)
+    }
+
+    func testLossyHitsDecodeDropsMalformedElements() throws {
+        // A hit with a structurally broken field must not fail the whole response.
+        let json = #"{"hits": ["#
+            + #"{"code": "1", "product_name": "Good", "nutriments": {"energy-kcal_100g": 100}},"#
+            + #"{"code": 12345, "product_name": {"bad": true}},"#
+            + #"{"code": "2", "product_name": "Also good", "nutriments": {"energy-kcal_100g": 200}}"#
+            + #"]}"#
+        let response = try JSONDecoder().decode(OFFSearchResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.results.compactMap { $0.asFoodProduct() }.map(\.name), ["Good", "Also good"])
+    }
+
     func testSearchEnvelopeDecodesBothShapes() throws {
         let hitJSON = #"{"hits": [{"code": "1", "product_name": "A", "nutriments": {"energy-kcal_100g": 50}}]}"#
         let hits = try JSONDecoder().decode(OFFSearchResponse.self, from: Data(hitJSON.utf8))
