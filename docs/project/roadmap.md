@@ -50,7 +50,8 @@ These guide what we build and what we say no to.
 ### Metrics you can trust
 
 - **Performance & recovery**: readiness, training/cardio load, HRV and resting-HR
-  trends, VO₂max.
+  trends, VO₂max. The [readiness score](readiness.md) is documented in full — every
+  contributor, weight, and threshold.
 - **Health signals**: illness early-warning from shifts in skin temperature, resting
   heart rate, and respiration.
 - **Cycle tracking**: menstrual cycle and BBT from skin temperature, computed on-device.
