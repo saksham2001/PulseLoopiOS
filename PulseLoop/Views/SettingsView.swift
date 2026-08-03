@@ -124,6 +124,12 @@ struct SettingsView: View {
                 trailingValue: NutritionPrefsStore.shared.prefs.masterEnabled ? "On" : "Off"
             ) {
                 path.append(AppRoute.settingsNutrition)
+            },
+            SettingsRowItem(
+                icon: "bolt.heart", tint: PulseColors.readiness, title: "Readiness",
+                trailingValue: ReadinessPrefsStore.shared.prefs.masterEnabled ? "On" : "Off"
+            ) {
+                path.append(AppRoute.settingsReadiness)
             }
         ]
     }

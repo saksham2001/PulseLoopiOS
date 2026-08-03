@@ -46,6 +46,16 @@ struct TodayView: View {
         return prefs.masterEnabled && prefs.showOnToday
     }
 
+    /// Whether the pinned readiness card belongs on screen: its own master toggle and "show on
+    /// Today" pref, plus "can this ring measure recovery at all" — HRV or sleep, the two signals
+    /// `ReadinessScore` requires. A ring with neither could never produce a score, so the card is
+    /// absent rather than permanently empty.
+    private func readinessCardAvailable(_ store: TodayStore) -> Bool {
+        let prefs = ReadinessPrefsStore.shared.prefs
+        guard prefs.masterEnabled, prefs.showOnToday else { return false }
+        return store.capabilities.contains(.hrv) || store.capabilities.contains(.sleep)
+    }
+
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
     private var coachEnabled: Bool { coachStore.settings.coachMasterEnabled }
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
@@ -95,6 +105,18 @@ struct TodayView: View {
                     .buttonStyle(.pulseTap)
                 } else {
                     HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
+                }
+
+                // Readiness sits between the hero and the grid, full width and never reorderable.
+                // It summarizes the tiles below it rather than standing alongside them, so it is
+                // pinned by design — visibility is the Settings toggle's job, not the drag tray's.
+                if readinessCardAvailable(activeStore) {
+                    ReadinessSummaryCard(
+                        readiness: summary.readiness,
+                        progress: summary.readinessProgress,
+                        calibration: summary.calibration,
+                        onTap: {}
+                    )
                 }
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {

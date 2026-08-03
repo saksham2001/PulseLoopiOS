@@ -224,6 +224,35 @@ struct LatestReading: Equatable {
     }
 }
 
+/// A flattened, storage-free view of one morning's readiness row. Holds plain values (no live
+/// SwiftData object) for the same reason as `LatestReading`: `TodaySummary` is cached and passed
+/// around, so it must not carry model references.
+struct ReadinessSnapshot: Equatable {
+    var date: Date
+    var score: Int
+    var band: ReadinessBand
+    var availablePoints: Double
+    var contributors: [ReadinessContributorRecord]
+
+    var coverage: Double { availablePoints > 0 ? availablePoints / 100 : 0 }
+
+    /// The contributor that cost the most points — what the tile shows as its one-line "why".
+    /// `ReadinessScore` already sorts by drag, but sort defensively so a hand-edited or
+    /// older-format row can't mislabel itself.
+    var topDrag: ReadinessContributorRecord? {
+        contributors.filter { $0.drag > 0 }.max { $0.drag < $1.drag }
+    }
+
+    @MainActor
+    init(_ row: ReadinessDaily) {
+        date = row.date
+        score = row.score
+        band = row.band
+        availablePoints = row.availablePoints
+        contributors = row.contributors
+    }
+}
+
 struct TodaySummary {
     var date: Date
     var steps: Int?
@@ -245,6 +274,12 @@ struct TodaySummary {
     var isDemo: Bool
     /// Consumed nutrition for the day. nil when the nutrition feature is disabled.
     var nutrition: NutritionDayTotals? = nil
+    /// This morning's readiness. nil when the feature is off, or when the night couldn't be scored
+    /// (still learning a baseline, or too little captured) — the card renders its own empty state.
+    var readiness: ReadinessSnapshot? = nil
+    /// How far along the user is toward a first score. Populated only while `readiness` is nil, so
+    /// the empty state can say "3 of 7 nights" instead of an open-ended "wear your ring".
+    var readinessProgress: ReadinessProgress? = nil
 
     var sevenDaySteps: [DailyMetricPoint] { trends.steps7d }
 }

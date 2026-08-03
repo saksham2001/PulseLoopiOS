@@ -27,6 +27,7 @@ enum AppRoute: Hashable {
     case settingsPrivacyData
     case settingsAbout
     case settingsNutrition
+    case settingsReadiness
     case nutrition
     case mealDetail(UUID)
     case pairing

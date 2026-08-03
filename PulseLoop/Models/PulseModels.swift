@@ -325,6 +325,93 @@ final class SleepStageBlock {
     var stage: SleepStage { SleepStage(rawValue: stageRaw) ?? .unknown }
 }
 
+/// One morning's readiness score, persisted with the contributor breakdown that produced it.
+///
+/// Stored rather than recomputed for three reasons: the trend chart wants 30–90 days and the
+/// `TodayStore` signature architecture exists to keep that work off the render path; a score keeps
+/// its *why* only if the breakdown is stored alongside it; and recomputing an old morning against
+/// today's 30-day baseline would silently produce a different, wrong answer.
+///
+/// `algorithmVersion` is what makes that safe — `ReadinessService` recomputes any row whose version
+/// no longer matches `ReadinessScore.algorithmVersion` instead of reinterpreting old numbers under
+/// new weights.
+@Model
+final class ReadinessDaily {
+    @Attribute(.unique) var id: UUID
+    /// Start-of-day of the morning this score describes.
+    var date: Date
+    var score: Int
+    var bandRaw: String
+    /// The denominator the score was taken over — how much of the 100-point picture was available.
+    var availablePoints: Double
+    /// JSON-encoded `[ReadinessContributorRecord]`: the breakdown behind `score`.
+    var contributorsJSON: String
+    var algorithmVersion: Int
+    var computedAt: Date
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        date: Date,
+        score: Int,
+        band: ReadinessBand,
+        availablePoints: Double,
+        contributorsJSON: String,
+        algorithmVersion: Int = ReadinessScore.algorithmVersion,
+        computedAt: Date = Date()
+    ) {
+        self.id = id
+        self.date = Calendar.current.startOfDay(for: date)
+        self.score = score
+        self.bandRaw = band.rawValue
+        self.availablePoints = availablePoints
+        self.contributorsJSON = contributorsJSON
+        self.algorithmVersion = algorithmVersion
+        self.computedAt = computedAt
+        self.createdAt = Date()
+        self.updatedAt = Date()
+    }
+
+    var band: ReadinessBand { ReadinessBand(rawValue: bandRaw) ?? .moderate }
+
+    var coverage: Double { availablePoints > 0 ? availablePoints / 100 : 0 }
+
+    /// Decoded breakdown. Returns `[]` rather than throwing — a readiness row with unreadable
+    /// contributors is still a usable score, and the detail screen degrades to "breakdown
+    /// unavailable" instead of the whole tile failing.
+    var contributors: [ReadinessContributorRecord] {
+        guard let data = contributorsJSON.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([ReadinessContributorRecord].self, from: data)) ?? []
+    }
+}
+
+/// Codable mirror of `ReadinessContributor` for storage and export. Kept separate from the scoring
+/// value type so `ReadinessScore` stays free of persistence concerns, and so the on-disk shape is
+/// explicit and versioned by `ReadinessDaily.algorithmVersion`.
+struct ReadinessContributorRecord: Codable, Equatable, Sendable {
+    var kindRaw: String
+    var earned: Double
+    var maxPoints: Double
+    var value: Double
+    var baseline: Double?
+    var deviation: Double?
+    var detail: String
+
+    var kind: ReadinessContributor.Kind? { ReadinessContributor.Kind(rawValue: kindRaw) }
+    var drag: Double { maxPoints - earned }
+
+    init(_ contributor: ReadinessContributor) {
+        kindRaw = contributor.kind.rawValue
+        earned = contributor.earned
+        maxPoints = contributor.maxPoints
+        value = contributor.value
+        baseline = contributor.baseline
+        deviation = contributor.deviation
+        detail = contributor.detail
+    }
+}
+
 @Model
 final class RawPacketRow {
     @Attribute(.unique) var id: UUID
