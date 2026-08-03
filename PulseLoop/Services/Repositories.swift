@@ -264,6 +264,43 @@ enum ProfileRepository {
     }
 }
 
+/// Stored daily readiness scores. `ReadinessService` is the only writer.
+enum ReadinessRepository {
+    /// The row for one morning, or nil if that day was never scored (or scored then invalidated).
+    @MainActor
+    static func row(on date: Date, context: ModelContext) -> ReadinessDaily? {
+        let start = Calendar.current.startOfDay(for: date)
+        guard let end = Calendar.current.date(byAdding: .day, value: 1, to: start) else { return nil }
+        var descriptor = FetchDescriptor<ReadinessDaily>(
+            predicate: #Predicate { $0.date >= start && $0.date < end },
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    /// The most recently scored morning. `fetchLimit: 1` — one row, not the whole table.
+    @MainActor
+    static func latest(context: ModelContext) -> ReadinessDaily? {
+        var descriptor = FetchDescriptor<ReadinessDaily>(
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
+    /// Scored mornings within `[from, to]`, oldest-first for a left-to-right chart axis.
+    @MainActor
+    static func rows(from: Date, to: Date, limit: Int = 400, context: ModelContext) -> [ReadinessDaily] {
+        var descriptor = FetchDescriptor<ReadinessDaily>(
+            predicate: #Predicate { $0.date >= from && $0.date <= to },
+            sortBy: [SortDescriptor(\.date, order: .forward)]
+        )
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+}
+
 /// Per-device measurement configuration (HR interval + all-day vital toggles), keyed by `Device.id`.
 enum MeasurementConfigRepository {
     @MainActor

@@ -372,7 +372,8 @@ enum MealEstimator {
         )
         let flags = CoachFeatureFlags(
             settings: settings, hasAPIKey: apiKey != nil,
-            nutritionPrefs: NutritionPrefsStore.shared.prefs)
+            nutritionPrefs: NutritionPrefsStore.shared.prefs,
+            readinessPrefs: ReadinessPrefsStore.shared.prefs)
         guard flags.coachEnabled else {
             return .failure(EstimateError(message: "AI analysis needs the coach enabled with a cloud provider (Settings → AI Coach). You can still search the database or enter the meal manually."))
         }

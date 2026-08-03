@@ -62,7 +62,8 @@ final class CoachViewModel {
         let (apiKey, activeClient) = resolveClient()
         let flags = CoachFeatureFlags(
             settings: settingsStore.settings, hasAPIKey: apiKey != nil,
-            nutritionPrefs: NutritionPrefsStore.shared.prefs)
+            nutritionPrefs: NutritionPrefsStore.shared.prefs,
+            readinessPrefs: ReadinessPrefsStore.shared.prefs)
         let budget = flags.contextBudget
         let environment = await CoachEnvironmentContextService.shared.snapshot()
         let packet = CoachContextBuilder.build(context: context, budget: budget, environment: environment)

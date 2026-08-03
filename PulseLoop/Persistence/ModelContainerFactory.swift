@@ -9,6 +9,7 @@ enum ModelContainerFactory {
             BatterySample.self,
             SleepSession.self,
             SleepStageBlock.self,
+            ReadinessDaily.self,
             RawPacketRow.self,
             DerivedUpdateRow.self,
             UserProfile.self,

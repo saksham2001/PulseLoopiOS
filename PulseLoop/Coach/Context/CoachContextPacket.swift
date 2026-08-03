@@ -28,6 +28,9 @@ struct CoachContextPacket: Encodable {
     /// Opt-in nutrition tracking summary. Nil when the feature is off or the user
     /// doesn't share it with the coach — absent from the JSON entirely.
     var nutrition: NutritionContext?
+    /// Opt-in readiness score + the contributors behind it. Nil when the feature is off or not
+    /// shared — absent from the JSON entirely.
+    var readiness: ReadinessContext?
 
     struct ProfileContext: Encodable {
         var name: String?
@@ -136,6 +139,26 @@ struct CoachContextPacket: Encodable {
             var kcal: Double
             /// "off_barcode" | "off_search" | "llm_estimate" | "manual"
             var source: String
+        }
+    }
+
+    /// This morning's readiness score with the breakdown that produced it. The contributors are
+    /// the point: with them the coach can say "your HRV is 12% below baseline", and without them it
+    /// would have to guess at a reason for a number it can see.
+    struct ReadinessContext: Encodable {
+        var score: Int
+        var band: String
+        /// Share of the full 100-point picture this score is based on, 0–1.
+        var coverage: Double
+        var contributors: [ContributorBrief]
+        /// Signals the ring didn't capture. Named so the coach doesn't read absence as normality.
+        var notMeasured: [String]
+
+        struct ContributorBrief: Encodable {
+            var signal: String
+            var pointsEarned: Double
+            var pointsPossible: Double
+            var detail: String
         }
     }
 
