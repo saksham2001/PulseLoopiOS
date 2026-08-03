@@ -2,7 +2,7 @@ import XCTest
 import SwiftData
 @testable import PulseLoop
 
-/// Locks down the full-app export/import archive: a complete round trip over all 24 models,
+/// Locks down the full-app export/import archive: a complete round trip over all 25 models,
 /// wipe completeness, version/corruption rejection (without data loss), and the settings +
 /// attachment side channels. Hermetic — in-memory SwiftData, suite-scoped UserDefaults, temp dirs.
 @MainActor
@@ -14,7 +14,7 @@ final class DataArchiveTests: XCTestCase {
         (try? context.fetchCount(FetchDescriptor<T>())) ?? -1
     }
 
-    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 24.
+    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 25.
     private func insertModelsMissingFromSeed(_ context: ModelContext, deviceId: UUID) {
         context.insert(BatterySample(percent: 57, timestamp: Date(timeIntervalSince1970: 1_750_000_000)))
         context.insert(DeviceMeasurementConfig(deviceId: deviceId))
@@ -34,6 +34,15 @@ final class DataArchiveTests: XCTestCase {
         context.insert(CoachNotificationRecord(slotRaw: "morning", dateKey: "2026-07-25", title: "Hi", body: "Check in"))
         context.insert(CoachSummary(kind: "today", scopeKey: "2026-07-25", title: "Today", body: "Solid", dataSignature: "sig1"))
         context.insert(WearableLog(category: .sync, level: .info, message: "sync done", metadataJSON: #"{"n":1}"#))
+        // Inserted explicitly rather than relying on the seed's readiness backfill, which only
+        // scores days that happen to have a full enough night.
+        context.insert(ReadinessDaily(
+            date: Date(timeIntervalSince1970: 1_750_000_000),
+            score: 78,
+            band: .ready,
+            availablePoints: 85,
+            contributorsJSON: #"[{"kindRaw":"hrv","earned":22.5,"maxPoints":30,"value":44,"baseline":50,"deviation":-12,"detail":"HRV 12% below your baseline"}]"#
+        ))
         try? context.save()
     }
 
@@ -50,6 +59,7 @@ final class DataArchiveTests: XCTestCase {
         check(ActivityEvent.self); check(ActivitySensorPollEvent.self); check(CoachConversation.self)
         check(CoachMessage.self); check(CoachMemory.self); check(CoachToolCall.self)
         check(CoachNotificationRecord.self); check(CoachSummary.self); check(WearableLog.self)
+        check(ReadinessDaily.self)
     }
 
     private func makeSuiteDefaults(_ name: String) -> UserDefaults {
@@ -167,6 +177,34 @@ final class DataArchiveTests: XCTestCase {
             XCTAssertEqual(supported, PulseArchive.currentFormatVersion)
         }
         XCTAssertEqual(count(PulseLoop.Measurement.self, context), before, "a rejected file must not touch existing data")
+    }
+
+    /// Format version 2 added `readinessDailies`. Archives exported before it have no such key, and
+    /// `PulseArchive` decodes via the synthesized decoder — which has no notion of property
+    /// defaults — so the field must stay Optional or every older backup becomes unimportable.
+    /// This test builds a genuine v1 file by stripping the key from a real export.
+    func testV1ArchiveWithoutReadinessStillImports() async throws {
+        let source = try TestSupport.makeContext()
+        SeedData.seedDemo(source)
+        TestSupport.insertMeasurement(kind: .heartRate, value: 71, timestamp: Date(), into: source)
+        let measurementCount = count(PulseLoop.Measurement.self, source)
+        XCTAssertGreaterThan(measurementCount, 0)
+
+        let data = try await DataArchiveService.exportArchive(context: source)
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any],
+            "export should be a JSON object"
+        )
+        XCTAssertNotNil(json["readinessDailies"], "a v2 export must write the key")
+        json.removeValue(forKey: "readinessDailies")
+        json["formatVersion"] = 1
+        let v1Data = try JSONSerialization.data(withJSONObject: json)
+
+        let destination = try TestSupport.makeContext()
+        try await DataArchiveService.importArchive(v1Data, context: destination, refreshStores: false)
+
+        XCTAssertEqual(count(PulseLoop.Measurement.self, destination), measurementCount,
+                       "a v1 archive must restore everything it does contain")
     }
 
     func testImportRejectsCorruptJSONWithoutDataLoss() async throws {

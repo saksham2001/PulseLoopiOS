@@ -181,6 +181,11 @@ enum SeedData {
         context.insert(DerivedUpdateRow(kind: "seed", entityType: "database", entityId: "demo", payloadJSON: #"{"source":"SeedData"}"#))
         
         try? context.save()
+
+        // Score the demo history now that its measurements, sleep and workouts exist, so the
+        // readiness tile and its trend chart have something to show without waiting for a real
+        // week of wear. Runs last, and reads only what was just seeded.
+        ReadinessService.backfill(days: 30, context: context)
     }
 
     /// One demo meal to insert.
@@ -333,6 +338,7 @@ enum SeedData {
         deleteAll(Measurement.self, context)
         deleteAll(SleepSession.self, context)
         deleteAll(SleepStageBlock.self, context)
+        deleteAll(ReadinessDaily.self, context)
         deleteAll(RawPacketRow.self, context)
         deleteAll(DerivedUpdateRow.self, context)
         deleteAll(UserProfile.self, context)

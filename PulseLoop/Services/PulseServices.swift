@@ -61,6 +61,11 @@ enum MetricsService {
         // The ring's calorie field is unverified, so ring-history days don't carry calories — show
         // "—" rather than a misleading 0. Steps/distance from the ring are trustworthy.
         let todayCalories: Double? = today?.source == ActivityService.ringHistorySource ? nil : today?.calories
+        let readinessEnabled = ReadinessPrefsStore.shared.prefs.masterEnabled
+        let readinessSnapshot = readinessEnabled
+            ? ReadinessRepository.row(on: isDemo ? anchorDate : Date(), context: context).map(ReadinessSnapshot.init)
+            : nil
+
         return TodaySummary(
             date: today?.date ?? calendar.startOfDay(for: Date()),
             steps: today?.steps,
@@ -84,6 +89,14 @@ enum MetricsService {
             // every consumer (tiles, cards, widgets, coach) inherits the master-toggle gate.
             nutrition: NutritionPrefsStore.shared.prefs.masterEnabled
                 ? NutritionRepository.dayTotals(on: Date(), context: context)
+                : nil,
+            // Same master-toggle gate as nutrition. Anchored on `anchorDate` rather than `Date()`
+            // so a demo store — whose "today" is its newest seeded day — still finds its score.
+            readiness: readinessSnapshot,
+            // Only computed when there's no score to show — it walks the baseline window, so it
+            // must not run on the happy path.
+            readinessProgress: readinessEnabled && readinessSnapshot == nil
+                ? ReadinessService.progress(context: context)
                 : nil
         )
     }
