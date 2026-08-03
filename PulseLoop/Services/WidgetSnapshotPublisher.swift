@@ -147,7 +147,26 @@ final class WidgetSnapshotPublisher {
             activity: activityPayload(summary, units: units),
             sleep: sleepPayload(summary.sleep),
             metrics: metrics,
-            nutrition: nutritionPayload(summary)
+            nutrition: nutritionPayload(summary),
+            readiness: readinessPayload(summary)
+        )
+    }
+
+    /// Readiness tile payload. Nil unless the feature is on and shown on Today/widgets, or the
+    /// morning wasn't scored — the widget then renders its "open the app" placeholder rather than
+    /// a zero, which would read as terrible recovery instead of no data.
+    ///
+    /// The band zones ride along as color tokens so the extension draws the identical arc without
+    /// the scoring engine being compiled into it, matching how vitals zones already cross over.
+    private func readinessPayload(_ summary: TodaySummary) -> WidgetReadinessPayload? {
+        guard ReadinessPrefsStore.shared.prefs.showOnToday,
+              let readiness = summary.readiness else { return nil }
+        return WidgetReadinessPayload(
+            score: readiness.score,
+            band: readiness.band.rawValue,
+            coverage: readiness.coverage,
+            zones: ReadinessZones.all.map(WidgetZonePayload.init),
+            topReason: readiness.topDrag?.detail ?? ""
         )
     }
 

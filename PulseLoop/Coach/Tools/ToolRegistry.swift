@@ -20,6 +20,9 @@ struct ToolRegistry {
         if flags.nutritionContextEnabled {
             all += NutritionTools.readTools
         }
+        if flags.readinessContextEnabled {
+            all += ReadinessTools.readTools
+        }
         if flags.nutritionWriteEnabled {
             all += NutritionTools.writeTools
         }

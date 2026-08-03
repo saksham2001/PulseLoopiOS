@@ -5,6 +5,7 @@ import SwiftUI
 /// values are stable identifiers persisted in the user's widget configuration; don't rename them.
 enum WidgetMetric: String, CaseIterable, AppEnum {
     case activity
+    case readiness
     case nutrition
     case sleep
     case heartRate
@@ -20,6 +21,7 @@ enum WidgetMetric: String, CaseIterable, AppEnum {
 
     static let caseDisplayRepresentations: [WidgetMetric: DisplayRepresentation] = [
         .activity: "Activity",
+        .readiness: "Readiness",
         .nutrition: "Nutrition",
         .sleep: "Sleep",
         .heartRate: "Heart Rate",
@@ -35,7 +37,7 @@ enum WidgetMetric: String, CaseIterable, AppEnum {
     /// The vitals kind whose payload backs this tile; nil for the two non-vitals tiles.
     var metricKind: MetricKind? {
         switch self {
-        case .activity, .nutrition, .sleep: return nil
+        case .activity, .readiness, .nutrition, .sleep: return nil
         case .heartRate: return .heartRate
         case .spo2: return .spo2
         case .hrv: return .hrv
@@ -49,12 +51,13 @@ enum WidgetMetric: String, CaseIterable, AppEnum {
 
     /// Which Today tile visual this metric renders as (mirrors `TodayView.tiles`).
     enum TileStyle {
-        case rings, nutrition, sleep, chart, gauge, bloodPressure
+        case rings, readiness, nutrition, sleep, chart, gauge, bloodPressure
     }
 
     var tileStyle: TileStyle {
         switch self {
         case .activity: return .rings
+        case .readiness: return .readiness
         case .nutrition: return .nutrition
         case .sleep: return .sleep
         case .heartRate, .spo2, .hrv, .temperature: return .chart
@@ -67,6 +70,7 @@ enum WidgetMetric: String, CaseIterable, AppEnum {
     var headerLabel: String {
         switch self {
         case .activity: return "Activity"
+        case .readiness: return "Readiness"
         case .nutrition: return "Nutrition"
         case .sleep: return "Sleep"
         default: return metricKind?.title ?? rawValue
@@ -76,6 +80,7 @@ enum WidgetMetric: String, CaseIterable, AppEnum {
     var accentColor: Color {
         switch self {
         case .activity: return PulseColors.steps
+        case .readiness: return PulseColors.readiness
         case .nutrition: return PulseColors.calories
         case .sleep: return PulseColors.sleep
         default: return metricKind?.accentColor ?? PulseColors.accent

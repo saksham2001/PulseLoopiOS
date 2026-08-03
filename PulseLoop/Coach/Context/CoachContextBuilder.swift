@@ -12,7 +12,8 @@ enum CoachContextBuilder {
         now: Date = Date(),
         budget: CoachContextBudget = .full,
         environment: CoachContextPacket.EnvironmentContext? = nil,
-        includeNutrition: Bool = true
+        includeNutrition: Bool = true,
+        includeReadiness: Bool = true
     ) -> CoachContextPacket {
         let summary = MetricsService.buildTodaySummary(context: context)
         let profile = ProfileRepository.profile(context: context)
@@ -43,6 +44,10 @@ enum CoachContextBuilder {
         // callers can additionally opt out (notification path honors its own sub-toggle).
         let nutritionPrefs = NutritionPrefsStore.shared.prefs
         let shareNutrition = includeNutrition && nutritionPrefs.masterEnabled && nutritionPrefs.shareWithCoach
+
+        // Same shape for readiness: on, shared, and not opted out by the caller.
+        let readinessPrefs = ReadinessPrefsStore.shared.prefs
+        let shareReadiness = includeReadiness && readinessPrefs.masterEnabled && readinessPrefs.shareWithCoach
 
         let goals = CoachContextPacket.GoalContext(
             stepsDaily: summary.goals.stepsDaily,
@@ -125,7 +130,30 @@ enum CoachContextBuilder {
             conversationSummary: cap(conversationSummary, to: budget.conversationSummaryCap),
             dataQualityWarnings: Array(warnings.prefix(budget.maxWarnings)),
             environment: environment,
-            nutrition: shareNutrition ? nutritionContext(summary: summary, context: context, now: now) : nil
+            nutrition: shareNutrition ? nutritionContext(summary: summary, context: context, now: now) : nil,
+            readiness: shareReadiness ? readinessContext(summary: summary) : nil
+        )
+    }
+
+    /// Flatten the stored readiness snapshot for the packet. Reads `summary.readiness`, which
+    /// already inherits the master-toggle gate, so a disabled feature can't leak through here.
+    private static func readinessContext(summary: TodaySummary) -> CoachContextPacket.ReadinessContext? {
+        guard let readiness = summary.readiness else { return nil }
+        return CoachContextPacket.ReadinessContext(
+            score: readiness.score,
+            band: readiness.band.rawValue,
+            coverage: readiness.coverage,
+            contributors: readiness.contributors
+                .sorted { $0.drag > $1.drag }
+                .map {
+                    CoachContextPacket.ReadinessContext.ContributorBrief(
+                        signal: $0.kind?.rawValue ?? $0.kindRaw,
+                        pointsEarned: $0.earned,
+                        pointsPossible: $0.maxPoints,
+                        detail: $0.detail
+                    )
+                },
+            notMeasured: readiness.missingKinds.map(\.rawValue)
         )
     }
 

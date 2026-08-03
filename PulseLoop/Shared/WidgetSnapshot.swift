@@ -48,17 +48,24 @@ struct WidgetSnapshot: Codable {
     /// Calorie-intake tracking. Optional + defaulted so snapshots written by older builds decode;
     /// nil while the nutrition feature (or its Today/widget toggle) is off.
     var nutrition: WidgetNutritionPayload?
+    /// Daily readiness. Optional + defaulted for the same reason as `nutrition`: snapshots written
+    /// by older builds must still decode, and nil covers both "feature off" and "not scored yet".
+    var readiness: WidgetReadinessPayload?
 
-    enum CodingKeys: String, CodingKey { case generatedAt, dayStart, activity, sleep, metrics, nutrition }
+    enum CodingKeys: String, CodingKey {
+        case generatedAt, dayStart, activity, sleep, metrics, nutrition, readiness
+    }
 
     init(generatedAt: Date, dayStart: Date, activity: WidgetActivityPayload?, sleep: WidgetSleepPayload?,
-         metrics: [String: WidgetMetricPayload], nutrition: WidgetNutritionPayload? = nil) {
+         metrics: [String: WidgetMetricPayload], nutrition: WidgetNutritionPayload? = nil,
+         readiness: WidgetReadinessPayload? = nil) {
         self.generatedAt = generatedAt
         self.dayStart = dayStart
         self.activity = activity
         self.sleep = sleep
         self.metrics = metrics
         self.nutrition = nutrition
+        self.readiness = readiness
     }
 
     init(from decoder: Decoder) throws {
@@ -69,7 +76,26 @@ struct WidgetSnapshot: Codable {
         sleep = try c.decodeIfPresent(WidgetSleepPayload.self, forKey: .sleep)
         metrics = try c.decode([String: WidgetMetricPayload].self, forKey: .metrics)
         nutrition = try c.decodeIfPresent(WidgetNutritionPayload.self, forKey: .nutrition)
+        readiness = try c.decodeIfPresent(WidgetReadinessPayload.self, forKey: .readiness)
     }
+}
+
+// MARK: - Readiness (recovery score tile)
+
+/// Daily readiness for the widget. Ships its own band zones as color tokens — the same lossless
+/// round-trip the vitals payloads use — so the widget draws the identical arc without needing the
+/// scoring engine compiled into the extension.
+struct WidgetReadinessPayload: Codable {
+    var score: Int
+    var band: String
+    /// Share of the full 100-point picture behind the score, 0–1. Below 1 the widget marks the
+    /// score as partial rather than presenting it as equivalent to a complete night.
+    var coverage: Double
+    /// The band zones, in ascending order, for the gauge arc.
+    var zones: [WidgetZonePayload]
+    /// The single biggest drag on the score, already phrased ("HRV 12% below your baseline"). Empty
+    /// when nothing held it back — the widget then says so rather than inventing a reason.
+    var topReason: String
 }
 
 // MARK: - Nutrition (calorie intake tile)

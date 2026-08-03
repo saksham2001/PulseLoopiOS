@@ -40,7 +40,8 @@ enum DataArchiveService {
         "pulseloop.workoutprefs.v1",
         "pulseloop.calibration.v1",
         "pulseloop.coach.settings.v1",
-        "pulseloop.applehealth.prefs.v1"
+        "pulseloop.applehealth.prefs.v1",
+        ReadinessPrefsStore.prefsKey
     ]
 
     /// Rows processed between `Task.yield()`s while mapping models to DTOs during export.
@@ -100,6 +101,7 @@ enum DataArchiveService {
         let batterySamples = try await collect(BatterySample.self, context) { ArchiveBatterySample($0) }
         let sleepSessions = try await collect(SleepSession.self, context) { ArchiveSleepSession($0) }
         let sleepStageBlocks = try await collect(SleepStageBlock.self, context) { ArchiveSleepStageBlock($0) }
+        let readinessDailies = try await collect(ReadinessDaily.self, context) { ArchiveReadinessDaily($0) }
         let rawPackets = try await collect(RawPacketRow.self, context) { ArchiveRawPacket($0) }
         let derivedUpdates = try await collect(DerivedUpdateRow.self, context) { ArchiveDerivedUpdate($0) }
         let userProfiles = try await collect(UserProfile.self, context) { ArchiveUserProfile($0) }
@@ -133,6 +135,7 @@ enum DataArchiveService {
             "batterySamples": batterySamples.count,
             "sleepSessions": sleepSessions.count,
             "sleepStageBlocks": sleepStageBlocks.count,
+            "readinessDailies": readinessDailies.count,
             "rawPackets": rawPackets.count,
             "derivedUpdates": derivedUpdates.count,
             "userProfiles": userProfiles.count,
@@ -166,6 +169,7 @@ enum DataArchiveService {
             batterySamples: batterySamples,
             sleepSessions: sleepSessions,
             sleepStageBlocks: sleepStageBlocks,
+            readinessDailies: readinessDailies,
             rawPackets: rawPackets,
             derivedUpdates: derivedUpdates,
             userProfiles: userProfiles,
@@ -286,9 +290,14 @@ enum DataArchiveService {
         if refreshStores {
             refreshSharedStores()
         }
+
+        // 6. Self-heal readiness history. A v1 archive predates the table entirely, and a v2 one may
+        //    carry rows scored by an older algorithm version. Both cases recompute from the
+        //    measurements we just restored; rows already at the current version are skipped.
+        ReadinessService.backfill(days: 90, context: context)
     }
 
-    /// Whether any of the 24 model tables has at least one row — gates the destructive
+    /// Whether any of the 25 model tables has at least one row — gates the destructive
     /// "Replace all data?" confirmation.
     static func hasAnyData(context: ModelContext) -> Bool {
         func has<T: PersistentModel>(_ type: T.Type) -> Bool {
@@ -296,6 +305,7 @@ enum DataArchiveService {
         }
         return has(Device.self) || has(ActivityDaily.self) || has(PulseLoop.Measurement.self)
             || has(BatterySample.self) || has(SleepSession.self) || has(SleepStageBlock.self)
+            || has(ReadinessDaily.self)
             || has(RawPacketRow.self) || has(DerivedUpdateRow.self) || has(UserProfile.self)
             || has(UserGoal.self) || has(DeviceMeasurementConfig.self) || has(ActivitySession.self)
             || has(ActivitySample.self) || has(ActivityBucketSample.self) || has(ActivityGpsPoint.self)
@@ -304,7 +314,7 @@ enum DataArchiveService {
             || has(CoachNotificationRecord.self) || has(CoachSummary.self) || has(WearableLog.self)
     }
 
-    /// Deletes every row of every model in the schema — all 24 types, unlike `SeedData.clearAll`
+    /// Deletes every row of every model in the schema — all 25 types, unlike `SeedData.clearAll`
     /// (which predates six of them). Tracked deletes, no save, and deliberately synchronous — see
     /// the atomicity note in `importArchive`.
     static func wipeAllData(context: ModelContext) throws {
@@ -314,6 +324,7 @@ enum DataArchiveService {
         try deleteAll(BatterySample.self, context)
         try deleteAll(SleepSession.self, context)
         try deleteAll(SleepStageBlock.self, context)
+        try deleteAll(ReadinessDaily.self, context)
         try deleteAll(RawPacketRow.self, context)
         try deleteAll(DerivedUpdateRow.self, context)
         try deleteAll(UserProfile.self, context)
@@ -347,6 +358,7 @@ enum DataArchiveService {
         insert(archive.batterySamples, context)
         insert(archive.sleepSessions, context)
         insert(archive.sleepStageBlocks, context)
+        insert(archive.readinessDailies ?? [], context)
         insert(archive.rawPackets, context)
         insert(archive.derivedUpdates, context)
         insert(archive.userProfiles, context)
@@ -382,6 +394,7 @@ enum DataArchiveService {
         try requireUnique(archive.batterySamples.map(\.id), entity: "battery sample")
         try requireUnique(archive.sleepSessions.map(\.id), entity: "sleep session")
         try requireUnique(archive.sleepStageBlocks.map(\.id), entity: "sleep stage")
+        try requireUnique((archive.readinessDailies ?? []).map(\.id), entity: "readiness score")
         try requireUnique(archive.rawPackets.map(\.id), entity: "raw packet")
         try requireUnique(archive.derivedUpdates.map(\.id), entity: "derived update")
         try requireUnique(archive.userProfiles.map(\.id), entity: "profile")
@@ -473,7 +486,7 @@ enum DataArchiveService {
     }
 }
 
-/// Shared shape of the 24 DTOs' model-restoring side, so `insertAll` can chunk generically.
+/// Shared shape of the 25 DTOs' model-restoring side, so `insertAll` can chunk generically.
 @MainActor
 protocol ArchiveInsertable {
     func insert(into context: ModelContext)
@@ -485,6 +498,7 @@ extension ArchiveMeasurement: ArchiveInsertable {}
 extension ArchiveBatterySample: ArchiveInsertable {}
 extension ArchiveSleepSession: ArchiveInsertable {}
 extension ArchiveSleepStageBlock: ArchiveInsertable {}
+extension ArchiveReadinessDaily: ArchiveInsertable {}
 extension ArchiveRawPacket: ArchiveInsertable {}
 extension ArchiveDerivedUpdate: ArchiveInsertable {}
 extension ArchiveUserProfile: ArchiveInsertable {}

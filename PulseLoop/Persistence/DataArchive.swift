@@ -21,7 +21,10 @@ import SwiftData
 // MARK: - Envelope
 
 nonisolated struct PulseArchive: Codable, Sendable {
-    static let currentFormatVersion = 1
+    /// Bumped to 2 when readiness scores joined the archive. `importArchive` refuses anything
+    /// newer than this, which is the honest behaviour: an older build genuinely cannot restore a
+    /// table it has no model for.
+    static let currentFormatVersion = 2
 
     var formatVersion: Int
     var exportedAt: Date
@@ -35,6 +38,11 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var batterySamples: [ArchiveBatterySample]
     var sleepSessions: [ArchiveSleepSession]
     var sleepStageBlocks: [ArchiveSleepStageBlock]
+    /// Added in format version 2. **Optional on purpose**: `PulseArchive` uses the synthesized
+    /// decoder, which has no notion of property defaults, so a non-optional array here would make
+    /// every existing v1 archive fail to decode. Read it as `?? []`; a new export always writes it.
+    /// Any future table added to this struct should follow the same pattern.
+    var readinessDailies: [ArchiveReadinessDaily]?
     var rawPackets: [ArchiveRawPacket]
     var derivedUpdates: [ArchiveDerivedUpdate]
     var userProfiles: [ArchiveUserProfile]

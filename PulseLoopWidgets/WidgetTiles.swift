@@ -118,6 +118,57 @@ struct WidgetActivityContent: View {
 
 // MARK: - Nutrition (kcal headline + macro "fuel bar", from `NutritionTileView`)
 
+/// Readiness on the home screen: the band-coloured arc, the score, and — when it fits — the one
+/// thing holding it back. The reason is what stops the widget being a bare number, which is the
+/// same standard the in-app card is held to.
+///
+/// The arc uses zones shipped in the payload as colour tokens, so the extension never needs the
+/// scoring engine compiled into it.
+struct WidgetReadinessContent: View {
+    let payload: WidgetReadinessPayload?
+    let rolledOver: Bool
+
+    /// After midnight a score describes *yesterday's* night, so it is withheld rather than
+    /// relabelled as today's — the same rule the activity and sleep tiles follow.
+    private var active: WidgetReadinessPayload? { rolledOver ? nil : payload }
+
+    var body: some View {
+        if let payload = active {
+            HStack(spacing: 12) {
+                VitalRingGauge(
+                    value: Double(payload.score),
+                    domain: 0...100,
+                    zones: payload.zones.map(\.metricZone),
+                    valueColor: payload.zones.map(\.metricZone)
+                        .first { $0.contains(Double(payload.score)) }?.color ?? PulseColors.readiness,
+                    centerValue: "\(payload.score)",
+                    centerStatus: payload.band,
+                    size: 74,
+                    lineWidth: 7
+                )
+                if !payload.topReason.isEmpty {
+                    Text(payload.topReason)
+                        .font(.system(size: 11))
+                        .foregroundStyle(PulseColors.textMuted)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                "Readiness \(payload.score) out of 100, \(payload.band)."
+                + (payload.topReason.isEmpty ? "" : " \(payload.topReason).")
+            )
+        } else {
+            WidgetEmptyMessage(systemImage: "bolt.heart",
+                               message: rolledOver ? "Sync for today" : "Open PulseLoop to sync",
+                               color: PulseColors.readiness)
+        }
+    }
+}
+
 struct WidgetNutritionContent: View {
     let payload: WidgetNutritionPayload?
     let rolledOver: Bool
@@ -417,6 +468,8 @@ struct WidgetMetricTileView: View {
         switch metric.tileStyle {
         case .rings:
             WidgetActivityContent(payload: entry.snapshot?.activity, rolledOver: entry.rolledOver)
+        case .readiness:
+            WidgetReadinessContent(payload: entry.snapshot?.readiness, rolledOver: entry.rolledOver)
         case .nutrition:
             WidgetNutritionContent(payload: entry.snapshot?.nutrition, rolledOver: entry.rolledOver)
         case .sleep:

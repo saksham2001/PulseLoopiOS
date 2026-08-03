@@ -10,6 +10,9 @@ struct CoachFeatureFlags {
     /// composes with the coach gates. Defaulted so existing construction sites and
     /// tests keep compiling (default = feature off).
     var nutritionPrefs: NutritionPrefs = .default
+    /// Snapshot of the readiness feature's prefs, bridged in the same way as `nutritionPrefs`.
+    /// Defaulted so existing construction sites and tests keep compiling.
+    var readinessPrefs: ReadinessPrefs = .default
 
     /// User-facing master switch — when off, the coach tab, summaries and
     /// notifications are all hidden. This is the gate the UI checks; the
@@ -45,6 +48,11 @@ struct CoachFeatureFlags {
     var nutritionContextEnabled: Bool { nutritionPrefs.masterEnabled && nutritionPrefs.shareWithCoach }
     /// The coach may log/edit meals: nutrition context is shared AND write tools are on.
     var nutritionWriteEnabled: Bool { nutritionContextEnabled && writeToolsEnabled }
+
+    /// Readiness may reach the coach (context packet + read tool): the feature is on AND the user
+    /// shares it. Read-only — there is no write path, because a readiness score is derived and the
+    /// model has no business editing one.
+    var readinessContextEnabled: Bool { readinessPrefs.masterEnabled && readinessPrefs.shareWithCoach }
 
     var maxToolCalls: Int { max(1, settings.maxToolCalls) }
     var maxRounds: Int { max(1, settings.maxRounds) }

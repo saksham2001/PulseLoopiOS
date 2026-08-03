@@ -71,6 +71,7 @@ final class TodayStore {
 
     /// Rebuild only if the underlying data changed since the last build. Cheap to call every appear.
     func refreshIfNeeded() {
+        ReadinessService.refreshIfStale(context: modelContext)
         let sig = Self.currentSignature(context: modelContext, profile: profile)
         guard sig != signature else { return }
         rebuild(signature: sig)
@@ -78,6 +79,7 @@ final class TodayStore {
 
     /// Force a rebuild regardless of signature (used by the coalesced sync-changed signal).
     func invalidate() {
+        ReadinessService.refreshIfStale(context: modelContext)
         rebuild(signature: Self.currentSignature(context: modelContext, profile: profile))
     }
 
@@ -183,13 +185,26 @@ final class TodayStore {
             nutritionSig = "off"
         }
 
+        // Readiness inputs (HRV/HR/temp/sleep/activity) are already in the signature below, so this
+        // clause only has to catch the prefs toggle and the recomputed row itself. Note the refresh
+        // in `refreshIfNeeded`/`invalidate` runs BEFORE this is read — otherwise the write would
+        // land after the signature was captured and force a second, wasted rebuild.
+        let rPrefs = ReadinessPrefsStore.shared.prefs
+        let readinessSig: String
+        if rPrefs.masterEnabled {
+            let row = ReadinessRepository.latest(context: context)
+            readinessSig = "r\(rPrefs.showOnToday)/" + (row.map { "\($0.score)@\(stamp($0.updatedAt))" } ?? "·")
+        } else {
+            readinessSig = "off"
+        }
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             activity.map { "\($0.steps)/\(Int($0.distanceMeters))/\($0.activeMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             sleep.map { "\($0.totalMinutes)@\(stamp($0.syncedAt))" } ?? "·",
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)@\(stamp($0.lastSyncAt))" } ?? "·",
-            calSig, profileSig, prefSig, goalSig, nutritionSig,
+            calSig, profileSig, prefSig, goalSig, nutritionSig, readinessSig,
         ].joined(separator: "|")
     }
 }

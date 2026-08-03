@@ -120,6 +120,7 @@ nav:
   - Project:
       - Roadmap: project/roadmap.md
       - Architecture: project/architecture.md
+      - Readiness score: project/readiness.md
       - Contributing: project/contributing.md
       - Contributors: project/contributors.md
       - Privacy: project/privacy.md

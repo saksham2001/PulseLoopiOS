@@ -112,4 +112,66 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(payload.lineColor(forValue: thresholds[0]), Color(hex: hexes[1]))
         XCTAssertEqual(payload.lineColor(forValue: thresholds.last! + 5), Color(hex: hexes.last!))
     }
+
+    // MARK: - Readiness
+
+    private func readinessPayload(score: Int = 74, coverage: Double = 0.9,
+                                  reason: String = "HRV 12% below your baseline") -> WidgetReadinessPayload {
+        WidgetReadinessPayload(
+            score: score,
+            band: ReadinessScore.band(score).rawValue,
+            coverage: coverage,
+            zones: ReadinessZones.all.map(WidgetZonePayload.init),
+            topReason: reason
+        )
+    }
+
+    func testReadinessPayloadRoundTrips() throws {
+        let snapshot = WidgetSnapshot(
+            generatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            dayStart: Date(timeIntervalSince1970: 1_699_999_000),
+            activity: nil, sleep: nil, metrics: [:],
+            readiness: readinessPayload()
+        )
+        let readiness = try XCTUnwrap(try roundTrip(snapshot).readiness)
+        XCTAssertEqual(readiness.score, 74)
+        XCTAssertEqual(readiness.band, "Ready")
+        XCTAssertEqual(readiness.coverage, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(readiness.topReason, "HRV 12% below your baseline")
+        XCTAssertEqual(readiness.zones.count, ReadinessZones.all.count)
+    }
+
+    /// The widget draws its arc from these zones, so they must survive the process boundary with
+    /// their colours intact — otherwise a Primed score could render in the "Rest needed" orange.
+    func testReadinessZonesSurviveTheColorTokenBridge() throws {
+        let snapshot = WidgetSnapshot(
+            generatedAt: Date(), dayStart: Date(),
+            activity: nil, sleep: nil, metrics: [:],
+            readiness: readinessPayload()
+        )
+        let zones = try XCTUnwrap(try roundTrip(snapshot).readiness).zones.map(\.metricZone)
+        XCTAssertEqual(zones.map(\.label), ReadinessZones.all.map(\.label))
+        for (rebuilt, original) in zip(zones, ReadinessZones.all) {
+            XCTAssertEqual(rebuilt.colorToken, original.colorToken, "\(original.label) lost its colour")
+            XCTAssertEqual(rebuilt.lower, original.lower)
+            XCTAssertEqual(rebuilt.upper, original.upper)
+        }
+    }
+
+    /// A snapshot written before readiness existed must still decode — the widget would otherwise
+    /// go blank for anyone who hasn't yet relaunched the app after updating.
+    func testSnapshotWithoutReadinessStillDecodes() throws {
+        let legacy = """
+        {"generatedAt":1700000000,"dayStart":1699999000,"metrics":{}}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let snapshot = try decoder.decode(WidgetSnapshot.self, from: Data(legacy.utf8))
+        XCTAssertNil(snapshot.readiness)
+        XCTAssertNil(snapshot.nutrition)
+    }
+
+    // Note: `WidgetMetric` and the tile views live in the PulseLoopWidgets extension, which this
+    // test target does not import — only the shared `WidgetSnapshot.swift` contract is reachable
+    // from here. The extension is covered by compiling it, as with every other widget metric.
 }
