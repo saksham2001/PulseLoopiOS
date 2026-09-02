@@ -15,6 +15,9 @@ import SwiftData
 //   `ActivityBucketSample.date`), which would corrupt cross-timezone restores.
 // - When a model gains a stored property, mirror it here — the round-trip unit test only
 //   guards fields that exist in the DTO.
+// - Entities added after format 1 (`cycleDays`) are optional on the envelope: a file written before
+//   they existed decodes with the key absent (= no rows) instead of failing as damaged. The format
+//   version is only bumped for changes an older app could not read at all.
 // - Types are `nonisolated` (the project defaults to MainActor isolation) so encode/decode can run
 //   off the main actor; the model-facing mappers are `@MainActor` because `@Model` classes are not.
 
@@ -53,6 +56,9 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var coachNotificationRecords: [ArchiveCoachNotificationRecord]
     var coachSummaries: [ArchiveCoachSummary]
     var wearableLogs: [ArchiveWearableLog]
+    /// Menstrual cycle logs — period days, nights excluded from temperature analysis, notes. Added
+    /// after format 1, so it is optional: older archives omit the key and import as "no rows".
+    var cycleDays: [ArchiveCycleDay]?
 
     /// Raw UserDefaults JSON blobs keyed by their storage key (metric prefs, workout prefs,
     /// calibration, coach settings, Apple Health prefs). Opaque pass-through — never re-encoded.
@@ -999,6 +1005,40 @@ nonisolated struct ArchiveWearableLog: Codable, Sendable {
         m.deviceTypeRaw = deviceTypeRaw
         m.categoryRaw = categoryRaw
         m.levelRaw = levelRaw
+        context.insert(m)
+    }
+}
+
+nonisolated struct ArchiveCycleDay: Codable, Sendable {
+    var dateString: String
+    var date: Date
+    var isPeriod: Bool
+    var isDisturbed: Bool
+    var disturbedAutoDetected: Bool
+    var notes: String?
+    var updatedAt: Date
+
+    @MainActor init(_ m: CycleDay) {
+        dateString = m.dateString
+        date = m.date
+        isPeriod = m.isPeriod
+        isDisturbed = m.isDisturbed
+        disturbedAutoDetected = m.disturbedAutoDetected
+        notes = m.notes
+        updatedAt = m.updatedAt
+    }
+
+    @MainActor func insert(into context: ModelContext) {
+        let m = CycleDay(
+            date: date, isPeriod: isPeriod, isDisturbed: isDisturbed,
+            disturbedAutoDetected: disturbedAutoDetected, notes: notes
+        )
+        // The init re-derives date/dateString from the local timezone; restore the exact stored
+        // values — dateString is the unique upsert key, so a re-derived key could file a night
+        // under the wrong day (or collide two rows) after a cross-timezone restore.
+        m.dateString = dateString
+        m.date = date
+        m.updatedAt = updatedAt
         context.insert(m)
     }
 }

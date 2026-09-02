@@ -2,7 +2,7 @@ import XCTest
 import SwiftData
 @testable import PulseLoop
 
-/// Locks down the full-app export/import archive: a complete round trip over all 24 models,
+/// Locks down the full-app export/import archive: a complete round trip over all 25 models,
 /// wipe completeness, version/corruption rejection (without data loss), and the settings +
 /// attachment side channels. Hermetic — in-memory SwiftData, suite-scoped UserDefaults, temp dirs.
 @MainActor
@@ -14,7 +14,7 @@ final class DataArchiveTests: XCTestCase {
         (try? context.fetchCount(FetchDescriptor<T>())) ?? -1
     }
 
-    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 24.
+    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 25.
     private func insertModelsMissingFromSeed(_ context: ModelContext, deviceId: UUID) {
         context.insert(BatterySample(percent: 57, timestamp: Date(timeIntervalSince1970: 1_750_000_000)))
         context.insert(DeviceMeasurementConfig(deviceId: deviceId))
@@ -50,6 +50,7 @@ final class DataArchiveTests: XCTestCase {
         check(ActivityEvent.self); check(ActivitySensorPollEvent.self); check(CoachConversation.self)
         check(CoachMessage.self); check(CoachMemory.self); check(CoachToolCall.self)
         check(CoachNotificationRecord.self); check(CoachSummary.self); check(WearableLog.self)
+        check(CycleDay.self)
     }
 
     private func makeSuiteDefaults(_ name: String) -> UserDefaults {
@@ -127,6 +128,117 @@ final class DataArchiveTests: XCTestCase {
         }
     }
 
+    // MARK: - Cycle days
+
+    private func fetchCycleDay(_ key: String, _ context: ModelContext) throws -> CycleDay? {
+        let rows = try context.fetch(FetchDescriptor<CycleDay>(predicate: #Predicate { $0.dateString == key }))
+        XCTAssertLessThanOrEqual(rows.count, 1, "dateString must stay unique after import")
+        return rows.first
+    }
+
+    /// Period days, excluded nights and notes are the most sensitive rows in the store, and they
+    /// joined the archive after its first format shipped — so lock their round trip down on its
+    /// own: export → clear → import restores every row under its `dateString` key, and importing
+    /// the same file twice is idempotent.
+    func testCycleDaysRoundTripByDateKey() async throws {
+        let context = try TestSupport.makeContext()
+        let period = CycleDay(date: TestSupport.day(-12), isPeriod: true)
+        let disturbed = CycleDay(
+            date: TestSupport.day(-3), isDisturbed: true, disturbedAutoDetected: true,
+            notes: "Fever 38.5 °C — night excluded"
+        )
+        let noted = CycleDay(date: TestSupport.day(-1), notes: "Spotting")
+        // Simulate a row logged in a timezone 9h ahead: its stored `date` is that zone's midnight,
+        // not the local one, while `dateString` is the key computed there. The importer must
+        // restore both verbatim — re-deriving them through the init would file the night under
+        // the previous day here.
+        disturbed.date = disturbed.date.addingTimeInterval(-9 * 3600)
+        context.insert(period)
+        context.insert(disturbed)
+        context.insert(noted)
+        try context.save()
+        let periodKey = period.dateString
+        let notedKey = noted.dateString
+        let disturbedKey = disturbed.dateString
+        let disturbedDate = disturbed.date
+        let disturbedUpdatedAt = disturbed.updatedAt
+        XCTAssertNotEqual(
+            disturbedKey, CycleDay.key(for: Calendar.current.startOfDay(for: disturbedDate)),
+            "fixture must diverge the stored key from what the init would re-derive"
+        )
+
+        func assertRestored(file: StaticString = #filePath, line: UInt = #line) throws {
+            XCTAssertEqual(count(CycleDay.self, context), 3, file: file, line: line)
+
+            let restoredPeriod = try XCTUnwrap(try fetchCycleDay(periodKey, context), file: file, line: line)
+            XCTAssertTrue(restoredPeriod.isPeriod, file: file, line: line)
+            XCTAssertFalse(restoredPeriod.isDisturbed, file: file, line: line)
+            XCTAssertNil(restoredPeriod.notes, file: file, line: line)
+
+            let restoredDisturbed = try XCTUnwrap(try fetchCycleDay(disturbedKey, context), file: file, line: line)
+            XCTAssertFalse(restoredDisturbed.isPeriod, file: file, line: line)
+            XCTAssertTrue(restoredDisturbed.isDisturbed, file: file, line: line)
+            XCTAssertTrue(restoredDisturbed.disturbedAutoDetected, file: file, line: line)
+            XCTAssertEqual(restoredDisturbed.notes, "Fever 38.5 °C — night excluded", file: file, line: line)
+            XCTAssertEqual(
+                restoredDisturbed.date.timeIntervalSince1970, disturbedDate.timeIntervalSince1970, accuracy: 0.005,
+                "stored date must be restored, not re-normalized to the local startOfDay", file: file, line: line
+            )
+            XCTAssertEqual(
+                restoredDisturbed.updatedAt.timeIntervalSince1970, disturbedUpdatedAt.timeIntervalSince1970, accuracy: 0.005,
+                "updatedAt must not be re-stamped to import time", file: file, line: line
+            )
+
+            let restoredNoted = try XCTUnwrap(try fetchCycleDay(notedKey, context), file: file, line: line)
+            XCTAssertEqual(restoredNoted.notes, "Spotting", file: file, line: line)
+            XCTAssertFalse(restoredNoted.isPeriod, file: file, line: line)
+            XCTAssertFalse(restoredNoted.isDisturbed, file: file, line: line)
+        }
+
+        let defaults = makeSuiteDefaults(#function)
+        let data = try await DataArchiveService.exportArchive(
+            context: context, defaults: defaults, attachmentsDirectory: try makeTempDirectory()
+        )
+
+        // Clear, then restore into the same store — the "restore onto this device" path, where the
+        // unique dateString keys are deleted and re-inserted within one save.
+        try DataArchiveService.wipeAllData(context: context)
+        try context.save()
+        XCTAssertEqual(count(CycleDay.self, context), 0)
+
+        try await DataArchiveService.importArchive(
+            data, context: context, defaults: defaults, attachmentsDirectory: try makeTempDirectory(), refreshStores: false
+        )
+        try assertRestored()
+
+        // Importing the same file again must yield the same three rows — not six, not a failed save.
+        try await DataArchiveService.importArchive(
+            data, context: context, defaults: defaults, attachmentsDirectory: try makeTempDirectory(), refreshStores: false
+        )
+        try assertRestored()
+    }
+
+    /// A backup written before cycle tracking existed has no `cycleDays` key at all. It must still
+    /// import (the key is optional, not a corruption) and — replace-all semantics — leave the store
+    /// with no cycle days, exactly like every other entity absent from the file.
+    func testImportAcceptsArchiveWithoutCycleDaysKey() async throws {
+        let defaults = makeSuiteDefaults(#function)
+        let exported = try await DataArchiveService.exportArchive(
+            context: try TestSupport.makeContext(), defaults: defaults, attachmentsDirectory: try makeTempDirectory()
+        )
+        var json = try XCTUnwrap(try JSONSerialization.jsonObject(with: exported) as? [String: Any])
+        XCTAssertNotNil(json.removeValue(forKey: "cycleDays"), "export must always write the cycleDays key")
+        let legacy = try JSONSerialization.data(withJSONObject: json)
+
+        let context = try TestSupport.makeContext()
+        context.insert(CycleDay(date: TestSupport.day(-2), isPeriod: true))
+        try context.save()
+        try await DataArchiveService.importArchive(
+            legacy, context: context, defaults: defaults, attachmentsDirectory: try makeTempDirectory(), refreshStores: false
+        )
+        XCTAssertEqual(count(CycleDay.self, context), 0, "replace-all import must not keep rows the file doesn't carry")
+    }
+
     // MARK: - Wipe completeness
 
     func testWipeAllDataCoversAllModels() async throws {
@@ -149,6 +261,7 @@ final class DataArchiveTests: XCTestCase {
         assertEmpty(ActivityEvent.self); assertEmpty(ActivitySensorPollEvent.self); assertEmpty(CoachConversation.self)
         assertEmpty(CoachMessage.self); assertEmpty(CoachMemory.self); assertEmpty(CoachToolCall.self)
         assertEmpty(CoachNotificationRecord.self); assertEmpty(CoachSummary.self); assertEmpty(WearableLog.self)
+        assertEmpty(CycleDay.self)
     }
 
     // MARK: - Rejection without data loss
