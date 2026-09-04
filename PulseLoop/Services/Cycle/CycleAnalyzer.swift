@@ -132,6 +132,20 @@ struct CycleAnalysis: Equatable {
     /// Most recent night that looks like fever/disturbance and isn't excluded yet — the UI
     /// offers a one-tap "exclude this night?" instead of expecting the user to remember.
     var disturbanceSuggestion: Date?
+
+    /// The fertile span worth *drawing* (ring, chart, calendar). Until the shift is confirmed it
+    /// is the full, deliberately wide `fertileWindow`. Once confirmed, that window is closed and
+    /// only the days around the estimated ovulation carry meaning — sperm survival puts the real
+    /// span at about five days before it — so the band shrinks to J−5…confirmation. On a long
+    /// cycle (postpartum return, PCOS) a 75-day band said nothing. The analysis (`fertileWindow`,
+    /// phase) is untouched: this is presentation only.
+    func drawnFertileWindow(calendar: Calendar = .current) -> ClosedRange<Date>? {
+        guard let fertileWindow else { return nil }
+        guard case let .confirmed(estimated, _) = ovulation,
+              let lead = calendar.date(byAdding: .day, value: -5, to: estimated) else { return fertileWindow }
+        let start = max(fertileWindow.lowerBound, lead)
+        return start <= fertileWindow.upperBound ? start...fertileWindow.upperBound : fertileWindow
+    }
 }
 
 // MARK: - Analyzer

@@ -33,7 +33,7 @@ struct CycleMonthCalendar: View {
         let analysis = overview.analysis
 
         let isPredictedPeriod = predictedPeriodDays?.contains(day) ?? false
-        let inFertileWindow = analysis?.fertileWindow?.contains(day) ?? false
+        let inFertileWindow = analysis?.drawnFertileWindow()?.contains(day) ?? false
         let ovulation = analysis?.ovulation.estimatedDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
 
         // A fixed-size circle with the number drawn by the same center-aligned ZStack keeps the

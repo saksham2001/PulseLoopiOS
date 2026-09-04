@@ -42,7 +42,7 @@ struct CycleVitalsCard: View {
                 .foregroundStyle(PulseColors.textMuted)
             Spacer()
             if let analysis = overview?.analysis {
-                Text(settings.settings.onHormonalContraception ? "Tracking" : analysis.phase.label)
+                Text(CycleCopy.phaseLabel(analysis, hormonal: settings.settings.onHormonalContraception))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(PulseColors.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3)

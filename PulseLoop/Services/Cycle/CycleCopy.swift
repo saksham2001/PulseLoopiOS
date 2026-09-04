@@ -49,8 +49,29 @@ enum CycleCopy {
     }
 
     /// "Day 14 · Luteal" — the second line under the headline.
-    static func subtitle(_ analysis: CycleAnalysis, hormonal: Bool) -> String {
-        hormonal ? "Day \(analysis.dayNumber) · analysis paused" : "Day \(analysis.dayNumber) · \(analysis.phase.label)"
+    static func subtitle(_ analysis: CycleAnalysis, hormonal: Bool, today: Date = Date(), calendar: Calendar = .current) -> String {
+        hormonal
+            ? "Day \(analysis.dayNumber) · analysis paused"
+            : "Day \(analysis.dayNumber) · \(phaseLabel(analysis, hormonal: false, today: today, calendar: calendar))"
+    }
+
+    /// The phase word for the ring center and the subtitle. Sensiplan closes the fertile window
+    /// on the *evening* of the confirming high day, so on that day "ovulation confirmed" and
+    /// "fertile window" are both true — name the hinge instead of letting the two read as a
+    /// contradiction.
+    static func phaseLabel(
+        _ analysis: CycleAnalysis,
+        hormonal: Bool,
+        today: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        if hormonal { return "Tracking" }
+        if analysis.phase == .fertile,
+           case let .confirmed(_, confirmedOn) = analysis.ovulation,
+           calendar.isDate(confirmedOn, inSameDayAs: today) {
+            return "Fertile window · closes tonight"
+        }
+        return analysis.phase.label
     }
 
     /// Whether to surface the one-tap "My period started" button: around the predicted date

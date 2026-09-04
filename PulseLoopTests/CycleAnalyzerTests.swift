@@ -270,6 +270,48 @@ final class CycleAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.flags, [.longCycle])
     }
 
+    // MARK: - Presentation on the confirmation day
+
+    /// The confirming high day is both "ovulation confirmed" and (until the evening) "fertile":
+    /// the label must say so rather than read as a contradiction; the next day is plainly luteal.
+    func testPhaseLabelNamesTheConfirmationDay() {
+        let days = records(temps: biphasicTemps(lowDays: 20, highDays: 4))
+        let onTheDay = CycleAnalyzer.analyze(days: days, goal: .understand, today: day(23), calendar: calendar)!
+        XCTAssertTrue(onTheDay.ovulation.isConfirmed)
+        XCTAssertEqual(onTheDay.phase, .fertile)
+        XCTAssertEqual(
+            CycleCopy.phaseLabel(onTheDay, hormonal: false, today: day(23), calendar: calendar),
+            "Fertile window · closes tonight"
+        )
+        XCTAssertEqual(
+            CycleCopy.subtitle(onTheDay, hormonal: false, today: day(23), calendar: calendar),
+            "Day 24 · Fertile window · closes tonight"
+        )
+        XCTAssertEqual(CycleCopy.phaseLabel(onTheDay, hormonal: true, today: day(23), calendar: calendar), "Tracking")
+
+        let dayAfter = CycleAnalyzer.analyze(days: days, goal: .understand, today: day(24), calendar: calendar)!
+        XCTAssertEqual(dayAfter.phase, .luteal)
+        XCTAssertEqual(CycleCopy.phaseLabel(dayAfter, hormonal: false, today: day(24), calendar: calendar), "Luteal")
+    }
+
+    /// Once the shift is confirmed the drawn fertile band shrinks to J−5…confirmation; before
+    /// that, the full (deliberately wide) window is what gets drawn.
+    func testDrawnFertileWindowShrinksOnceConfirmed() {
+        let confirmed = CycleAnalyzer.analyze(
+            days: records(temps: biphasicTemps(lowDays: 20, highDays: 4)),
+            goal: .understand, today: day(23), calendar: calendar
+        )!
+        XCTAssertEqual(confirmed.fertileWindow, day(5)...day(23))
+        XCTAssertEqual(confirmed.drawnFertileWindow(calendar: calendar), day(15)...day(23))
+
+        let probable = CycleAnalyzer.analyze(
+            days: records(temps: biphasicTemps(lowDays: 20, highDays: 3)),
+            goal: .understand, today: day(22), calendar: calendar
+        )!
+        XCTAssertFalse(probable.ovulation.isConfirmed)
+        XCTAssertEqual(probable.drawnFertileWindow(calendar: calendar), probable.fertileWindow)
+    }
+
     // MARK: - Copy
 
     func testHeadlinePrioritizesPeriodOverEverything() {

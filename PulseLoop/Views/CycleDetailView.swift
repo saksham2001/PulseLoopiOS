@@ -84,7 +84,7 @@ struct CycleDetailView: View {
                         Text("Day \(analysis.dayNumber)")
                             .font(.system(size: 30, weight: .semibold, design: .rounded))
                             .foregroundStyle(PulseColors.textPrimary)
-                        Text(hormonal ? "Tracking" : analysis.phase.label)
+                        Text(CycleCopy.phaseLabel(analysis, hormonal: hormonal))
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(PulseColors.textSecondary)
                     }
@@ -156,7 +156,7 @@ struct CycleDetailView: View {
                     CycleBBTChart(
                         days: overview?.chartDays ?? [],
                         coverline: analysis.coverline,
-                        fertileWindow: analysis.fertileWindow,
+                        fertileWindow: analysis.drawnFertileWindow(),
                         units: units
                     )
                 } else {
@@ -362,7 +362,7 @@ struct CycleDetailView: View {
 
         guard !hormonal else { return segments }
 
-        if let window = analysis.fertileWindow {
+        if let window = analysis.drawnFertileWindow(calendar: calendar) {
             let startIndex = max(0, CycleAnalyzer.daysBetween(analysis.cycleStart, window.lowerBound, calendar: calendar))
             let endIndex = CycleAnalyzer.daysBetween(analysis.cycleStart, window.upperBound, calendar: calendar) + 1
             if endIndex > startIndex {
