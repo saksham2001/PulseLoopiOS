@@ -51,17 +51,20 @@ enum CycleBBTService {
         context: ModelContext
     ) -> CycleNightTemperature {
         let calendar = Calendar.current
-        if let session = sessions.first(where: { calendar.isDate($0.date, inSameDayAs: day) }) {
+        // The night is the day's longest session: a waking day can also hold naps, or fragments
+        // of a night split by a >= 60 min gap, whose handful of samples must not stand in for the
+        // whole night depending on fetch order.
+        let mainSession = sessions
+            .filter { calendar.isDate($0.date, inSameDayAs: day) }
+            .max { $0.totalMinutes < $1.totalMinutes }
+        if let session = mainSession {
             let awake = (awakeBySession[session.id] ?? [])
                 .map { block -> ClosedRange<Date> in
                     block.startAt...(block.startAt.addingTimeInterval(TimeInterval(block.durationMinutes * 60)))
                 }
-            let samples = MetricsRepository.measurements(
-                kind: .temperature, start: session.startAt, end: session.endAt, context: context
-            )
-            .filter { sample in !awake.contains { $0.contains(sample.timestamp) } }
-            .map(\.value)
-            .filter { $0 > 0 }
+            let samples = temperatureSamples(start: session.startAt, end: session.endAt, context: context)
+                .filter { sample in !awake.contains { $0.contains(sample.timestamp) } }
+                .map(\.value)
             return night(day: day, values: samples)
         }
         // No sleep session detected (missed sync, unusual schedule). Fall back to the most
@@ -79,9 +82,7 @@ enum CycleBBTService {
               let windowEnd = calendar.date(byAdding: .hour, value: 12, to: day) else {
             return CycleNightTemperature(date: day, celsius: nil, sampleCount: 0)
         }
-        let samples = MetricsRepository.measurements(kind: .temperature, start: windowStart, end: windowEnd, context: context)
-            .filter { $0.value > 0 }
-            .sorted { $0.timestamp < $1.timestamp }
+        let samples = temperatureSamples(start: windowStart, end: windowEnd, context: context)
         // 4 h at the ring's ~30 min cadence ⇒ 8 samples per window; require enough for a median.
         let windowSize = 8
         guard samples.count >= max(windowSize, minimumSamples) else {
@@ -102,6 +103,23 @@ enum CycleBBTService {
         }
         guard let best else { return CycleNightTemperature(date: day, celsius: nil, sampleCount: 0) }
         return night(day: day, values: best.values)
+    }
+
+    /// Positive temperature samples in `[start, end]`, oldest first, **one per slot**. The ring
+    /// replays its log on every sync and stores written before the upsert fix hold many copies of
+    /// each slot, so collapse by timestamp (latest row wins) before any statistic: a median over
+    /// duplicates is weighted by sync count, not by time, and drifts from one sync to the next.
+    /// Also lifts the repository's default 500-row cap, which on such a store silently dropped
+    /// the first half of the night.
+    private static func temperatureSamples(start: Date, end: Date, context: ModelContext) -> [Measurement] {
+        let rows = MetricsRepository.measurements(kind: .temperature, start: start, end: end, limit: 20_000, context: context)
+        var latestBySlot: [Int: Measurement] = [:]
+        for row in rows where row.value > 0 {
+            let slot = Int(row.timestamp.timeIntervalSince1970.rounded())
+            if let current = latestBySlot[slot], current.createdAt > row.createdAt { continue }
+            latestBySlot[slot] = row
+        }
+        return latestBySlot.values.sorted { $0.timestamp < $1.timestamp }
     }
 
     private static func night(day: Date, values: [Double]) -> CycleNightTemperature {
