@@ -79,7 +79,8 @@ enum CycleCopy {
             return "No temperature shift detected this cycle so far. Cycles without a clear shift happen "
                 + "and are usually nothing to worry about."
         case .longCycle:
-            return "This cycle is running unusually long. Estimates are paused until a new period is logged."
+            return "This cycle is running unusually long. Period estimates are on hold until a temperature "
+                + "shift is confirmed or a new period is logged."
         }
     }
 }

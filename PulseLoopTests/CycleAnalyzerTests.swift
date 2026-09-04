@@ -238,6 +238,38 @@ final class CycleAnalyzerTests: XCTestCase {
         XCTAssertTrue(analysis.flags.contains(.noThermalShiftYet))
     }
 
+    func testLongCycleWithoutShiftFlagsLongCycle() {
+        let analysis = CycleAnalyzer.analyze(
+            days: records(temps: Array(repeating: 36.0, count: 70)),
+            goal: .understand, today: day(69), calendar: calendar
+        )!
+        XCTAssertEqual(analysis.flags, [.longCycle])
+        XCTAssertEqual(CycleCopy.headline(analysis, hormonal: false, today: day(69), calendar: calendar), "Long cycle — waiting for data")
+    }
+
+    /// A late first ovulation (postpartum return, PCOS, perimenopause): once the shift is
+    /// confirmed the cycle has restarted, so the long-cycle banner must give way to the
+    /// confirmation and the period countdown instead of hiding them.
+    func testConfirmedShiftClearsTheLongCycleFlag() {
+        let analysis = CycleAnalyzer.analyze(
+            days: records(temps: biphasicTemps(lowDays: 65, highDays: 4)),
+            goal: .understand, today: day(68), calendar: calendar
+        )!
+        XCTAssertTrue(analysis.ovulation.isConfirmed)
+        XCTAssertTrue(analysis.flags.isEmpty)
+        XCTAssertNotNil(analysis.nextPeriod)
+        XCTAssertEqual(CycleCopy.headline(analysis, hormonal: false, today: day(68), calendar: calendar), "Ovulation likely confirmed")
+    }
+
+    func testProbableShiftKeepsTheLongCycleFlag() {
+        let analysis = CycleAnalyzer.analyze(
+            days: records(temps: biphasicTemps(lowDays: 65, highDays: 3)),
+            goal: .understand, today: day(67), calendar: calendar
+        )!
+        if case .probable = analysis.ovulation {} else { XCTFail("expected a probable rise, got \(analysis.ovulation)") }
+        XCTAssertEqual(analysis.flags, [.longCycle])
+    }
+
     // MARK: - Copy
 
     func testHeadlinePrioritizesPeriodOverEverything() {

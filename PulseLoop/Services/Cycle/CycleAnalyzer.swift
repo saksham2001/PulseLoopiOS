@@ -471,10 +471,16 @@ enum CycleAnalyzer {
            temperature > shiftResult.coverline {
             flags.append(.possiblePregnancy)
         }
-        if dayNumber > 60 {
-            flags.append(.longCycle)
-        } else if dayNumber >= 35, shift?.status.isConfirmed != true {
-            flags.append(.noThermalShiftYet)
+        // Both banners say "still waiting for the shift", so a *confirmed* shift silences them:
+        // the cycle has (re)started its luteal phase and the confirmation plus the period
+        // countdown are the useful signal — postpartum return, PCOS and perimenopause routinely
+        // run past day 60 before ovulating.
+        if shift?.status.isConfirmed != true {
+            if dayNumber > 60 {
+                flags.append(.longCycle)
+            } else if dayNumber >= 35 {
+                flags.append(.noThermalShiftYet)
+            }
         }
         return flags
     }
