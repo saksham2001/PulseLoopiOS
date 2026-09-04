@@ -158,6 +158,26 @@ final class HealthSyncTests: XCTestCase {
         )
     }
 
+    func testExcerciseMinutesSyncIDsDeterminiticAndDistinct() {
+        let dayEpoch = Int(Date(timeIntervalSince1970: 1_750_000_000).timeIntervalSince1970)
+        XCTAssertEqual(
+            HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch),
+            HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch)
+        )
+        XCTAssertNotEqual(
+            HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch),
+            HealthKitTypeMappings.activitySyncID(metric: "steps", dayEpoch: dayEpoch)
+        )
+        XCTAssertNotEqual(
+            HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch),
+            HealthKitTypeMappings.activitySyncID(metric: "energy", dayEpoch: dayEpoch)
+        )
+        XCTAssertNotEqual(
+            HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch),
+            HealthKitTypeMappings.activitySyncID(metric: "dist", dayEpoch: dayEpoch)
+        )
+    }
+
     func testSleepAndWorkoutSyncIDsAreDeterministicPerID() {
         let blockID = UUID()
         XCTAssertEqual(HealthKitTypeMappings.sleepBlockSyncID(blockID: blockID), HealthKitTypeMappings.sleepBlockSyncID(blockID: blockID))

@@ -106,7 +106,7 @@ enum HealthKitTypeMappings {
         "pl-m-\(kindRaw)-\(Int(timestamp.timeIntervalSince1970 * 1000))"
     }
 
-    /// A daily-activity aggregate. `metric` is one of "steps" / "energy" / "dist"; `dayEpoch` is the
+    /// A daily-activity aggregate. `metric` is one of "steps" / "energy" / "dist" / "exmin"; `dayEpoch` is the
     /// unix start-of-day, so each day's total replaces the prior export rather than duplicating.
     static func activitySyncID(metric: String, dayEpoch: Int) -> String {
         "pl-act-\(metric)-\(dayEpoch)"

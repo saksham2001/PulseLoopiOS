@@ -5,7 +5,7 @@ import os
 
 /// Exports everything the ring captures into Apple Health, one direction only (PulseLoop → Health):
 ///   • Vitals — heart rate, blood oxygen (SpO₂), HRV, skin temperature
-///   • Daily activity — steps, active energy, walking/running distance
+///   • Daily activity — steps, active energy, walking/running distance, exercise minutes
 ///   • Sleep — per-stage segments (deep / core / REM / awake)
 ///   • Workouts — type, energy, distance, and the recorded GPS route (see `+Workouts`)
 ///
@@ -60,6 +60,8 @@ final class HealthSyncService {
     private var quantityWriteTypes: [HKQuantityType] {
         var identifiers: [HKQuantityTypeIdentifier] = [
             .heartRate, .oxygenSaturation, .heartRateVariabilitySDNN, .bodyTemperature,
+            .stepCount, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling, .appleExerciseTime
+        ].compactMap { HKQuantityType.quantityType(forIdentifier: $0) }
             .stepCount, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling
         ]
         // Dietary types join the share set only once the nutrition feature is enabled, so users
@@ -264,9 +266,9 @@ final class HealthSyncService {
         }
     }
 
-    /// One day-spanning sample per enabled type. Native workout kcal/distance are netted out of the day
+    /// One day-spanning sample per enabled type. Native workout kcal/distance/excercise-minutes are netted out of the day
     /// total (only when workout export is on) so the Move ring doesn't double-count.
-    private func activitySamples(row: ActivityDaily, netting: (kcal: [Date: Double], meters: [Date: Double]),
+    private func activitySamples(row: ActivityDaily, netting: (kcal: [Date: Double], meters: [Date: Double], minutes: [Date: Double]),
                                  now: Date, device: HKDevice?) -> [HKQuantitySample] {
         let cal = Calendar.current
         let dayStart = cal.startOfDay(for: row.date)
@@ -278,6 +280,7 @@ final class HealthSyncService {
         let version = Int(row.updatedAt.timeIntervalSince1970)
         let netKcal = prefsStore.prefs.exportWorkouts ? (netting.kcal[dayStart] ?? 0) : 0
         let netMeters = prefsStore.prefs.exportWorkouts ? (netting.meters[dayStart] ?? 0) : 0
+        let netMinutes = prefsStore.prefs.exportWorkouts ? (netting.minutes[dayStart] ?? 0) : 0
 
         var out: [HKQuantitySample] = []
         if let type = HKQuantityType.quantityType(forIdentifier: .stepCount), canShare(type), row.steps > 0 {
@@ -290,6 +293,14 @@ final class HealthSyncService {
             if leftover > 0 {
                 out.append(quantitySample(type, unit: .kilocalorie(), value: leftover, start: dayStart, end: dayEnd,
                                           syncID: HealthKitTypeMappings.activitySyncID(metric: "energy", dayEpoch: dayEpoch),
+                                          version: version, device: device))
+            }
+        }
+        if let type = HKQuantityType.quantityType(forIdentifier: .appleExerciseTime), canShare(type) {
+            let leftover = Double(row.activeMinutes) - netMinutes
+            if leftover > 0 {
+                out.append(quantitySample(type, unit: .minute(), value: leftover, start: dayStart, end: dayEnd,
+                                          syncID: HealthKitTypeMappings.activitySyncID(metric: "exmin", dayEpoch: dayEpoch),
                                           version: version, device: device))
             }
         }
@@ -312,9 +323,10 @@ final class HealthSyncService {
     /// maps to walking/running (a cycling ride exports to `.distanceCycling`, a separate HealthKit type
     /// that never contributes to the walking+running total, so netting it would silently under-count the
     /// day's real walking distance).
-    private func workoutNetting(context: ModelContext) -> (kcal: [Date: Double], meters: [Date: Double]) {
+    private func workoutNetting(context: ModelContext) -> (kcal: [Date: Double], meters: [Date: Double], minutes: [Date: Double]) {
         var kcal: [Date: Double] = [:]
         var meters: [Date: Double] = [:]
+        var minutes: [Date: Double] = [:]
         let cal = Calendar.current
         let walkRunID = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)?.identifier
         let sessions = ActivityRepository.sessions(context: context)
@@ -326,8 +338,12 @@ final class HealthSyncService {
                HealthKitTypeMappings.distanceType(for: session.type)?.identifier == walkRunID {
                 meters[day, default: 0] += m
             }
+            if let end = session.endedAt {
+                let workoutMinutes = Double(max(0, Int(end.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60)
+                if workoutMinutes > 0 { minutes[day, default: 0] += workoutMinutes }
+            }
         }
-        return (kcal, meters)
+        return (kcal, meters, minutes)
     }
 
     private func quantitySample(_ type: HKQuantityType, unit: HKUnit, value: Double, start: Date, end: Date,
