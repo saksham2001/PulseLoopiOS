@@ -1,13 +1,118 @@
 import SwiftUI
 import SwiftData
 
+/// How one day of the month grid is shaded. Precedence is total and top-down — a logged flow day
+/// beats a predicted one, which beats the fertile band, which beats the luteal phase — so every
+/// day resolves to exactly one tint. Kept out of the view (and free of SwiftUI) so the date
+/// arithmetic can be unit-tested on its own.
+enum CycleCalendarShading: Equatable {
+    case period
+    case predictedPeriod
+    case fertile
+    case luteal
+    case none
+
+    /// A predicted period is drawn as the expected day plus a typical flow length.
+    static let predictedFlowDays = 5
+
+    /// Classify one day against the logged facts and the derived analysis.
+    static func shading(
+        for day: Date,
+        overview: CycleOverview,
+        today: Date,
+        calendar: Calendar = .current
+    ) -> CycleCalendarShading {
+        let day = calendar.startOfDay(for: day)
+        let today = calendar.startOfDay(for: today)
+        if overview.loggedDays[CycleDay.key(for: day)]?.isPeriod == true { return .period }
+        guard let analysis = overview.analysis else { return .none }
+        if isPredictedPeriod(day, analysis: analysis, today: today, calendar: calendar) { return .predictedPeriod }
+        if analysis.drawnFertileWindow(calendar: calendar)?.contains(day) == true { return .fertile }
+        if isLuteal(day, analysis: analysis, today: today, calendar: calendar) { return .luteal }
+        return .none
+    }
+
+    /// Expected flow: the predicted start plus a typical period, future only — up to today the
+    /// calendar shows what the user actually logged, not what was forecast.
+    private static func isPredictedPeriod(_ day: Date, analysis: CycleAnalysis, today: Date, calendar: Calendar) -> Bool {
+        guard let expected = analysis.nextPeriod?.expected, expected > today, day >= expected else { return false }
+        return CycleAnalyzer.daysBetween(expected, day, calendar: calendar) < predictedFlowDays
+    }
+
+    /// Luteal days of the running cycle *and* of every past cycle whose shift was detected.
+    private static func isLuteal(_ day: Date, analysis: CycleAnalysis, today: Date, calendar: Calendar) -> Bool {
+        if currentLutealRange(analysis, today: today, calendar: calendar)?.contains(day) == true { return true }
+        return analysis.completedCycles.contains { completedLutealRange($0, calendar: calendar)?.contains(day) == true }
+    }
+
+    /// The running cycle's luteal band: from the day after the confirming high — the very test
+    /// `CycleAnalyzer` uses to switch the phase — to the day before the next period. Only a
+    /// *confirmed* shift draws it; while the rise is merely probable the days still read fertile.
+    /// A prediction carries the band into the future; without one it stops at today.
+    private static func currentLutealRange(_ analysis: CycleAnalysis, today: Date, calendar: Calendar) -> ClosedRange<Date>? {
+        guard case let .confirmed(_, confirmedOn) = analysis.ovulation,
+              let start = calendar.date(byAdding: .day, value: 1, to: confirmedOn) else { return nil }
+        let end = analysis.nextPeriod.flatMap { calendar.date(byAdding: .day, value: -1, to: $0.expected) } ?? today
+        return start <= end ? start...end : nil
+    }
+
+    /// A closed cycle's luteal band: the day after its estimated ovulation through the day before
+    /// the period that ended it.
+    private static func completedLutealRange(_ cycle: CompletedCycleSummary, calendar: Calendar) -> ClosedRange<Date>? {
+        guard let ovulationIndex = cycle.ovulationDayIndex,
+              let start = calendar.date(byAdding: .day, value: ovulationIndex + 1, to: cycle.start),
+              let end = calendar.date(byAdding: .day, value: cycle.lengthDays - 1, to: cycle.start),
+              start <= end else { return nil }
+        return start...end
+    }
+}
+
+/// Shading → paint. The opacities here are the *final* rendered strength, so no caller may dim a
+/// cell on top of them: that double-dimming is exactly what washed predicted days out to nothing.
+private extension CycleCalendarShading {
+    var fill: Color {
+        switch self {
+        case .period: return PulseColors.cycle
+        case .predictedPeriod: return PulseColors.cycle.opacity(0.22)
+        case .fertile: return PulseColors.cycleFertile.opacity(0.30)
+        case .luteal: return PulseColors.cycleLuteal.opacity(0.26)
+        case .none: return PulseColors.cardSoft.opacity(0.5)
+        }
+    }
+
+    /// Only predicted flow carries a ring — dashed, in the period color — so "expected" is told
+    /// apart from "logged" by shape, not merely by how strong the pink is.
+    var ring: (color: Color, style: StrokeStyle)? {
+        guard self == .predictedPeriod else { return nil }
+        return (PulseColors.cycle.opacity(0.85), StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
+    }
+}
+
+/// The circle a day of the grid is drawn with. Shared with the legend so a swatch can never drift
+/// from the cells it explains.
+private struct CycleShadingCircle: View {
+    let shading: CycleCalendarShading
+
+    var body: some View {
+        Circle()
+            .fill(shading.fill)
+            .overlay {
+                if let ring = shading.ring {
+                    Circle().strokeBorder(ring.color, style: ring.style)
+                }
+            }
+    }
+}
+
 /// Month grid for the cycle detail screen: logged period days filled, predicted period days
-/// tinted, the fertile window softly highlighted, ovulation starred, disturbed nights dotted.
-/// Tapping any past-or-today day opens the quick log sheet.
+/// tinted and dashed, the fertile window and the luteal phase highlighted, ovulation starred,
+/// disturbed nights dotted. Tapping any past-or-today day opens the quick log sheet.
 struct CycleMonthCalendar: View {
     let month: Date                       // any day inside the displayed month
     let overview: CycleOverview
     let today: Date
+    /// Off under hormonal contraception, where the thermal analysis is paused.
+    var showFertility = true
     let onSelect: (Date) -> Void
 
     private var calendar: Calendar { Calendar.current }
@@ -31,25 +136,24 @@ struct CycleMonthCalendar: View {
         let isToday = calendar.isDate(day, inSameDayAs: today)
         let isFuture = day > today
         let analysis = overview.analysis
-
-        let isPredictedPeriod = predictedPeriodDays?.contains(day) ?? false
-        let inFertileWindow = analysis?.drawnFertileWindow()?.contains(day) ?? false
+        let shading = shading(for: day)
         let ovulation = analysis?.ovulation.estimatedDate.map { calendar.isDate($0, inSameDayAs: day) } ?? false
 
         // A fixed-size circle with the number drawn by the same center-aligned ZStack keeps the
         // digit dead-center; the star/disturbed markers live in overlays so they can't skew it.
+        // A future day is dimmed through its *digit* only: fading the whole cell multiplied with
+        // the fill's own opacity and left the predicted period at ~0.11, i.e. invisible.
         return Button {
             onSelect(day)
         } label: {
             ZStack {
-                Circle()
-                    .fill(background(facts: facts, predicted: isPredictedPeriod, fertile: inFertileWindow))
+                CycleShadingCircle(shading: shading)
                     .overlay(Circle().stroke(isToday ? PulseColors.accent : .clear, lineWidth: 1.5))
                     .frame(width: 36, height: 36)
                 Text("\(calendar.component(.day, from: day))")
-                    .font(.system(size: 13, weight: facts?.isPeriod == true ? .semibold : .regular))
+                    .font(.system(size: 13, weight: shading == .period ? .semibold : .regular))
                     .monospacedDigit()
-                    .foregroundStyle(facts?.isPeriod == true ? Color.white : (isFuture ? PulseColors.textMuted : PulseColors.textPrimary))
+                    .foregroundStyle(digitColor(shading: shading, isFuture: isFuture))
             }
             .frame(maxWidth: .infinity)
             .frame(height: 40)
@@ -68,23 +172,22 @@ struct CycleMonthCalendar: View {
                         .frame(width: 5, height: 5)
                 }
             }
-            .opacity(isFuture ? 0.55 : 1)
         }
         .buttonStyle(.plain)
         .disabled(isFuture)
     }
 
-    private func background(facts: CycleOverview.CycleDayFacts?, predicted: Bool, fertile: Bool) -> Color {
-        if facts?.isPeriod == true { return PulseColors.cycle }
-        if predicted { return PulseColors.cycle.opacity(0.20) }
-        if fertile { return PulseColors.cycleFertile.opacity(0.12) }
-        return PulseColors.cardSoft.opacity(0.5)
+    /// Fertility shading (fertile band, luteal phase) is dropped under hormonal contraception,
+    /// where the thermal analysis is paused — the same gate the chart and the legend already use.
+    private func shading(for day: Date) -> CycleCalendarShading {
+        let shading = CycleCalendarShading.shading(for: day, overview: overview, today: today, calendar: calendar)
+        if !showFertility, shading == .fertile || shading == .luteal { return .none }
+        return shading
     }
 
-    /// Predicted flow days: the expected start plus a typical 5-day period, future only.
-    private var predictedPeriodDays: [Date]? {
-        guard let expected = overview.analysis?.nextPeriod?.expected, expected > today else { return nil }
-        return (0..<5).compactMap { calendar.date(byAdding: .day, value: $0, to: expected) }
+    private func digitColor(shading: CycleCalendarShading, isFuture: Bool) -> Color {
+        if shading == .period { return .white }
+        return isFuture ? PulseColors.textMuted : PulseColors.textPrimary
     }
 
     // MARK: - Month math
@@ -125,14 +228,15 @@ struct CycleCalendarLegend: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 14) {
-                item(label: "Period") { Circle().fill(PulseColors.cycle) }
-                item(label: "Predicted") { Circle().fill(PulseColors.cycle.opacity(0.25)) }
+                item(label: "Period") { CycleShadingCircle(shading: .period) }
+                item(label: "Predicted") { CycleShadingCircle(shading: .predictedPeriod) }
                 if showFertility {
-                    item(label: "Fertile window") { Circle().fill(PulseColors.cycleFertile.opacity(0.35)) }
+                    item(label: "Fertile window") { CycleShadingCircle(shading: .fertile) }
                 }
             }
             HStack(spacing: 14) {
                 if showFertility {
+                    item(label: "Luteal") { CycleShadingCircle(shading: .luteal) }
                     item(label: "Est. ovulation") {
                         Image(systemName: "star.fill")
                             .font(.system(size: 8))

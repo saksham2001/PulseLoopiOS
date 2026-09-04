@@ -234,7 +234,7 @@ struct CycleDetailView: View {
                 }
                 .foregroundStyle(PulseColors.textSecondary)
 
-                CycleMonthCalendar(month: displayedMonth, overview: overview, today: Date()) { day in
+                CycleMonthCalendar(month: displayedMonth, overview: overview, today: Date(), showFertility: !hormonal) { day in
                     logItem = CycleLogItem(date: day)
                 }
                 CycleCalendarLegend(showFertility: !hormonal)
