@@ -96,9 +96,14 @@ struct ColmiEncoder {
         [ColmiCommandID.syncActivity, UInt8(clamping: daysAgo), 0x0f, 0x00, 0x5f, 0x01]
     }
 
-    /// HR history from a unix timestamp (seconds), little-endian in bytes 1-4.
-    func syncHeartRate(fromUnix seconds: Int) -> [UInt8] {
-        let ts = UInt32(truncatingIfNeeded: seconds)
+    /// HR history request (0x15), timestamp little-endian in bytes 1-4. The ring's RTC runs on local
+    /// wall time (see `setDateTime`), so its firmware keys history days by "local-time-as-UTC"
+    /// epochs. Send local midnight *plus* the UTC offset — matching GadgetBridge
+    /// (`getTimeInMillis() + ZONE_OFFSET + DST_OFFSET`) and colmi_r02_client (midnight with
+    /// tzinfo=UTC). A true UTC epoch misses the day slot and the ring replies "empty" for every day.
+    func syncHeartRate(dayStart: Date, timeZone: TimeZone = .current) -> [UInt8] {
+        let offset = timeZone.secondsFromGMT(for: dayStart)
+        let ts = UInt32(truncatingIfNeeded: Int(dayStart.timeIntervalSince1970) + offset)
         return [
             ColmiCommandID.syncHeartRate,
             UInt8(ts & 0xff),
