@@ -186,6 +186,8 @@ final class CycleBBTServiceTests: XCTestCase {
         XCTAssertEqual(analysis.dayNumber, 10)
         XCTAssertEqual(overview.chartDays.count, 10)
         XCTAssertEqual(overview.chartDays.compactMap(\.temperature).count, 10)
+        XCTAssertEqual(overview.chartDays.compactMap(\.smoothedTemperature), Array(repeating: 36.0, count: 10),
+                       "the chart carries the smoothed series the rule reads")
         XCTAssertTrue(overview.chartDays.first?.isPeriod == true)
     }
 

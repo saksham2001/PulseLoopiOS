@@ -53,9 +53,10 @@ struct CyclePhaseRing<Center: View>: View {
 
 // MARK: - BBT chart
 
-/// The basal-temperature chart for one cycle: nightly medians joined by a line, excluded
-/// (disturbed) nights as hollow points off the line, the coverline as a dashed rule, and the
-/// fertile window as a soft band. Values are stored °C and converted for display only.
+/// The basal-temperature chart for one cycle: the line runs through the smoothed series the
+/// 3-over-6 rule reads (rolling 3-night median), the raw nightly medians are the dots, excluded
+/// (disturbed) nights are hollow points off the line, the coverline is a dashed rule, and the
+/// fertile window a soft band. Values are stored °C and converted for display only.
 struct CycleBBTChart: View {
     let days: [CycleChartDay]
     let coverline: Double?                    // °C
@@ -70,7 +71,7 @@ struct CycleBBTChart: View {
     private var excludedDays: [CycleChartDay] { days.filter { $0.temperature != nil && $0.excluded } }
 
     private var yDomain: ClosedRange<Double> {
-        let values = days.compactMap(\.temperature).map(display)
+        let values = days.flatMap { [$0.temperature, $0.smoothedTemperature] }.compactMap { $0 }.map(display)
         let pad = units == .metric ? 0.2 : 0.4
         guard let lo = values.min(), let hi = values.max() else {
             return units == .metric ? 35.0...37.5 : 95.0...99.5
@@ -94,7 +95,7 @@ struct CycleBBTChart: View {
                 .foregroundStyle(PulseColors.cycleFertile.opacity(0.08))
             }
             ForEach(validDays) { day in
-                LineMark(x: .value("Day", day.date), y: .value("Temp", display(day.temperature ?? 0)))
+                LineMark(x: .value("Day", day.date), y: .value("Temp", display(day.smoothedTemperature ?? day.temperature ?? 0)))
                     .foregroundStyle(PulseColors.cycle)
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2))

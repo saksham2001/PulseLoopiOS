@@ -272,19 +272,31 @@ enum CycleAnalyzer {
             let coverline = smoothed[(candidate - config.referenceDays)..<candidate].max() ?? .infinity
             guard smoothed[candidate] > coverline else { continue }
 
-            let estimated = calendar.date(byAdding: .day, value: -1, to: valid[candidate].date) ?? valid[candidate].date
+            // The smoothing that tames the ring's quantization also lags: the first *raw* value
+            // above the line usually precedes the first smoothed one by a day. Sensiplan's "first
+            // higher measurement" is that raw value, and ovulation is dated from it (Heidelberg
+            // NFP group: on average 0.9 days before it, 81 % within 0–2 days) — so walk back over
+            // the raw run above the line, at most the smoothing window. Confirmation stays on the
+            // smoothed series, the conservative side.
+            var firstHigh = candidate
+            while firstHigh > 0, candidate - firstHigh < 2,
+                  let raw = valid[firstHigh - 1].temperature, raw > coverline {
+                firstHigh -= 1
+            }
+            let firstHighDay = valid[firstHigh].date
+            let estimated = calendar.date(byAdding: .day, value: -1, to: firstHighDay) ?? firstHighDay
             switch evaluateRise(candidate: candidate, coverline: coverline, values: smoothed, config: config) {
             case let .confirmed(index):
                 return ShiftResult(
                     coverline: coverline,
-                    firstHighDay: valid[candidate].date,
+                    firstHighDay: firstHighDay,
                     status: .confirmed(estimated: estimated, confirmedOn: valid[index].date)
                 )
             case let .pending(highs):
                 // Rise underway at the end of the data. One raised value is noise; from two
                 // consecutive highs we surface it as "probable". Remember the earliest.
                 if highs >= 2, pending == nil {
-                    pending = ShiftResult(coverline: coverline, firstHighDay: valid[candidate].date,
+                    pending = ShiftResult(coverline: coverline, firstHighDay: firstHighDay,
                                           status: .probable(estimated: estimated))
                 }
             case .failed:

@@ -5,6 +5,9 @@ import SwiftData
 struct CycleChartDay: Identifiable, Equatable {
     let date: Date
     let temperature: Double?   // °C, nil = gap
+    /// The value the 3-over-6 rule actually reads: rolling 3-night median over valid nights.
+    /// nil on gaps and excluded nights.
+    let smoothedTemperature: Double?
     let excluded: Bool         // disturbed night — drawn hollow, skipped by the analysis
     let isPeriod: Bool
 
@@ -93,9 +96,7 @@ enum CycleService {
 
         let chartDays: [CycleChartDay]
         if let start = analysis?.cycleStart {
-            chartDays = records.filter { $0.date >= start }.map {
-                CycleChartDay(date: $0.date, temperature: $0.temperature, excluded: $0.isDisturbed, isPeriod: $0.isPeriod)
-            }
+            chartDays = makeChartDays(from: records.filter { $0.date >= start })
         } else {
             chartDays = []
         }
@@ -110,13 +111,32 @@ enum CycleService {
         let temperatures = CycleBBTService.nightlyTemperatures(days: days, context: context)
         let logged = CycleRepository.days(context: context)
         let loggedByKey = Dictionary(uniqueKeysWithValues: logged.map { ($0.dateString, $0) })
-        return zip(days, temperatures).map { day, night in
+        let records = zip(days, temperatures).map { day, night -> CycleDayRecord in
             let facts = loggedByKey[CycleDay.key(for: day)]
-            return CycleChartDay(
+            return CycleDayRecord(
                 date: day,
                 temperature: night.celsius,
-                excluded: facts?.isDisturbed ?? false,
-                isPeriod: facts?.isPeriod ?? false
+                isPeriod: facts?.isPeriod ?? false,
+                isDisturbed: facts?.isDisturbed ?? false
+            )
+        }
+        return makeChartDays(from: records)
+    }
+
+    /// Chart rows for one cycle's records, carrying both the raw nightly median and the smoothed
+    /// value the analyzer reads (rolling 3-night median over valid nights). The chart draws its
+    /// line through the smoothed series — the one the 3-over-6 rule evaluates — so a one-quantum
+    /// dip in a raw median no longer reads as "back to baseline" on a day the rule counts as high.
+    static func makeChartDays(from records: [CycleDayRecord]) -> [CycleChartDay] {
+        let valid = records.filter(\.isValidTemperature)
+        let smoothedByDate = Dictionary(uniqueKeysWithValues: zip(valid.map(\.date), CycleAnalyzer.smoothedValues(valid)))
+        return records.map {
+            CycleChartDay(
+                date: $0.date,
+                temperature: $0.temperature,
+                smoothedTemperature: smoothedByDate[$0.date],
+                excluded: $0.isDisturbed,
+                isPeriod: $0.isPeriod
             )
         }
     }

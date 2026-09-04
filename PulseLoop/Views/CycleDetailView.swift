@@ -163,7 +163,8 @@ struct CycleDetailView: View {
                     CycleBBTChart(days: pastChartDays, coverline: nil, fertileWindow: nil, units: units)
                 }
                 Text(cycleOffset == 0
-                     ? "Nightly medians of your ring's sleep temperature. Hollow points are excluded nights."
+                     ? "Dots: nightly medians of your ring's sleep temperature (hollow = excluded). "
+                       + "Line: the 3-night rolling median the temperature rule reads."
                      : pastCycleCaption(past))
                     .font(.system(size: 11))
                     .foregroundStyle(PulseColors.textMuted)

@@ -66,9 +66,10 @@ final class CycleAnalyzerTests: XCTestCase {
         guard case let .confirmed(estimated, confirmedOn) = analysis.ovulation else {
             return XCTFail("expected confirmed, got \(analysis.ovulation)")
         }
-        // Raw highs start day 11; the 3-day rolling median delays the smoothed rise to day 12,
-        // so the estimate lands on day 11 and confirmation on the 3rd smoothed high (day 14).
-        XCTAssertEqual(estimated, day(10))
+        // Raw highs start day 11 — Sensiplan's first higher measurement — so ovulation is dated
+        // the day before (day 10). The 3-day rolling median delays the smoothed rise to day 12 and
+        // confirmation lands on the 3rd smoothed high (day 14).
+        XCTAssertEqual(estimated, day(9))
         XCTAssertEqual(confirmedOn, day(13))
         XCTAssertEqual(analysis.coverline, 36.0)
         XCTAssertEqual(analysis.phase, .luteal)
@@ -190,8 +191,8 @@ final class CycleAnalyzerTests: XCTestCase {
             days: records(temps: biphasicTemps()),
             goal: .understand, today: day(17), calendar: calendar
         )!
-        // No history → default 14-day luteal from the estimated ovulation (day 11).
-        XCTAssertEqual(analysis.nextPeriod?.expected, day(10 + 14))
+        // No history → default 14-day luteal from the estimated ovulation (day 10).
+        XCTAssertEqual(analysis.nextPeriod?.expected, day(9 + 14))
     }
 
     func testCompletedCyclesDriveTypicalLengthPrediction() {
@@ -270,6 +271,21 @@ final class CycleAnalyzerTests: XCTestCase {
         XCTAssertEqual(analysis.flags, [.longCycle])
     }
 
+    /// The smoothed series lags the raw one by a day, but Sensiplan dates ovulation from the
+    /// first *raw* value above the line. An isolated spike before the rise is not that value:
+    /// the walk-back stops at the first raw value on or below the line.
+    func testOvulationIsDatedFromTheFirstRawHigh() {
+        let shift = CycleAnalyzer.detectShift(in: records(temps: biphasicTemps()), cycleStart: day(0), calendar: calendar)!
+        XCTAssertEqual(shift.firstHighDay, day(10))
+        XCTAssertEqual(shift.status.estimatedDate, day(9))
+
+        var temps = biphasicTemps()
+        temps[8] = 36.5   // spike at index 8, index 9 low again, sustained rise from index 10
+        let spiked = CycleAnalyzer.detectShift(in: records(temps: temps), cycleStart: day(0), calendar: calendar)!
+        XCTAssertEqual(spiked.firstHighDay, day(10))
+        XCTAssertEqual(spiked.status.estimatedDate, day(9))
+    }
+
     // MARK: - Presentation on the confirmation day
 
     /// The confirming high day is both "ovulation confirmed" and (until the evening) "fertile":
@@ -302,7 +318,8 @@ final class CycleAnalyzerTests: XCTestCase {
             goal: .understand, today: day(23), calendar: calendar
         )!
         XCTAssertEqual(confirmed.fertileWindow, day(5)...day(23))
-        XCTAssertEqual(confirmed.drawnFertileWindow(calendar: calendar), day(15)...day(23))
+        // Raw rise at index 20 → ovulation dated day 19 → drawn band from J−5 = day 14.
+        XCTAssertEqual(confirmed.drawnFertileWindow(calendar: calendar), day(14)...day(23))
 
         let probable = CycleAnalyzer.analyze(
             days: records(temps: biphasicTemps(lowDays: 20, highDays: 3)),
