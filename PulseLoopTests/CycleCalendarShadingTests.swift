@@ -94,8 +94,21 @@ final class CycleCalendarShadingTests: XCTestCase {
         XCTAssertEqual(shading(overview, day(28), today: today), .none)
     }
 
+    func testExpectedPeriodDueTodayShadesTodayAndTheFlowDays() {
+        // The day the headline reads "Period due today": the flow is drawn from today on, not
+        // skipped for landing on the boundary.
+        let today = day(23)
+        let overview = idealCycle(today: today)
+        XCTAssertEqual(overview.analysis?.nextPeriod?.expected, today)
+        XCTAssertEqual(shading(overview, day(22), today: today), .luteal)      // day before the prediction
+        for offset in 23...27 {
+            XCTAssertEqual(shading(overview, day(offset), today: today), .predictedPeriod, "day(\(offset))")
+        }
+        XCTAssertEqual(shading(overview, day(28), today: today), .none)
+    }
+
     func testExpectedPeriodAlreadyInThePastIsNotShaded() {
-        // The period never arrived: past days show what was logged, not what was forecast.
+        // The period is late: past days show what was logged, not what was forecast.
         let today = day(30)
         let overview = idealCycle(today: today)
         XCTAssertEqual(overview.analysis?.nextPeriod?.expected, day(23))

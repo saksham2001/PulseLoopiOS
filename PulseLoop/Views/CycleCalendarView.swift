@@ -32,10 +32,14 @@ enum CycleCalendarShading: Equatable {
         return .none
     }
 
-    /// Expected flow: the predicted start plus a typical period, future only — up to today the
-    /// calendar shows what the user actually logged, not what was forecast.
+    /// Expected flow: the predicted start plus a typical period, drawn as soon as the expected day
+    /// is today or later — the day the headline reads "Period due today" the flow is shaded from
+    /// today on. Once the expected day has passed the period is late and nothing is drawn: past
+    /// days show what the user actually logged, not what was forecast.
     private static func isPredictedPeriod(_ day: Date, analysis: CycleAnalysis, today: Date, calendar: Calendar) -> Bool {
-        guard let expected = analysis.nextPeriod?.expected, expected > today, day >= expected else { return false }
+        guard let predicted = analysis.nextPeriod?.expected else { return false }
+        let expected = calendar.startOfDay(for: predicted)
+        guard expected >= today, day >= expected else { return false }
         return CycleAnalyzer.daysBetween(expected, day, calendar: calendar) < predictedFlowDays
     }
 
