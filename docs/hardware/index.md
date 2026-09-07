@@ -173,6 +173,7 @@ been validated end to end on hardware.
 | Blood pressure | ✅² | ❌ | ❌ | ❌ | ❌ | ❔⁷ | 🧪 | ❔⁷ |
 | Blood sugar | ✅³ | ❌ | ❌ | ❌ | ❌ | ❔⁷ | 🧪⁴ | ❔⁷ |
 | HRV | ✅ | ✅ | ✅ | ✅ | ✅ | 🧪 | 🧪 | ❔⁷ |
+| HRV detail (SDNN/RMSSD/pNN50/LF-HF)¹¹ | ❌ | ❌ | ❌ | ❌ | ❌ | ❔⁷ | ❔⁷ | ❔⁷ |
 | Stress | ✅ | ✅ | ✅ | ✅ | ✅ | ❔⁷ | 🧪 | ❔⁷ |
 | Fatigue | ✅ | ✅ | ✅ | ✅ | ✅ | ❌⁸ | 🧪 | ❔⁷ |
 | Skin temperature | ❌ | ✅ | ✅ | ✅ | ✅ | ❔⁷ | 🧪⁴ | ❔⁷ |
@@ -190,6 +191,8 @@ been validated end to end on hardware.
 ⁷ Sensor-dependent, so it is claimed **per ring** rather than per family: the handshake reads the ring's own capability bitmap and PulseLoop enables the metric only if the ring claims it.
 ⁸ Not claimed: no capability bit names fatigue, so it can be neither gated nor honestly promised on hardware nobody has connected. The first real sync decides.
 ¹⁰ From the `05 09` combined record, not a dedicated log — the R10M has no `05 1A` all-day SpO₂ history, so PulseLoop never issues that query for it.
+
+¹¹ The panel behind the single HRV number, and a YCBT exclusive: it lives entirely in the `05 33` body-data record, which the 56ff, QRing-Colmi and LuckRing protocols have no equivalent of. On the YCBT families it is claimed **per ring**, riding `IS_HAS_PRESSURE` — the same bit that gates stress and fatigue, because all three are fields of that one record. Neither Oura nor Ultrahuman surfaces this. See [HRV detail](../project/hrv-metrics.md).
 
 The TK5 stores stress and fatigue on the ring itself (the body-data record), which an earlier version of this page denied — it also reads respiratory rate and VO₂max, which no other supported ring exposes. Its whole column is 🧪 until the [on-device checkpoint](tk5.md#needs-on-device-confirmation) clears.
 

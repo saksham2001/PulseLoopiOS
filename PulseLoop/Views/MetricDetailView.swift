@@ -10,6 +10,7 @@ struct MetricDetailView: View {
     let metric: MetricKind
     @Binding var path: NavigationPath
     @Environment(\.modelContext) private var modelContext
+    @Environment(RingBLEClient.self) private var ble
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [UserProfile]
 
@@ -60,6 +61,15 @@ struct MetricDetailView: View {
             case .month: return .thirtyDays
             }
         }
+        /// Window length in days, for callers that query `Measurement` rows directly rather than
+        /// through `MetricsService.metricRange` (which is keyed by `MetricKey`).
+        var days: Int {
+            switch self {
+            case .today: return 1
+            case .week: return 7
+            case .month: return 30
+            }
+        }
     }
 
     var body: some View {
@@ -68,6 +78,7 @@ struct MetricDetailView: View {
                 periodSelector
                 chartSection
                 statTiles
+                if metric == .hrv, showsAutonomicPanel { autonomicRow }
                 legend
                 explainer
                 if isEstimatedMetric { disclaimer }
@@ -201,6 +212,58 @@ struct MetricDetailView: View {
 
     private var statDivider: some View {
         Rectangle().fill(PulseColors.borderSubtle).frame(width: 1, height: 34)
+    }
+
+    // MARK: - Autonomic panel entry
+
+    /// Whether to offer the HRV-panel tap-through: the ring must declare `.hrvDetail` and there must
+    /// actually be something behind the tap. Deliberately a *row on this screen* rather than a
+    /// dashboard card — six more tiles on Today or Vitals would bury the metrics people open the app
+    /// for, and these are read occasionally, not glanced at.
+    private var showsAutonomicPanel: Bool {
+        MetricsService.activeCapabilities(context: modelContext, ble: ble).contains(.hrvDetail)
+            && MeasurementKind.autonomicKinds.contains {
+                // `latestMeasurement` is a `fetchLimit: 1` probe — an existence check, cheap enough
+                // to call from `body`.
+                MetricsRepository.latestMeasurement(kind: $0, context: modelContext) != nil
+            }
+    }
+
+    private var autonomicRow: some View {
+        Button { path.append(AppRoute.autonomicDetail) } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("HRV DETAIL")
+                        .font(PulseFont.caption2.weight(.semibold)).tracking(1.0)
+                        .foregroundStyle(PulseColors.textMuted)
+                    Text(autonomicPreview)
+                        .font(PulseFont.footnote).monospacedDigit()
+                        .foregroundStyle(PulseColors.textPrimary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(PulseFont.footnote.weight(.semibold))
+                    .foregroundStyle(PulseColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("HRV detail. \(autonomicPreview)")
+        .accessibilityHint("Opens SDNN, RMSSD, pNN50 and LF/HF trends")
+    }
+
+    /// The three most-recognised measures, latest value each. Falls back to a prompt rather than a
+    /// row of dashes when the panel exists but the period holds nothing.
+    private var autonomicPreview: String {
+        let parts: [String] = [MeasurementKind.rmssd, .sdnn, .pnn50].compactMap { kind in
+            guard let row = MetricsRepository.latestMeasurement(kind: kind, context: modelContext) else { return nil }
+            let unit = kind.unit.isEmpty ? "" : " \(kind.unit)"
+            return "\(kind.shortTitle) \(Int(row.value.rounded()))\(unit)"
+        }
+        return parts.isEmpty ? "SDNN, RMSSD, pNN50 and LF/HF" : parts.joined(separator: " · ")
     }
 
     // MARK: - Legend

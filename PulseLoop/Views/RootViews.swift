@@ -130,6 +130,8 @@ struct RootAppView: View {
                 case let .metricDetail(metric):
                     MetricDetailView(metric: metric, path: $path)
                         .pulseZoomDestination(route, in: zoomNS)
+                case .autonomicDetail:
+                    AutonomicDetailView()
                 case .activityTrends:
                     ActivityTrendsView(path: $path)
                 case .recordSelect:

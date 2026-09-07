@@ -3,6 +3,10 @@ import SwiftUI
 enum AppRoute: Hashable {
     case activityDetail(UUID)
     case metricDetail(MetricKind)
+    /// The HRV panel — SDNN, RMSSD, pNN50, LF/HF. Reached only from the HRV detail screen, and only
+    /// on rings that declare `.hrvDetail`, so it stays two taps off the dashboard rather than adding
+    /// six cards to it.
+    case autonomicDetail
     case activityTrends
     case recordSelect
     case logPastActivity

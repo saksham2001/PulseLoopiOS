@@ -477,6 +477,13 @@ enum YCBTSupportFunction {
         // gate no bit can satisfy is a dead one (`PairingMatchingTests`).
         Bit(byte: 22, bit: 6, minLength: 23, capability: .fatigue),        // IS_HAS_PRESSURE (same record)
 
+        // **The HRV panel rides the same bit, for the same reason.** SDNN, pNN50, RMSSD and the LF/HF
+        // pair are fields @14–24 of that one `05 33` record, so a ring with `IS_HAS_PRESSURE` clear is
+        // never asked for them either. `ISHASHRV` (1.1) is deliberately *not* the gate here: it governs
+        // the single HRV scalar, which arrives separately in the `05 09` combined record and on the
+        // `06 03` live stream — a ring can have HRV and still have no body-data record to break it down.
+        Bit(byte: 22, bit: 6, minLength: 23, capability: .hrvDetail),      // IS_HAS_PRESSURE (same record)
+
         // Find-my-ring. `DeviceSupportFunctionUtil.isHasFindDevice` reads it, and `MeAntiLostActivity`
         // hides the whole screen without it.
         Bit(byte: 6, bit: 4, minLength: 14, capability: .findDevice),      // ISHASFINDDEVICE

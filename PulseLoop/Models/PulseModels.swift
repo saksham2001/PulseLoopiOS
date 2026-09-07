@@ -27,6 +27,19 @@ enum MeasurementKind: String, Codable, CaseIterable {
     // body-data record (byte 16). Append only — raw values persisted.
     case respiratoryRate = "resp_rate"
     case vo2max
+    // The YCBT body-data record's HRV panel (`05 33`, `DataUnpack` case 51) — standard time- and
+    // frequency-domain measures the ring computes and reports alongside the single `hrv` scalar.
+    // Only the YCBT families produce these; see `WearableCapability.hrvDetail`. Append only.
+    case sdnn
+    case rmssd
+    case pnn50
+    case lfPower = "lf_power"
+    case hfPower = "hf_power"
+    case lfHfRatio = "lf_hf_ratio"
+
+    /// The HRV panel: everything derived from beat-to-beat variability beyond the `hrv` scalar.
+    /// Grouped so the UI can render them together without restating the list at each call site.
+    static let autonomicKinds: [MeasurementKind] = [.rmssd, .sdnn, .pnn50, .lfPower, .hfPower, .lfHfRatio]
 
     /// Display unit for a measurement of this kind.
     var unit: String {
@@ -41,6 +54,24 @@ enum MeasurementKind: String, Codable, CaseIterable {
         case .bloodSugar: return "mg/dL"
         case .respiratoryRate: return "brpm"    // breaths per minute
         case .vo2max: return "mL/kg/min"
+        case .sdnn, .rmssd: return "ms"
+        case .pnn50: return "%"
+        case .lfPower, .hfPower: return "ms²"
+        case .lfHfRatio: return ""             // a ratio of two powers — dimensionless
+        }
+    }
+
+    /// Short human label. Only the HRV-panel kinds need one today: the rest are titled by
+    /// `MetricKind`, which these deliberately do not join (they are never dashboard cards).
+    var shortTitle: String {
+        switch self {
+        case .sdnn: return "SDNN"
+        case .rmssd: return "RMSSD"
+        case .pnn50: return "pNN50"
+        case .lfPower: return "LF power"
+        case .hfPower: return "HF power"
+        case .lfHfRatio: return "LF/HF"
+        default: return rawValue
         }
     }
 }
