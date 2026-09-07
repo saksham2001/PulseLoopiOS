@@ -101,6 +101,7 @@ enum SeedData {
             for block in blocks {
                 context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage))
             }
+            seedOvernightTemperature(context, nightIndex: i, startAt: startAt, endAt: wake, calendar: calendar)
 
             // A few recent days also get daytime nap(s) — separate sessions sharing the same waking
             // day — so the Day-view sleep carousel (issue #59) has multiple sessions to page through.
@@ -123,6 +124,8 @@ enum SeedData {
                 }
             }
         }
+
+        seedCycleDays(context, now: now, calendar: calendar)
 
         // Several finished workouts across recent days (one today).
         let workouts: [SeedWorkout] = [
@@ -222,6 +225,45 @@ enum SeedData {
                 calories: seed.kcal, proteinG: seed.protein, carbsG: seed.carbs, fatG: seed.fat,
                 source: seed.source
             ))
+        }
+    }
+
+    /// Overnight skin temperature at the ring's real ~30 min cadence, shaped as a plausible
+    /// biphasic cycle so the demo shows the BBT chart with a visible thermal shift: cycle day 1
+    /// is 27 days ago, the shift lands around day 14, and one feverish night (i == 20) spikes
+    /// well above baseline to exercise the disturbed-night suggestion. Deterministic, 0.1 °C
+    /// quantized like the real decoder output.
+    @MainActor
+    private static func seedOvernightTemperature(
+        _ context: ModelContext, nightIndex i: Int, startAt: Date, endAt: Date, calendar: Calendar
+    ) {
+        let postOvulatory = i <= 13          // nights after the demo shift run warm
+        let base = postOvulatory ? 36.25 : 35.85
+        let fever = i == 20 ? 0.7 : 0.0
+        var ts = startAt
+        var sample = 0
+        while ts <= endAt {
+            let wobble = sin(Double(sample) * 1.3 + Double(i)) * 0.08
+            let value = ((base + fever + wobble) * 10).rounded() / 10
+            context.insert(Measurement(kind: .temperature, value: value, unit: "°C", timestamp: ts, source: .mock))
+            ts = calendar.date(byAdding: .minute, value: 30, to: ts) ?? endAt.addingTimeInterval(1)
+            sample += 1
+        }
+    }
+
+    /// Demo period logs matching the seeded temperatures: one completed 28-day cycle and the
+    /// current cycle started 27 days ago — so predictions, history, and the calendar all have
+    /// something to show the moment cycle tracking is switched on.
+    @MainActor
+    private static func seedCycleDays(_ context: ModelContext, now: Date, calendar: Calendar) {
+        let today = calendar.startOfDay(for: now)
+        for offset in -55...(-51) {
+            guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
+            context.insert(CycleDay(date: date, isPeriod: true))
+        }
+        for offset in -27...(-23) {
+            guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
+            context.insert(CycleDay(date: date, isPeriod: true))
         }
     }
 
@@ -349,6 +391,7 @@ enum SeedData {
         deleteAll(CoachToolCall.self, context)
         deleteAll(MealEntry.self, context)
         deleteAll(CachedFoodProduct.self, context)
+        deleteAll(CycleDay.self, context)
         try? context.save()
     }
     

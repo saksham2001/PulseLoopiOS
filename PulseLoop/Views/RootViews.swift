@@ -107,6 +107,9 @@ struct RootAppView: View {
                 if UserDefaults.standard.bool(forKey: "openRecord") {
                     path.append(AppRoute.recordSelect)
                 }
+                if UserDefaults.standard.bool(forKey: "openCycle") {
+                    path.append(AppRoute.cycleDetail)
+                }
                 // Re-attach to an in-progress workout left running across launches.
                 liveWorkout.recover()
                 routeDeepLinkIfNeeded()
@@ -172,6 +175,10 @@ struct RootAppView: View {
                     StravaSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
+                case .settingsCycle:
+                    CycleSettingsView()
+                case .cycleDetail:
+                    CycleDetailView(path: $path)
                 case .settingsAbout:
                     AboutSettingsView(path: $path)
                 case .settingsNutrition:
