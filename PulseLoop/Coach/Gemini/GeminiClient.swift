@@ -68,7 +68,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         let geminiBody = buildGeminiBody(tools: convertTools(tools), textFormat: textFormat)
         let geminiData = try JSONSerialization.data(withJSONObject: geminiBody)
 
-        let urlStr = "\(baseURL)/\(model):generateContent?key=\(apiKey)"
+        let urlStr = "\(baseURL)/\(model):generateContent"
         guard let url = URL(string: urlStr) else {
             throw ResponsesError.decoding("GeminiClient: could not build endpoint URL")
         }
@@ -76,6 +76,11 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // The key goes in a header, not `?key=` on the URL. URLs are the part of a request that gets
+        // written down — URLSession logging, os_log, crash reports, proxies — and this one is the
+        // user's own API key. Interpolating it also meant a key with a URL-special character failed
+        // `URL(string:)` and surfaced as a misleading "could not build endpoint URL".
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = geminiData
         request.timeoutInterval = 60
 

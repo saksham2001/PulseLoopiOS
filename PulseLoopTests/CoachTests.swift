@@ -21,10 +21,12 @@ final class StubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var responseBody = Data()
     nonisolated(unsafe) static var statusCode = 200
     nonisolated(unsafe) static var lastRequestURL: URL?
+    nonisolated(unsafe) static var lastRequestHeaders: [String: String] = [:]
     nonisolated(unsafe) static var lastRequestBody: Data?
 
     override class func canInit(with request: URLRequest) -> Bool {
         Self.lastRequestURL = request.url
+        Self.lastRequestHeaders = request.allHTTPHeaderFields ?? [:]
         Self.lastRequestBody = request.httpBody ?? request.httpBodyStream.flatMap { stream in
             stream.open(); defer { stream.close() }
             var data = Data()
@@ -351,6 +353,48 @@ final class GeminiClientTests: XCTestCase {
         XCTAssertTrue(response.functionCalls.first?.arguments.contains("2026-06-01") ?? false)
         XCTAssertFalse(response.functionCalls.first?.callID.isEmpty ?? true)
         XCTAssertEqual(response.outputText, "hello")
+    }
+
+    /// The key belongs in a header, not in `?key=`. A URL is the part of a request that gets written
+    /// down — URLSession logging, os_log, crash reports, proxies — and this one is the user's own
+    /// credential.
+    func testAPIKeyTravelsInAHeaderAndNeverInTheURL() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        let secret = "AIza-test-secret-key"
+        let client = GeminiClient(apiKey: secret, session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let url = StubURLProtocol.lastRequestURL?.absoluteString ?? ""
+        XCTAssertFalse(url.isEmpty, "expected the client to have issued a request")
+        XCTAssertFalse(url.contains(secret), "API key leaked into the URL: \(url)")
+        XCTAssertFalse(url.contains("key="), "API key leaked into the query string: \(url)")
+
+        let keyHeader = StubURLProtocol.lastRequestHeaders.first { $0.key.lowercased() == "x-goog-api-key" }?.value
+        XCTAssertEqual(keyHeader, secret)
+    }
+
+    /// A key containing URL-special characters used to fail `URL(string:)` and surface as a
+    /// misleading "could not build endpoint URL"; in a header it is just bytes.
+    func testKeyWithURLSpecialCharactersStillSends() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+        StubURLProtocol.lastRequestURL = nil
+
+        let awkward = "abc def/+?&#%"
+        let client = GeminiClient(apiKey: awkward, session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        XCTAssertNotNil(StubURLProtocol.lastRequestURL, "request should still be issued")
+        let keyHeader = StubURLProtocol.lastRequestHeaders.first { $0.key.lowercased() == "x-goog-api-key" }?.value
+        XCTAssertEqual(keyHeader, awkward)
     }
 
     /// Regression test: the user-selected model in the request body must drive the

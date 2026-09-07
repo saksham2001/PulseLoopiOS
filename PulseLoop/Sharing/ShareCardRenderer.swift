@@ -33,8 +33,7 @@ enum ShareCardRenderer {
         let slug = activityLabel.lowercased()
             .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        let formatter = DateFormatter.stableKey("yyyy-MM-dd")
         return "pulseloop-\(slug.isEmpty ? "workout" : slug)-\(formatter.string(from: date)).png"
     }
 

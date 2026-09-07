@@ -487,8 +487,7 @@ struct SleepHypnogramView: View {
     private var ticks: [(offset: Int, label: String)] {
         let safe = totalMin > 0 ? totalMin : 1
         let offsets = [0, safe / 3, safe * 2 / 3, safe]
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
+        let formatter = DateFormatter.localizedTemplate("jmm")
         return offsets.map { offset in
             if let start = startTs {
                 let date = start.addingTimeInterval(Double(offset) * 60)

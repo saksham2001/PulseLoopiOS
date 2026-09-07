@@ -113,11 +113,7 @@ enum SleepFormat {
         return "\(h)h \(String(format: "%02d", m))m"
     }
 
-    private static let clockTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f
-    }()
+    private static let clockTimeFormatter = DateFormatter.localizedTemplate("jmm")
 
     static func clockTime(_ date: Date) -> String {
         clockTimeFormatter.string(from: date)

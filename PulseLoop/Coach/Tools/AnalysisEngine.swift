@@ -131,7 +131,7 @@ enum AnalysisEngine {
         let mean = values.reduce(0, +) / n
         let sd = sqrt(values.reduce(0) { $0 + pow($1 - mean, 2) } / n)
         guard sd > 0 else { return [] }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = .current
+        let f = DateFormatter.stableKey("yyyy-MM-dd")
         return series.compactMap { item in
             let z = (item.value - mean) / sd
             guard abs(z) >= threshold else { return nil }
