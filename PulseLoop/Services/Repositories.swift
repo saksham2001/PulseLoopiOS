@@ -104,6 +104,16 @@ enum MetricsRepository {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    /// Whether the store holds any reading of a kind. `fetchLimit: 1` — an existence check, not a
+    /// count, so it stays cheap enough to call from a settings `body`.
+    @MainActor
+    static func hasAnyMeasurement(kind: MeasurementKind, context: ModelContext) -> Bool {
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<Measurement>(predicate: #Predicate { $0.kindRaw == raw })
+        descriptor.fetchLimit = 1
+        return ((try? context.fetch(descriptor)) ?? []).isEmpty == false
+    }
+
     /// Oldest measurement timestamp across all kinds (for the calibration "Day X of N" counter).
     /// `fetchLimit: 1` ascending — one row, not the whole table.
     @MainActor

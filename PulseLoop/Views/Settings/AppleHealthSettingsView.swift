@@ -10,7 +10,9 @@ import UIKit
 /// can clean up after turning sync off).
 struct AppleHealthSettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(RingBLEClient.self) private var ble
     @State private var service = HealthSyncService.shared
+    @State private var importService = HealthImportService.shared
     @State private var store = AppleHealthPrefsStore.shared
     /// First-enable backfill choice ("all history" vs "new only" vs cancel).
     @State private var showBackfillDialog = false
@@ -20,6 +22,12 @@ struct AppleHealthSettingsView: View {
     @State private var accessDenied = false
 
     private var masterOn: Bool { store.prefs.masterEnabled }
+
+    /// What the connected ring can actually produce. Rows for metrics it can't are hidden outright
+    /// rather than shown-and-inert: a VO₂max toggle on a jring is a promise the hardware can't keep.
+    private var capabilities: Set<WearableCapability> {
+        MetricsService.activeCapabilities(context: modelContext, ble: ble)
+    }
 
     var body: some View {
         ScrollView {
@@ -39,6 +47,11 @@ struct AppleHealthSettingsView: View {
                 workoutsGroup
                     .disabled(!masterOn)
                     .opacity(masterOn ? 1 : 0.5)
+
+                // Import stands on its own, deliberately not gated on the export master toggle:
+                // "show my ring data elsewhere" and "let other apps' data in" are separate
+                // decisions, and bundling them would make one of them implicit.
+                importGroup
 
                 actionsGroup
                     .disabled(!masterOn)
@@ -96,15 +109,39 @@ struct AppleHealthSettingsView: View {
     @ViewBuilder private var dataTypesGroup: some View {
         SettingsGroup(
             header: "Data types",
-            footer: "Stress, fatigue, and blood pressure don't have an Apple Health equivalent yet, so they aren't synced."
+            footer: "Stress and fatigue have no Apple Health equivalent — Health has no type for a device "
+                + "wellness score — so they can't be synced. Rows appear only for metrics your ring can produce."
         ) {
             FormToggleRow(title: "Heart rate", isOn: prefBinding(\.syncHeartRate))
             FormToggleRow(title: "Blood oxygen", isOn: prefBinding(\.syncSpO2))
             FormToggleRow(title: "Heart rate variability", isOn: prefBinding(\.syncHRV))
             FormToggleRow(title: "Temperature", isOn: prefBinding(\.syncTemperature))
+            if shows(.respiratoryRate) {
+                FormToggleRow(title: "Respiratory rate", isOn: prefBinding(\.syncRespiratoryRate))
+            }
+            if shows(.vo2max) {
+                FormToggleRow(title: "Cardio fitness (VO₂max)", isOn: prefBinding(\.syncVO2Max))
+            }
+            if shows(.bloodSugar, capability: .bloodSugar) {
+                FormToggleRow(title: "Blood glucose", isOn: prefBinding(\.syncBloodSugar))
+            }
+            if shows(.bloodPressureSystolic, capability: .bloodPressure) {
+                FormToggleRow(title: "Blood pressure", isOn: prefBinding(\.syncBloodPressure))
+            }
             FormToggleRow(title: "Sleep", isOn: prefBinding(\.syncSleep))
             FormToggleRow(title: "Steps & activity", isOn: prefBinding(\.syncActivity))
         }
+    }
+
+    /// Whether to offer a toggle for a ring-dependent metric.
+    ///
+    /// Shown when the connected ring declares the capability **or** the store already holds a reading
+    /// of that kind. The second arm matters for two cases the capability alone misses: respiratory
+    /// rate and VO₂max have no `WearableCapability` of their own (they ride the YCBT history records),
+    /// and history from a previously-paired ring should stay exportable after switching hardware.
+    private func shows(_ kind: MeasurementKind, capability: WearableCapability? = nil) -> Bool {
+        if let capability, capabilities.contains(capability) { return true }
+        return MetricsRepository.hasAnyMeasurement(kind: kind, context: modelContext)
     }
 
     @ViewBuilder private var workoutsGroup: some View {
@@ -178,6 +215,44 @@ struct AppleHealthSettingsView: View {
     }
 
     // MARK: - Bindings & actions
+
+    /// Reading *from* Health — the direction that brings a CGM's glucose and a smart scale's weight
+    /// into PulseLoop. Off by default; enabling it requests read-only access and nothing else.
+    @ViewBuilder private var importGroup: some View {
+        SettingsGroup(
+            header: "Import from Apple Health",
+            footer: "Brings in data other apps and devices write — a continuous glucose monitor, a smart "
+                + "scale. Imported readings are labelled as coming from Health and are never written "
+                + "back out as if your ring had measured them.\n\nSteps and workouts are not imported: "
+                + "they would double-count against what your ring already records."
+        ) {
+            FormToggleRow(title: "Read from Apple Health", isOn: Binding(
+                get: { store.prefs.importEnabled },
+                set: { setImport($0) }
+            ))
+            if store.prefs.importEnabled {
+                FormToggleRow(title: "Blood glucose (CGM)", isOn: prefBinding(\.importGlucose))
+                FormToggleRow(title: "Body weight", isOn: prefBinding(\.importBodyMass))
+            }
+        }
+        .disabled(!service.isAvailable)
+        .opacity(service.isAvailable ? 1 : 0.5)
+    }
+
+    /// Turning import on requests read-only authorization first. HealthKit never reveals read
+    /// permission, so the toggle latches on once the sheet has been presented — the import simply
+    /// finds nothing if access was refused, which is also what it would do with no CGM installed.
+    private func setImport(_ enabled: Bool) {
+        guard enabled else {
+            store.prefs.importEnabled = false
+            return
+        }
+        Task {
+            try? await importService.requestAuthorization()
+            store.prefs.importEnabled = true
+            await importService.importIncremental(context: modelContext)
+        }
+    }
 
     private func prefBinding(_ keyPath: WritableKeyPath<AppleHealthPrefs, Bool>) -> Binding<Bool> {
         Binding(

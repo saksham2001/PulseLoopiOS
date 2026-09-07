@@ -28,6 +28,14 @@ struct AppleHealthPrefs: Codable, Equatable {
     var syncTemperature = true
     var syncSleep = true
     var syncActivity = true
+    /// The four ring metrics that reach Health but only exist on some hardware. Default **on** like
+    /// the rest — the settings screen hides the row entirely on a ring that can't produce the metric,
+    /// so an enabled-but-unreachable toggle never writes anything.
+    var syncRespiratoryRate = true
+    var syncVO2Max = true
+    var syncBloodSugar = true
+    /// Exported as an `HKCorrelation` pairing systolic + diastolic, not as two loose quantities.
+    var syncBloodPressure = true
     /// Whether finished workout sessions export as `HKWorkout`s (calories, distance, HR stats, GPS route).
     var exportWorkouts = true
     /// Whether logged meals export as dietary samples (energy + macros). Only effective when the
@@ -35,6 +43,20 @@ struct AppleHealthPrefs: Codable, Equatable {
     var syncNutrition = true
     /// Backfill decision captured on first enable. Default `.notAsked`.
     var backfillChoice: HealthBackfillChoice = .notAsked
+
+    // MARK: Import (reading *from* Apple Health)
+    //
+    // A separate opt-in from the export master switch, and default **off**. Export is "show my ring
+    // data elsewhere"; import is "let other apps' data into mine", which is a different decision
+    // with different privacy weight — bundling them under one toggle would make one of them
+    // implicit.
+
+    /// Master opt-in for reading data out of Apple Health. Default **false**.
+    var importEnabled = false
+    /// Continuous glucose, from a CGM or any app writing `bloodGlucose`.
+    var importGlucose = true
+    /// Body mass, from a smart scale or manual entry — keeps the profile weight current.
+    var importBodyMass = true
 
     static let `default` = AppleHealthPrefs()
 
@@ -52,9 +74,16 @@ struct AppleHealthPrefs: Codable, Equatable {
         syncTemperature = try c.decodeIfPresent(Bool.self, forKey: .syncTemperature) ?? d.syncTemperature
         syncSleep = try c.decodeIfPresent(Bool.self, forKey: .syncSleep) ?? d.syncSleep
         syncActivity = try c.decodeIfPresent(Bool.self, forKey: .syncActivity) ?? d.syncActivity
+        syncRespiratoryRate = try c.decodeIfPresent(Bool.self, forKey: .syncRespiratoryRate) ?? d.syncRespiratoryRate
+        syncVO2Max = try c.decodeIfPresent(Bool.self, forKey: .syncVO2Max) ?? d.syncVO2Max
+        syncBloodSugar = try c.decodeIfPresent(Bool.self, forKey: .syncBloodSugar) ?? d.syncBloodSugar
+        syncBloodPressure = try c.decodeIfPresent(Bool.self, forKey: .syncBloodPressure) ?? d.syncBloodPressure
         exportWorkouts = try c.decodeIfPresent(Bool.self, forKey: .exportWorkouts) ?? d.exportWorkouts
         syncNutrition = try c.decodeIfPresent(Bool.self, forKey: .syncNutrition) ?? d.syncNutrition
         backfillChoice = try c.decodeIfPresent(HealthBackfillChoice.self, forKey: .backfillChoice) ?? d.backfillChoice
+        importEnabled = try c.decodeIfPresent(Bool.self, forKey: .importEnabled) ?? d.importEnabled
+        importGlucose = try c.decodeIfPresent(Bool.self, forKey: .importGlucose) ?? d.importGlucose
+        importBodyMass = try c.decodeIfPresent(Bool.self, forKey: .importBodyMass) ?? d.importBodyMass
     }
 }
 
@@ -83,6 +112,10 @@ struct AppleHealthSyncState: Codable, Equatable {
     var workoutsExportedThrough: Date?
     /// High-water mark on `MealEntry.updatedAt` (edited meals re-export and replace).
     var nutritionExportedThrough: Date?
+    /// Per-`MeasurementKind` high-water mark on the **import** side, keyed the same way as
+    /// `measurementWatermarks` but tracking the newest *sample instant* already read in from Health.
+    /// Separate from the export map so clearing one never disturbs the other.
+    var importWatermarks: [String: Date] = [:]
     var lastSyncAt: Date?
     var lastSyncSummary: String?
 
@@ -99,6 +132,7 @@ struct AppleHealthSyncState: Codable, Equatable {
         sleepExportedThrough = try c.decodeIfPresent(Date.self, forKey: .sleepExportedThrough) ?? d.sleepExportedThrough
         workoutsExportedThrough = try c.decodeIfPresent(Date.self, forKey: .workoutsExportedThrough) ?? d.workoutsExportedThrough
         nutritionExportedThrough = try c.decodeIfPresent(Date.self, forKey: .nutritionExportedThrough) ?? d.nutritionExportedThrough
+        importWatermarks = try c.decodeIfPresent([String: Date].self, forKey: .importWatermarks) ?? d.importWatermarks
         lastSyncAt = try c.decodeIfPresent(Date.self, forKey: .lastSyncAt) ?? d.lastSyncAt
         lastSyncSummary = try c.decodeIfPresent(String.self, forKey: .lastSyncSummary) ?? d.lastSyncSummary
     }
