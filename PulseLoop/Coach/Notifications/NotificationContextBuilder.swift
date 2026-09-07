@@ -26,6 +26,25 @@ struct NotificationContextPacket: Encodable {
     /// Present only when nutrition tracking is on, shared with the coach, AND the
     /// check-in sub-toggle allows it.
     var nutrition: CoachContextPacket.NutritionContext?
+    /// Last night measured against the learned resting-HR baseline.
+    ///
+    /// This is the one block the 12-hour window can't supply on its own: drift is only meaningful
+    /// against a multi-day baseline, which is why `restingHRDrift` sat declared-but-unfired. The
+    /// baseline is already learned and persisted by `RestingHRBaselineService`, so the packet just
+    /// carries it in alongside the single night to compare it to.
+    var restingHR: RestingHRContext?
+
+    struct RestingHRContext: Encodable {
+        /// The learned 10th-percentile resting HR over 30 days. Non-nil implies established —
+        /// `RestingHRBaselineService` stores nil until it has ≥20 samples spanning ≥7 days.
+        var baselineBpm: Double
+        /// Last night's resting HR, measured the same way over the night's own HR samples.
+        var lastNightBpm: Double
+        /// How many HR samples that night figure came from, so the model can weigh it.
+        var sampleCount: Int
+        /// Local date of the night, so a stale night is visible rather than implied to be recent.
+        var nightOf: String
+    }
 }
 
 @MainActor
@@ -62,7 +81,42 @@ enum NotificationContextBuilder {
             memories: packet.memories,
             dataQualityWarnings: packet.dataQualityWarnings,
             environment: environment,
-            nutrition: packet.nutrition
+            nutrition: packet.nutrition,
+            restingHR: restingHR(context: context, now: now)
         )
     }
+
+    /// Last night's resting HR beside the learned baseline, or nil when either is unavailable.
+    ///
+    /// The night is bounded by the sleep session itself rather than a fixed clock window, so a shift
+    /// worker or a late night is measured over the hours they actually slept. `SleepService.latestSleep`
+    /// already withholds stale sessions, so a ring that hasn't synced in days yields nil here rather
+    /// than comparing against an old night.
+    static func restingHR(
+        context: ModelContext, now: Date = Date()
+    ) -> NotificationContextPacket.RestingHRContext? {
+        guard let baseline = ProfileRepository.profile(context: context)?.hrRestingBaseline,
+              let night = SleepService.latestSleep(context: context) else { return nil }
+
+        let samples = MetricsRepository.measurements(
+            kind: .heartRate, start: night.session.startAt, end: night.session.endAt, context: context
+        ).map(\.value).filter { $0 > 0 }
+
+        // A YCBT ring floors its all-day interval at 30 minutes, so a full night is only ~14 samples
+        // there against ~84 on a 5-minute Colmi. Ten keeps both usable while still refusing to call a
+        // handful of readings a resting heart rate.
+        guard samples.count >= minNightSamples else { return nil }
+
+        return .init(
+            baselineBpm: (baseline * 10).rounded() / 10,
+            lastNightBpm: (RestingHRBaselineService.percentile(
+                samples.sorted(), RestingHRBaselineService.restingPercentile
+            ) * 10).rounded() / 10,
+            sampleCount: samples.count,
+            nightOf: CoachDataAccess.localDateString(night.session.date)
+        )
+    }
+
+    /// Fewest overnight HR samples that can stand in for a night's resting heart rate.
+    static let minNightSamples = 10
 }
