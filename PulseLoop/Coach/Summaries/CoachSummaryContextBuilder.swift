@@ -103,13 +103,17 @@ enum CoachSummaryContextBuilder {
         struct Packet: Encodable {
             let range: String, nightsTracked: Int, expectedNights: Int
             let avgTotalMin: Int?, avgScore: Int?
-            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?, goalMin: Int?
+            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?
+            /// Absent when no night in the range reported REM — see `SleepInsights.AverageStages.rem`.
+            let avgRemMin: Int?
+            let goalMin: Int?
             let memories: [CoachContextPacket.MemoryContext]
         }
         let p = Packet(
             range: range.rawValue, nightsTracked: valid.count, expectedNights: summary.expectedNights,
             avgTotalMin: avgMin, avgScore: avgScore,
             avgDeepMin: stages?.deep, avgLightMin: stages?.light, avgAwakeMin: stages?.awake,
+            avgRemMin: stages?.rem,
             goalMin: goalMin, memories: memories
         )
         let sig = signature([

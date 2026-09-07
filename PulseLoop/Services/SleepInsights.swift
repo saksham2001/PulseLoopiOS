@@ -23,6 +23,9 @@ struct SleepScoreResult {
     let lightPct: Int
     /// nil when there is no usable awake signal.
     let awakePct: Int?
+    /// nil on a night whose ring reported no REM stage at all — distinct from `0`, which would
+    /// claim the user slept no REM. Not yet a scoring contributor (see `calculate`).
+    let remPct: Int?
 }
 
 enum SleepScore {
@@ -65,15 +68,32 @@ enum SleepScore {
         return .needsWork
     }
 
+    /// Scores a night out of 100 from duration (35), deep % (30), light % (20) and awake % (15).
+    ///
+    /// **REM is measured but not yet scored.** `remPct` is reported so the coach and the UI can
+    /// show it, but no points ride on it, and the light-sleep band (ideal 50–60%) still carries
+    /// the weight of a no-REM decoder — where REM minutes land in the light bucket. On a
+    /// REM-capable ring those minutes are tagged separately, so light % reads roughly 20 points
+    /// lower for the same night and the band scores it slightly harsher than it should.
+    ///
+    /// Re-weighting the score is deliberately out of scope here: changing the bands changes every
+    /// stored night's score, which needs the versioned recompute that `ReadinessDaily` does for
+    /// readiness. Tracked as the sleep-score v2 rework; this pass only stops REM being dropped on
+    /// the floor entirely.
     static func calculate(_ sleep: SleepSummary) -> SleepScoreResult {
         let total = sleep.session.totalMinutes > 0 ? Double(sleep.session.totalMinutes) : 0
         let deep = Double(max(0, sleep.deepMinutes))
         let light = Double(max(0, sleep.lightMinutes))
         let awake = Double(max(0, sleep.awakeMinutes))
+        // REM belongs in the coverage sum. This clause asks "did the timeline account for
+        // essentially the whole night?", and on a REM-capable ring (Colmi big-data stage `0x04`,
+        // YCBT tag `3`) REM is typically 20–25% of it — omitting it made a fully-described night
+        // look 75% covered, which failed the 0.95 gate below and cost the night its awake
+        // sub-score. jring rings, whose `0x11` timeline has no REM stage, are unaffected.
         let coveredStageMin = sleep.blocks.reduce(0.0) { sum, block in
             switch block.stage {
-            case .deep, .light, .awake: return sum + Double(max(0, block.durationMinutes))
-            default: return sum
+            case .deep, .light, .awake, .rem: return sum + Double(max(0, block.durationMinutes))
+            case .unknown: return sum
             }
         }
         let hasAwakeSignal =
@@ -85,6 +105,9 @@ enum SleepScore {
         let deepPct = total > 0 ? (deep / total) * 100 : 0
         let lightPct = total > 0 ? (light / total) * 100 : 0
         let awakePct: Double? = (total > 0 && hasAwakeSignal) ? (awake / total) * 100 : nil
+        let remPct: Double? = (total > 0 && sleep.hasRemSignal)
+            ? (Double(max(0, sleep.remMinutes)) / total) * 100
+            : nil
 
         let duration = bandScore(totalHours, idealLow: 7.5, idealHigh: 8.5, softLow: 6, softHigh: 9.5, hardLow: 3, hardHigh: 12, points: 35)
         let deepScore = bandScore(deepPct, idealLow: 13, idealHigh: 23, softLow: 5, softHigh: 35, hardLow: 0, hardHigh: 45, points: 30)
@@ -97,7 +120,8 @@ enum SleepScore {
             label: qualityLabel(score),
             deepPct: Int(deepPct.rounded()),
             lightPct: Int(lightPct.rounded()),
-            awakePct: awakePct.map { Int($0.rounded()) }
+            awakePct: awakePct.map { Int($0.rounded()) },
+            remPct: remPct.map { Int($0.rounded()) }
         )
     }
 }
@@ -177,6 +201,7 @@ enum SleepInsights {
             let lightMinutes = daySessions.reduce(0) { $0 + $1.lightMinutes }
             let deepMinutes = daySessions.reduce(0) { $0 + $1.deepMinutes }
             let awakeMinutes = daySessions.reduce(0) { $0 + $1.awakeMinutes }
+            let remMinutes = daySessions.reduce(0) { $0 + $1.remMinutes }
             let blocks = daySessions.flatMap { $0.blocks }.sorted { $0.startAt < $1.startAt }
 
             let totalMinutes = daySessions.reduce(0) { $0 + $1.session.totalMinutes }
@@ -213,6 +238,7 @@ enum SleepInsights {
                 lightMinutes: lightMinutes,
                 deepMinutes: deepMinutes,
                 awakeMinutes: awakeMinutes,
+                remMinutes: remMinutes,
                 blocks: blocks
             ))
         }
@@ -233,13 +259,30 @@ enum SleepInsights {
         return Int((Double(total) / Double(valid.count)).rounded())
     }
 
-    static func averageStages(_ valid: [SleepSummary]) -> (deep: Int, light: Int, awake: Int)? {
+    /// Mean minutes per stage across the valid nights of a range.
+    ///
+    /// A struct rather than a tuple because adding REM makes it four members, which trips
+    /// SwiftLint's `large_tuple` — the same refactor the rest of this codebase already made.
+    struct AverageStages: Equatable {
+        let deep: Int
+        let light: Int
+        let awake: Int
+        /// nil when **no** night in the range carried a REM stage, so the caller can omit the field
+        /// rather than report an average of zero the ring never measured. Nights that do report REM
+        /// are averaged over the whole range, matching how the other three stages are treated.
+        let rem: Int?
+    }
+
+    static func averageStages(_ valid: [SleepSummary]) -> AverageStages? {
         let valid = collapseByDay(valid)
         guard !valid.isEmpty else { return nil }
         let deep = valid.reduce(0) { $0 + $1.deepMinutes } / valid.count
         let light = valid.reduce(0) { $0 + $1.lightMinutes } / valid.count
         let awake = valid.reduce(0) { $0 + $1.awakeMinutes } / valid.count
-        return (deep, light, awake)
+        let rem = valid.contains { $0.hasRemSignal }
+            ? valid.reduce(0) { $0 + $1.remMinutes } / valid.count
+            : nil
+        return AverageStages(deep: deep, light: light, awake: awake, rem: rem)
     }
 
     /// Population standard deviation of nightly durations (minutes).

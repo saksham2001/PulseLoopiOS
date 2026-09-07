@@ -37,7 +37,7 @@ enum CoachPromptBuilder {
 
     Data limitations:
     - The app may currently have only a few days of real data.
-    - Sleep stage decoding is experimental and may only contain light/deep/awake, not REM; awake time may read as zero.
+    - Sleep stages come from the ring's firmware, not a validated classifier. Which stages exist depends on the ring: some report REM, others only light/deep/awake. Trust the stage fields actually present in the data rather than assuming REM is missing; awake time may read as zero.
     - If there is no age/profile, do not calculate personalized HR zones. If no weight, do not calculate BMI or weight-loss calorie targets.
     - Some readings are wellness-grade, not medical-grade.
 
