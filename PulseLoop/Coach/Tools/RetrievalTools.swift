@@ -65,10 +65,18 @@ enum RetrievalTools {
             result["hr"] = encodeStats(CoachDataAccess.stats(hr))
             result["spo2"] = encodeStats(CoachDataAccess.stats(spo2))
             if let sleep {
-                result["sleep"] = [
+                // Resolve the stage split so the note reflects what this night actually holds
+                // instead of asserting REM is missing on rings that do report it.
+                let staged = SleepService.summary(for: sleep, context: ctx.modelContext)
+                var payload: [String: Any] = [
                     "total_min": sleep.totalMinutes, "score": sleep.score as Any,
-                    "confidence": "medium", "note": "experimental decoder (no REM)",
+                    "deep_min": staged.deepMinutes, "light_min": staged.lightMinutes,
+                    "awake_min": staged.awakeMinutes,
+                    "confidence": "medium",
+                    "note": DataQualityAnalyzer.sleepDecoderNote(hasREM: staged.hasRemSignal),
                 ]
+                if staged.hasRemSignal { payload["rem_min"] = staged.remMinutes }
+                result["sleep"] = payload
             }
             return .object(result)
         }
@@ -286,8 +294,14 @@ enum RetrievalTools {
                 "nights_tracked": valid.count,
                 "avg_total_min": SleepInsights.averageDuration(valid) as Any,
                 "avg_score": SleepInsights.averageScore(valid) as Any,
-                "avg_stages_min": stages.map { ["deep": $0.deep, "light": $0.light, "awake": $0.awake] } as Any,
-                "note": DataQualityAnalyzer.sleepDecoderNote,
+                "avg_stages_min": stages.map { s -> [String: Int] in
+                    var out = ["deep": s.deep, "light": s.light, "awake": s.awake]
+                    // Present only when some night in the range actually reported REM, so an absent
+                    // key means "this ring can't see REM", never "you slept none".
+                    if let rem = s.rem { out["rem"] = rem }
+                    return out
+                } as Any,
+                "note": DataQualityAnalyzer.sleepDecoderNote(hasREM: stages?.rem != nil),
             ])
         }
     }
