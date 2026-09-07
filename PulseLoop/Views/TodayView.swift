@@ -97,6 +97,12 @@ struct TodayView: View {
                     HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
                 }
 
+                // Conditional by design: a clear night renders nothing, so this never becomes a
+                // permanent "all clear" tile that people learn to stop reading.
+                if let watch = activeStore.healthWatch, watch.status != .clear {
+                    HealthWatchCard(result: watch)
+                }
+
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     tiles(activeStore)
                 }

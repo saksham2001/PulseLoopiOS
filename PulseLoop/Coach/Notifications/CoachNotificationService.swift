@@ -162,7 +162,7 @@ final class CoachNotificationService {
         let slot = forcedSlot(now: now)  // only for building the context packet
         let environment = await CoachEnvironmentContextService.shared.snapshot(now: now)
         let packet = NotificationContextBuilder.build(slot: slot, context: modelContext, now: now, environment: environment)
-        guard let anomaly = CoachAnomalyDetector.detect(packet) else { return .noAnomaly }
+        guard let anomaly = CoachAnomalyDetector.detect(packet, now: now) else { return .noAnomaly }
 
         if !force, isAnomalyDuplicate(anomaly, now: now) { return .noAnomaly }
 
