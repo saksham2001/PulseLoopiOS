@@ -60,7 +60,12 @@ final class HealthSyncService {
     private var quantityWriteTypes: [HKQuantityType] {
         var identifiers: [HKQuantityTypeIdentifier] = [
             .heartRate, .oxygenSaturation, .heartRateVariabilitySDNN, .bodyTemperature,
-            .stepCount, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling
+            .stepCount, .activeEnergyBurned, .distanceWalkingRunning, .distanceCycling,
+            // Ring-dependent: only some families produce these, but the share set is fixed at
+            // authorization time and can't be re-prompted per device, so all four are requested up
+            // front. A ring that never reports one simply never writes it.
+            .respiratoryRate, .vo2Max, .bloodGlucose,
+            .bloodPressureSystolic, .bloodPressureDiastolic
         ]
         // Dietary types join the share set only once the nutrition feature is enabled, so users
         // who never opted in never see dietary rows on the Health authorization sheet. Enabling
@@ -116,6 +121,8 @@ final class HealthSyncService {
 
         do { try await exportVitals(context: context, state: &state, counts: &counts, now: now, device: device) }
         catch { log.error("Vitals export failed: \(error.localizedDescription)") }
+        do { try await exportBloodPressure(context: context, state: &state, counts: &counts, now: now, device: device) }
+        catch { log.error("Blood-pressure export failed: \(error.localizedDescription)") }
         do { try await exportActivity(context: context, state: &state, counts: &counts, now: now, device: device) }
         catch { log.error("Activity export failed: \(error.localizedDescription)") }
         do { try await exportSleep(context: context, state: &state, counts: &counts, now: now, device: device) }
@@ -172,6 +179,10 @@ final class HealthSyncService {
         if prefs.syncSpO2 { kinds.append(.spo2) }
         if prefs.syncHRV { kinds.append(.hrv) }
         if prefs.syncTemperature { kinds.append(.temperature) }
+        if prefs.syncRespiratoryRate { kinds.append(.respiratoryRate) }
+        if prefs.syncVO2Max { kinds.append(.vo2max) }
+        if prefs.syncBloodSugar { kinds.append(.bloodSugar) }
+        // Blood pressure is deliberately absent: it exports as a correlation, not a quantity.
         return kinds
     }
 
@@ -233,6 +244,87 @@ final class HealthSyncService {
             device: device,
             metadata: HealthKitTypeMappings.metadata(syncID: syncID, version: 1)
         )
+    }
+
+    // MARK: - Blood-pressure pass
+
+    /// Blood pressure is the one vital that can't ride the quantity path: Health only recognises a
+    /// reading when systolic and diastolic are saved together inside an `HKCorrelation`. Saved
+    /// separately they are stored but never surface in the Health app, which looks exactly like a
+    /// silent failure.
+    ///
+    /// Rows for the two halves are written from one packet at one instant (`bloodPressureEvents`), so
+    /// the shared timestamp is the pairing key. A half without its partner is skipped rather than
+    /// guessed at.
+    ///
+    /// The watermark reuses the `bloodPressureSystolic` slot in `measurementWatermarks`: that kind is
+    /// never exported as a quantity, so the slot is free, and it inherits the reset/backfill handling
+    /// `resetWatermarks` already applies to every `MeasurementKind`.
+    private func exportBloodPressure(context: ModelContext, state: inout AppleHealthSyncState,
+                                     counts: inout SyncCounts, now: Date, device: HKDevice?) async throws {
+        guard prefsStore.prefs.syncBloodPressure,
+              let systolicType = HKQuantityType.quantityType(forIdentifier: .bloodPressureSystolic),
+              let diastolicType = HKQuantityType.quantityType(forIdentifier: .bloodPressureDiastolic),
+              let correlationType = HKCorrelationType.correlationType(forIdentifier: .bloodPressure),
+              canShare(systolicType), canShare(diastolicType) else { return }
+
+        let watermarkKey = MeasurementKind.bloodPressureSystolic.rawValue
+        let systolicRaw = MeasurementKind.bloodPressureSystolic.rawValue
+        let diastolicRaw = MeasurementKind.bloodPressureDiastolic.rawValue
+        let mockRaw = MeasurementSource.mock.rawValue
+        let watermark = state.measurementWatermarks[watermarkKey] ?? .distantPast
+
+        let systolicDescriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == systolicRaw && $0.sourceRaw != mockRaw && $0.createdAt > watermark },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        let systolicRows = (try? context.fetch(systolicDescriptor)) ?? []
+        guard !systolicRows.isEmpty else { return }
+
+        // Index the diastolic halves across the same instant span. Bounded by the batch's own range
+        // rather than the watermark, so a partner row that was persisted in a different pass — and
+        // therefore carries a different `createdAt` — is still found.
+        guard let spanStart = systolicRows.map(\.timestamp).min(),
+              let spanEnd = systolicRows.map(\.timestamp).max() else { return }
+        let diastolicDescriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate {
+                $0.kindRaw == diastolicRaw && $0.sourceRaw != mockRaw
+                    && $0.timestamp >= spanStart && $0.timestamp <= spanEnd
+            }
+        )
+        let diastolicByInstant = Dictionary(
+            ((try? context.fetch(diastolicDescriptor)) ?? []).map { ($0.timestamp, $0.value) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for chunk in systolicRows.chunked(into: 1000) {
+            let correlations: [HKCorrelation] = chunk.compactMap { row in
+                guard row.timestamp <= now, let diastolic = diastolicByInstant[row.timestamp],
+                      HealthKitTypeMappings.isPlausibleBloodPressure(systolic: row.value, diastolic: diastolic)
+                else { return nil }
+
+                let unit = HKUnit.millimeterOfMercury()
+                let metadata = HealthKitTypeMappings.metadata(
+                    syncID: HealthKitTypeMappings.bloodPressureSyncID(timestamp: row.timestamp), version: 1
+                )
+                let objects: Set<HKSample> = [
+                    HKQuantitySample(type: systolicType, quantity: HKQuantity(unit: unit, doubleValue: row.value),
+                                     start: row.timestamp, end: row.timestamp, device: device, metadata: nil),
+                    HKQuantitySample(type: diastolicType, quantity: HKQuantity(unit: unit, doubleValue: diastolic),
+                                     start: row.timestamp, end: row.timestamp, device: device, metadata: nil),
+                ]
+                return HKCorrelation(type: correlationType, start: row.timestamp, end: row.timestamp,
+                                     objects: objects, device: device, metadata: metadata)
+            }
+            if !correlations.isEmpty {
+                try await save(correlations)
+                counts.bloodPressure += correlations.count
+            }
+            if let maxCreated = chunk.map(\.createdAt).max() {
+                state.measurementWatermarks[watermarkKey] = maxCreated
+                prefsStore.syncState = state
+            }
+        }
     }
 
     // MARK: - Daily activity pass
@@ -497,6 +589,7 @@ final class HealthSyncService {
 
     struct SyncCounts {
         var vitals = 0
+        var bloodPressure = 0
         var sleepSegments = 0
         var dailyTotals = 0
         var workouts = 0
@@ -505,6 +598,7 @@ final class HealthSyncService {
         var summary: String {
             var parts: [String] = []
             if vitals > 0 { parts.append("\(vitals) vitals") }
+            if bloodPressure > 0 { parts.append("\(bloodPressure) BP reading\(bloodPressure == 1 ? "" : "s")") }
             if sleepSegments > 0 { parts.append("\(sleepSegments) sleep segment\(sleepSegments == 1 ? "" : "s")") }
             if dailyTotals > 0 { parts.append("\(dailyTotals) daily total\(dailyTotals == 1 ? "" : "s")") }
             if workouts > 0 { parts.append("\(workouts) workout\(workouts == 1 ? "" : "s")") }

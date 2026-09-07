@@ -10,6 +10,7 @@ import UIKit
 /// can clean up after turning sync off).
 struct AppleHealthSettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(RingBLEClient.self) private var ble
     @State private var service = HealthSyncService.shared
     @State private var store = AppleHealthPrefsStore.shared
     /// First-enable backfill choice ("all history" vs "new only" vs cancel).
@@ -20,6 +21,12 @@ struct AppleHealthSettingsView: View {
     @State private var accessDenied = false
 
     private var masterOn: Bool { store.prefs.masterEnabled }
+
+    /// What the connected ring can actually produce. Rows for metrics it can't are hidden outright
+    /// rather than shown-and-inert: a VO₂max toggle on a jring is a promise the hardware can't keep.
+    private var capabilities: Set<WearableCapability> {
+        MetricsService.activeCapabilities(context: modelContext, ble: ble)
+    }
 
     var body: some View {
         ScrollView {
@@ -96,15 +103,39 @@ struct AppleHealthSettingsView: View {
     @ViewBuilder private var dataTypesGroup: some View {
         SettingsGroup(
             header: "Data types",
-            footer: "Stress, fatigue, and blood pressure don't have an Apple Health equivalent yet, so they aren't synced."
+            footer: "Stress and fatigue have no Apple Health equivalent — Health has no type for a device "
+                + "wellness score — so they can't be synced. Rows appear only for metrics your ring can produce."
         ) {
             FormToggleRow(title: "Heart rate", isOn: prefBinding(\.syncHeartRate))
             FormToggleRow(title: "Blood oxygen", isOn: prefBinding(\.syncSpO2))
             FormToggleRow(title: "Heart rate variability", isOn: prefBinding(\.syncHRV))
             FormToggleRow(title: "Temperature", isOn: prefBinding(\.syncTemperature))
+            if shows(.respiratoryRate) {
+                FormToggleRow(title: "Respiratory rate", isOn: prefBinding(\.syncRespiratoryRate))
+            }
+            if shows(.vo2max) {
+                FormToggleRow(title: "Cardio fitness (VO₂max)", isOn: prefBinding(\.syncVO2Max))
+            }
+            if shows(.bloodSugar, capability: .bloodSugar) {
+                FormToggleRow(title: "Blood glucose", isOn: prefBinding(\.syncBloodSugar))
+            }
+            if shows(.bloodPressureSystolic, capability: .bloodPressure) {
+                FormToggleRow(title: "Blood pressure", isOn: prefBinding(\.syncBloodPressure))
+            }
             FormToggleRow(title: "Sleep", isOn: prefBinding(\.syncSleep))
             FormToggleRow(title: "Steps & activity", isOn: prefBinding(\.syncActivity))
         }
+    }
+
+    /// Whether to offer a toggle for a ring-dependent metric.
+    ///
+    /// Shown when the connected ring declares the capability **or** the store already holds a reading
+    /// of that kind. The second arm matters for two cases the capability alone misses: respiratory
+    /// rate and VO₂max have no `WearableCapability` of their own (they ride the YCBT history records),
+    /// and history from a previously-paired ring should stay exportable after switching hardware.
+    private func shows(_ kind: MeasurementKind, capability: WearableCapability? = nil) -> Bool {
+        if let capability, capabilities.contains(capability) { return true }
+        return MetricsRepository.hasAnyMeasurement(kind: kind, context: modelContext)
     }
 
     @ViewBuilder private var workoutsGroup: some View {

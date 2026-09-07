@@ -28,6 +28,14 @@ struct AppleHealthPrefs: Codable, Equatable {
     var syncTemperature = true
     var syncSleep = true
     var syncActivity = true
+    /// The four ring metrics that reach Health but only exist on some hardware. Default **on** like
+    /// the rest — the settings screen hides the row entirely on a ring that can't produce the metric,
+    /// so an enabled-but-unreachable toggle never writes anything.
+    var syncRespiratoryRate = true
+    var syncVO2Max = true
+    var syncBloodSugar = true
+    /// Exported as an `HKCorrelation` pairing systolic + diastolic, not as two loose quantities.
+    var syncBloodPressure = true
     /// Whether finished workout sessions export as `HKWorkout`s (calories, distance, HR stats, GPS route).
     var exportWorkouts = true
     /// Whether logged meals export as dietary samples (energy + macros). Only effective when the
@@ -52,6 +60,10 @@ struct AppleHealthPrefs: Codable, Equatable {
         syncTemperature = try c.decodeIfPresent(Bool.self, forKey: .syncTemperature) ?? d.syncTemperature
         syncSleep = try c.decodeIfPresent(Bool.self, forKey: .syncSleep) ?? d.syncSleep
         syncActivity = try c.decodeIfPresent(Bool.self, forKey: .syncActivity) ?? d.syncActivity
+        syncRespiratoryRate = try c.decodeIfPresent(Bool.self, forKey: .syncRespiratoryRate) ?? d.syncRespiratoryRate
+        syncVO2Max = try c.decodeIfPresent(Bool.self, forKey: .syncVO2Max) ?? d.syncVO2Max
+        syncBloodSugar = try c.decodeIfPresent(Bool.self, forKey: .syncBloodSugar) ?? d.syncBloodSugar
+        syncBloodPressure = try c.decodeIfPresent(Bool.self, forKey: .syncBloodPressure) ?? d.syncBloodPressure
         exportWorkouts = try c.decodeIfPresent(Bool.self, forKey: .exportWorkouts) ?? d.exportWorkouts
         syncNutrition = try c.decodeIfPresent(Bool.self, forKey: .syncNutrition) ?? d.syncNutrition
         backfillChoice = try c.decodeIfPresent(HealthBackfillChoice.self, forKey: .backfillChoice) ?? d.backfillChoice
