@@ -515,7 +515,18 @@ final class UserGoal {
     var intakeFatG: Int?
     var updatedAt: Date
 
-    init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4, distanceMeters: Double = 8000, calories: Int = 500) {
+    /// The out-of-the-box targets, named so anything needing a fallback goal reads the same numbers
+    /// the initializer uses rather than restating them.
+    static let defaultSteps = 10000
+    static let defaultSleepMinutes = 480
+    static let defaultActiveMinutes = 45
+    static let defaultWorkoutsPerWeek = 4
+    static let defaultDistanceMeters: Double = 8000
+    static let defaultCalories = 500
+
+    init(id: UUID = UUID(), steps: Int = UserGoal.defaultSteps, sleepMinutes: Int = UserGoal.defaultSleepMinutes,
+         activeMinutes: Int = UserGoal.defaultActiveMinutes, workoutsPerWeek: Int = UserGoal.defaultWorkoutsPerWeek,
+         distanceMeters: Double = UserGoal.defaultDistanceMeters, calories: Int = UserGoal.defaultCalories) {
         self.id = id
         self.steps = steps
         self.sleepMinutes = sleepMinutes

@@ -21,11 +21,17 @@ struct ActivityView: View {
     @State private var summary: TodaySummary?
     @State private var stale: [ActivitySession] = []
     @State private var caloriesAvailable = false
+    /// Movement score + training-load balance, cached off the render path for the same reason the
+    /// summary is: `dailyLoad` walks up to 28 days of HR samples and must not run per `body`.
+    @State private var activityScore: ActivityScoreResult?
+    @State private var loadBalance: TrainingLoad.Balance?
 
     private func reload() {
         summary = MetricsService.buildTodaySummary(context: modelContext)
         stale = ActivityRecorderService.recoverStaleSession(context: modelContext)
         caloriesAvailable = MetricsService.isVisible(.calories, context: modelContext)
+        activityScore = ActivityScoreService.score(context: modelContext)
+        loadBalance = ActivityScoreService.balance(context: modelContext)
     }
 
     var body: some View {
@@ -49,6 +55,12 @@ struct ActivityView: View {
                         caloriesAvailable: caloriesAvailable
                     ) {
                         path.append(AppRoute.activityTrends)
+                    }
+
+                    // Sits under the rings it summarises. Absent entirely on a day with no activity
+                    // row — there is nothing to score yet, and an empty dial reads as a zero.
+                    if let activityScore, let loadBalance {
+                        ActivityScoreCard(result: activityScore, balance: loadBalance)
                     }
 
                     // Calorie-intake sibling of the daily summary. `summary.nutrition` is only
