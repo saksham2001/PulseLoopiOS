@@ -206,6 +206,13 @@ struct RWfitDecoder {
             return [.firmware(version: payload[3...5].map(String.init).joined(separator: "."))]
         case (0x02, 0x01):
             return [.timeSyncAck(timestamp: Date())]
+        case (0x02, 0x63):
+            guard let menu = RWfitFunctionMenu(payload: payload) else {
+                return [.unknown(commandId: triple.cmd, raw: Data(payload))]
+            }
+            return [.supportFunctions(menu.capabilities)]
+        case (0x02, _):
+            return decodeJieliLive(key: triple.key, payload: payload)
         case (0x03, 0x01):
             return decodeJieliBind(payload)
         case (0x05, _):
@@ -222,6 +229,8 @@ struct RWfitDecoder {
     /// project's cyclomatic-complexity limit. nil ⇒ a `05` type we don't decode.
     private func decodeJieliHistory(key: UInt8, payload: [UInt8]) -> [RingDecodedEvent]? {
         switch key {
+        case 0x1a:
+            return decodeJieliTodaySteps(payload)
         case RWfitJLDataType.steps:
             return decodeJieliSteps(payload)
         case RWfitJLDataType.sleep:
@@ -244,11 +253,11 @@ struct RWfitDecoder {
                 ]
             }
         case RWfitJLDataType.temperature:
-            // `[4..5]` u16 BE ÷ 10 °C (`U()`).
+            // SDK: integer Celsius byte + floor(hundredths byte / 10) / 10.
             return decodeJieliSeries(payload, cmd: key) { ts, item in
-                let raw = RWfitBytes.u16BE(item, 4)
-                return raw > 0
-                    ? [.historyMeasurement(kind: .temperature, value: Double(raw) / 10, timestamp: ts)]
+                let value = Double(item[4]) + Double(item[5] / 10) / 10
+                return value > 0
+                    ? [.historyMeasurement(kind: .temperature, value: value, timestamp: ts)]
                     : []
             }
         case RWfitJLDataType.hrv:
@@ -277,34 +286,98 @@ struct RWfitDecoder {
     /// family's capability bitmap.
     private func decodeJieliBind(_ payload: [UInt8]) -> [RingDecodedEvent] {
         guard payload.count >= 4 else { return [.unknown(commandId: 0x03, raw: Data(payload))] }
-        var events: [RingDecodedEvent] = [.bind(action: payload[3], state: 0)]
-        if payload.count > 8 {
-            events.append(.supportFunctions(Self.capabilities(fromJieliBindTLV: Array(payload.dropFirst(8)))))
-        }
-        return events
+        return [.bind(action: payload[3], state: 0)]
     }
 
-    /// Map the bind reply's `(0x05, type)` pairs onto gated capabilities. Scanning stops at the
-    /// first NUL, like the vendor (`u()` counts NULs and only reads pairs before the first).
-    /// The vendor's own decompile skips type 8 (temperature) — treated here as an R8 artifact and
-    /// mapped anyway; a wrong grant renders one empty card, a missed one hides a real sensor.
-    static func capabilities(fromJieliBindTLV tlv: [UInt8]) -> Set<WearableCapability> {
-        var caps: Set<WearableCapability> = []
-        var index = 0
-        while index + 1 < tlv.count, tlv[index] != 0 {
-            if tlv[index] == 0x05 {
-                switch tlv[index + 1] {
-                case RWfitJLDataType.bloodPressure: caps.formUnion([.bloodPressure, .manualBloodPressure])
-                case RWfitJLDataType.temperature: caps.insert(.temperature)
-                case RWfitJLDataType.hrv: caps.formUnion([.hrv, .manualHrv])
-                case RWfitJLDataType.stress: caps.insert(.stress)
-                case RWfitJLDataType.bloodSugar: caps.insert(.bloodSugar)
-                default: break
-                }
-            }
-            index += 2
+    enum HistoryDecodeError: Error {
+        case unsupportedType, malformedPage, incompleteSleep
+    }
+
+    /// Validate the whole page before allowing destructive history consumption.
+    func validatedJieliHistory(key: UInt8, payload: [UInt8]) throws -> [RingDecodedEvent] {
+        guard payload.count >= 3, payload[0] == 0x05, payload[1] == key else {
+            throw HistoryDecodeError.malformedPage
         }
-        return caps
+        if payload.count == 3 { return [] }
+        var payload = payload
+        let bodyCount = payload.count - 3
+        switch key {
+        case 0x1a:
+            guard bodyCount >= 16, (bodyCount - 16).isMultiple(of: 16) else {
+                throw HistoryDecodeError.malformedPage
+            }
+        case RWfitJLDataType.steps:
+            guard bodyCount.isMultiple(of: 16) else { throw HistoryDecodeError.malformedPage }
+        case RWfitJLDataType.sleep:
+            try Self.validateJieliSleepPage(payload)
+            payload = normalizedSleepPayload(payload)
+            try validateSleepSessions(payload)
+        case 0x03, 0x04, 0x08, 0x09, 0x0a, 0x0d, 0x10:
+            guard bodyCount.isMultiple(of: 6) else { throw HistoryDecodeError.malformedPage }
+        default: throw HistoryDecodeError.unsupportedType
+        }
+        return (decodeJieliHistory(key: key, payload: payload) ?? []).filter {
+            if case .commandAck = $0 { return false }
+            return true
+        }
+    }
+
+    static func validateJieliSleepPage(_ payload: [UInt8]) throws {
+        guard payload.count >= 3, payload[0] == 0x05, payload[1] == 0x05,
+              (payload.count - 3).isMultiple(of: 7) else { throw HistoryDecodeError.malformedPage }
+    }
+
+    private func normalizedSleepPayload(_ payload: [UInt8]) -> [UInt8] {
+        // Pagination can overlap across reconnects. Temporary/padding flags may change while the
+        // timestamp and sleep model still identify the same transition; keep the latest copy.
+        var unique: [[UInt8]: [UInt8]] = [:]
+        for offset in stride(from: 3, to: payload.count, by: 7) {
+            let record = Array(payload[offset..<(offset + 7)])
+            unique[Array(record.prefix(5))] = record
+        }
+        let records = unique.values.sorted { RWfitBytes.u32BE($0, 0) < RWfitBytes.u32BE($1, 0) }
+        return Array(payload.prefix(3)) + records.flatMap { $0 }
+    }
+
+    /// Sleep transitions may cross pages. Call this only after assembling durably journaled pages.
+    private func validateSleepSessions(_ payload: [UInt8]) throws {
+        var open = false
+        var previous: UInt32?
+        for offset in stride(from: 3, to: payload.count, by: 7) {
+            let model = payload[offset + 4]
+            let timestamp = RWfitBytes.u32BE(payload, offset)
+            if let previous {
+                guard timestamp > previous else { throw HistoryDecodeError.malformedPage }
+                if open, timestamp - previous >= 24 * 60 * 60 { throw HistoryDecodeError.malformedPage }
+            }
+            previous = timestamp
+            if model == 0x11 {
+                guard !open else { throw HistoryDecodeError.incompleteSleep }
+                open = true
+            } else {
+                guard open else { throw HistoryDecodeError.incompleteSleep }
+                if model == 0x22 { open = false }
+                else if ![0, 1, 2, 3, 4].contains(model) { throw HistoryDecodeError.malformedPage }
+            }
+        }
+        if open { throw HistoryDecodeError.incompleteSleep }
+    }
+
+    /// SDK 051A contains a daily total followed by hourly records. Preserve the details before
+    /// consuming the stream; persistence upserts buckets and ratchets the daily cumulative total.
+    private func decodeJieliTodaySteps(_ payload: [UInt8]) -> [RingDecodedEvent] {
+        guard payload.count >= 19 else { return [] }
+        let detail = [UInt8](payload.prefix(3)) + payload.dropFirst(19)
+        let buckets = decodeJieliSteps(detail).filter {
+            if case .activityBucket = $0 { return true }
+            return false
+        }
+        return buckets + [.activityUpdate(
+            timestamp: clock.date(fromJieliEpoch: RWfitBytes.u32BE(payload, 3)),
+            steps: RWfitBytes.u24BE(payload, 8),
+            distanceMeters: Double(RWfitBytes.u32BE(payload, 15)) / 10,
+            calories: Double(RWfitBytes.u32BE(payload, 11)) / 10
+        )]
     }
 
     /// JieLi 6-byte-stride series template: items from offset 3, `[ts2000 u32][value][…]`
@@ -395,19 +468,34 @@ struct RWfitDecoder {
         }
     }
 
-    /// Realtime-measure reply (`x5/b.java:3734`, internal id 31): `[3]` echoes the measurement type,
-    /// `[5]` carries the reading **minus 10** (the vendor displays `data[5] + 10`; presumably a
-    /// transport offset so 0 can mean "measuring"). Zero → still measuring, surfaced as an ack.
+    /// 0609 carries progress/completion status, never a vital reading.
     private func decodeJieliRealtime(_ payload: [UInt8]) -> [RingDecodedEvent] {
-        guard payload.count > 5, payload[5] > 0 else { return [.commandAck(commandId: 0x06)] }
-        let value = Int(payload[5]) + 10
-        let now = Date()
-        switch payload[3] {
-        case RWfitJLDataType.heartRate: return [.heartRateSample(bpm: value, timestamp: now)]
-        case RWfitJLDataType.spo2: return [.spo2Result(value: value, timestamp: now)]
-        case RWfitJLDataType.hrv: return [.hrvSample(value: value, timestamp: now)]
-        case RWfitJLDataType.stress: return [.stressSample(value: value, timestamp: now)]
-        default: return [.unknown(commandId: 0x06, raw: Data(payload))]
+        guard payload.count >= 6 else { return [.unknown(commandId: 0x06, raw: Data(payload))] }
+        return [.rwfitMeasurementStatus(type: payload[3], status: payload[5])]
+    }
+
+    /// SDK live health notifications use the same six-byte timestamp/value records as history.
+    private func decodeJieliLive(key: UInt8, payload: [UInt8]) -> [RingDecodedEvent] {
+        guard payload.count > 3, (payload.count - 3).isMultiple(of: 6) else {
+            return [.unknown(commandId: 0x02, raw: Data(payload))]
+        }
+        return decodeJieliSeries(payload, cmd: key) { timestamp, item in
+            switch key {
+            case 0x24: return item[4] > 0 ? [.heartRateSample(bpm: Int(item[4]), timestamp: timestamp)] : []
+            case 0x4e: return item[4] > 0 ? [.spo2Result(value: Int(item[4]), timestamp: timestamp)] : []
+            case 0x69: return item[4] > 0 ? [.hrvSample(value: Int(item[4]), timestamp: timestamp)] : []
+            case 0x4f: return item[4] > 0 ? [.stressSample(value: Int(item[4]), timestamp: timestamp)] : []
+            case 0x31:
+                guard item[4] > 0, item[5] > 0 else { return [] }
+                return [.bloodPressureSample(systolic: Int(item[4]), diastolic: Int(item[5]), timestamp: timestamp)]
+            case 0x30:
+                let value = Double(item[4]) + Double(item[5] / 10) / 10
+                return value > 0 ? [.temperatureSample(celsius: value, timestamp: timestamp)] : []
+            case 0x6c:
+                let value = Double(RWfitBytes.u16BE(item, 4)) / 10 * 18.016
+                return value > 0 ? [.bloodSugarSample(mgdl: value, timestamp: timestamp)] : []
+            default: return [.unknown(commandId: 0x02, raw: Data(payload))]
+            }
         }
     }
 }

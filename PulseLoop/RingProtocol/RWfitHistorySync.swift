@@ -1,136 +1,206 @@
 import Foundation
 
-/// The RWfit history pager — the `LuckRingHistorySync` pattern on a two-framing family: request one
-/// type, advance when its reply frames settle, skip it if nothing ever arrives. Types the active
-/// framing doesn't speak (legacy has no HRV/stress/blood-sugar stream; JieLi has no breathe) are
-/// skipped for free by the encoder returning nil.
-///
-/// Replays are safe: persistence upserts history by `(kind, timestamp)`, activity by bucket
-/// timestamp, sleep by night. The vendor's delete-acks (`05 xx 30`) — which erase synced records
-/// from the ring — are deliberately never sent: PulseLoop's idempotent upserts don't need them, and
-/// leaving the log intact lets the user's original app keep working alongside ours.
+/// Response-driven history transfer. Modern history is consumed only after a durable save;
+/// sleep pages are journaled because a single session can span multiple ring pages.
 @MainActor
 final class RWfitHistorySync {
-    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
-
-    /// Full catalog, in request order (the vendor's own sync order: activity first, vitals after —
-    /// `blesdk/service/l.java` / `y.java`). Unsupported-per-framing types drop out at request time.
+    nonisolated deinit {}
     static let catalog: [RWfitHistoryType] = [
-        .steps, .sleep, .heartRate, .bloodPressure, .spo2, .temperature, .breathe,
-        .hrv, .stress, .bloodSugar,
+        .todaySteps, .steps, .sleep, .heartRate, .bloodPressure, .spo2, .temperature,
+        .breathe, .hrv, .stress, .bloodSugar,
     ]
-
-    /// Post-workout backfill subset — only the logs a session can have added to.
     static let vitalsTypes: [RWfitHistoryType] = [.heartRate, .spo2]
 
-    private let encoder = RWfitEncoder()
     private let gate: RWfitCommandGate
-    /// Progress sink. `nil` publishes to the shared bus (the production path); tests inject a spy.
+    private let decoder: RWfitDecoder
+    private let encoder = RWfitEncoder()
     private let progressSink: ((PulseEvent) -> Void)?
-
-    /// Re-armed on every data frame of the in-flight type; firing means the type has settled.
     private let settleSeconds: TimeInterval
-    /// Fires when a type produces nothing at all (unsupported / empty) — skip it.
-    private let stallSeconds: TimeInterval
-
-    /// Set by the driver at service discovery, with the gate's.
-    var framing: RWfitFraming = .legacy
-
-    private var queue: [RWfitHistoryType] = []
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+    private var legacyFrames: [[UInt8]] = []
+    private var lastLegacyFrameAt = Date.distantPast
+    private var importedRecords = 0
     private var currentType: RWfitHistoryType?
-    private var settleTask: Task<Void, Never>?
-    private var stallTask: Task<Void, Never>?
+    private var atBoundary = true
+    var isPaused = false
+    var framing: RWfitFraming = .legacy
+    private(set) var isRunning = false
+    var deviceIdentifier: String?
+    var persist: ([RingDecodedEvent]) throws -> Void = { events in
+        guard let save = RWfitHistoryPersistence.save else { throw RWfitSessionError.persistence }
+        try save(events)
+    }
 
-    init(
-        gate: RWfitCommandGate,
-        settleSeconds: TimeInterval = 1.5,
-        stallSeconds: TimeInterval = 6,
-        progressSink: ((PulseEvent) -> Void)? = nil
-    ) {
+    init(gate: RWfitCommandGate, clock: RWfitClock = RWfitClock(),
+         settleSeconds: TimeInterval = 1.5, stallSeconds: TimeInterval = 6,
+         progressSink: ((PulseEvent) -> Void)? = nil) {
         self.gate = gate
+        self.decoder = RWfitDecoder(clock: clock)
         self.settleSeconds = settleSeconds
-        self.stallSeconds = stallSeconds
         self.progressSink = progressSink
     }
 
     private func publish(_ event: PulseEvent) {
-        if let progressSink {
-            progressSink(event)
-        } else {
-            Task { await PulseEventBus.shared.publish(event) }
-        }
+        if let progressSink { progressSink(event) }
+        else { Task { await PulseEventBus.shared.publish(event) } }
     }
 
-    var isRunning: Bool { currentType != nil }
-
-    /// Seed the queue and request the first type. A pass already in flight wins — a re-entrant
-    /// `start` would abandon the in-flight type mid-stream.
     func start(types: [RWfitHistoryType]) {
         guard !isRunning else { return }
-        queue = types
-        advance()
+        task = Task { [weak self] in _ = await self?.run(types: types) }
     }
 
-    /// Abandon any in-flight pass (disconnect / teardown).
     func cancel() {
-        cancelTimers()
+        generation = UUID()
+        task?.cancel(); task = nil
+        isRunning = false
+        isPaused = false
+        atBoundary = true
         currentType = nil
-        queue.removeAll()
+        legacyFrames.removeAll()
     }
 
-    /// Called by the driver for every completed history data frame. A frame for the in-flight type
-    /// re-arms the settle window; anything else is ignored (late frames from a skipped type).
-    func noteReceived(type: RWfitHistoryType) {
-        guard let currentType, type == currentType else { return }
-        stallTask?.cancel(); stallTask = nil
-        armSettle()
+    func noteReceived(type: RWfitHistoryType, payload: [UInt8] = []) {
+        guard framing == .legacy, currentType == type else { return }
+        legacyFrames.append(payload)
+        lastLegacyFrameAt = Date()
     }
 
-    // MARK: - Driving the queue
-
-    private func advance() {
-        cancelTimers()
-        // Skip past types the active framing has no stream for.
-        var request: RWfitOutbound?
-        var type: RWfitHistoryType?
-        while request == nil, !queue.isEmpty {
-            let candidate = queue.removeFirst()
-            request = encoder.historyRequest(framing: framing, type: candidate)
-            type = candidate
+    func waitUntilPaused() async throws {
+        while isRunning && !atBoundary {
+            try await Task.sleep(nanoseconds: 25_000_000)
         }
-        guard let request, let type else {
+    }
+
+    private func boundary(_ token: UUID) async throws {
+        atBoundary = true
+        while isPaused {
+            try check(token)
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        try check(token)
+        atBoundary = false
+    }
+
+    private func check(_ token: UUID) throws {
+        try Task.checkCancellation()
+        guard token == generation else { throw CancellationError() }
+    }
+
+    @discardableResult
+    func run(types: [RWfitHistoryType]) async -> RWfitSyncOutcome {
+        guard !isRunning else { return .cancelled }
+        isRunning = true
+        let token = UUID()
+        generation = token
+        importedRecords = 0
+        let outcome: RWfitSyncOutcome
+        var failures: [String] = []
+        do {
+            for type in types {
+                guard encoder.historyRequest(framing: framing, type: type) != nil else { continue }
+                try await boundary(token)
+                currentType = type
+                publish(.syncProgress(stage: "Syncing \(type.label)…"))
+                do {
+                    if framing == .jieli {
+                        _ = try await modern(type: type, token: token)
+                    } else {
+                        _ = try await legacy(type: type, token: token)
+                    }
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    failures.append("\(type.label): \(error.localizedDescription)")
+                    rwfitDiagnostic("History stream incomplete", ["type": type.label, "reason": error.localizedDescription])
+                }
+            }
+            try check(token)
+            if failures.isEmpty { outcome = .success(records: importedRecords) }
+            else if importedRecords > 0 { outcome = .partial(records: importedRecords, reason: failures.joined(separator: " ")) }
+            else { outcome = .failed(reason: failures.joined(separator: " ")) }
+        } catch is CancellationError {
+            outcome = .cancelled
+        } catch {
+            outcome = importedRecords > 0 ? .partial(records: importedRecords, reason: error.localizedDescription)
+                : .failed(reason: error.localizedDescription)
+        }
+        if generation == token {
+            isRunning = false
+            atBoundary = true
             currentType = nil
-            publish(.syncProgress(stage: "done"))
-            return
+            publish(.rwfitSyncOutcome(outcome))
         }
-        currentType = type
-        publish(.syncProgress(stage: "Syncing \(type.label)…"))
-        gate.submit(request)
-        armStall()
+        return outcome
     }
 
-    private func armSettle() {
-        settleTask?.cancel()
-        settleTask = Task { [weak self] in
-            let nanos = UInt64((self?.settleSeconds ?? 1.5) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
-            guard !Task.isCancelled, let self else { return }
-            self.advance()
+    private func modern(type: RWfitHistoryType, token: UUID) async throws -> Int {
+        guard let key = type.jlType, let request = encoder.historyRequest(framing: .jieli, type: type),
+              let deviceIdentifier else { throw RWfitSessionError.unavailable }
+        var combined = RWfitJLTriple.historySync(type: key).bytes
+        var pages = 0
+        let deadline = Date().addingTimeInterval(180)
+        while true {
+            try await boundary(token)
+            guard Date() < deadline else { throw RWfitSessionError.timeout }
+            let payload = try await gate.execute(request)
+            try check(token)
+            guard payload.count >= 3 else { throw RWfitSessionError.invalidResponse }
+            pages += 1
+            // A broken device must not keep the UI alive by replaying pages forever.
+            guard pages <= 4096, combined.count <= 8 * 1024 * 1024 else { throw RWfitSessionError.invalidResponse }
+            let terminal = payload.count == 3
+            if type == .sleep {
+                if !terminal {
+                    try RWfitDecoder.validateJieliSleepPage(payload)
+                    try RWfitHistoryPersistence.stageSleepPage(payload, deviceID: deviceIdentifier, pageID: UUID())
+                }
+                // Deleting advances this stream. The raw page is durable even if the session has
+                // not ended yet; the journal survives disconnection, failed saves, and app restart.
+                _ = try await gate.execute(encoder.historyDelete(type: key), needsPayload: false)
+                try check(token)
+            } else if !terminal {
+                _ = try decoder.validatedJieliHistory(key: key, payload: payload)
+                combined.append(contentsOf: payload.dropFirst(3))
+            }
+            publish(.syncProgress(stage: "Syncing \(type.label)…"))
+            rwfitDiagnostic("History page received", ["type": type.label, "page": String(pages), "bytes": String(payload.count)])
+            if terminal { break }
         }
+        let payload = type == .sleep ? try RWfitHistoryPersistence.sleepPayload(deviceID: deviceIdentifier) : combined
+        let events = payload.isEmpty ? [] : try decoder.validatedJieliHistory(key: key, payload: payload)
+        try persist(events)
+        importedRecords += events.count
+        try check(token)
+        if type == .sleep {
+            try RWfitHistoryPersistence.clearSleepPages(deviceID: deviceIdentifier)
+        } else {
+            _ = try await gate.execute(encoder.historyDelete(type: key), needsPayload: false)
+        }
+        rwfitDiagnostic("History saved", ["type": type.label, "records": String(events.count)])
+        return events.count
     }
 
-    private func armStall() {
-        stallTask?.cancel()
-        stallTask = Task { [weak self] in
-            let nanos = UInt64((self?.stallSeconds ?? 6) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
-            guard !Task.isCancelled, let self else { return }
-            self.advance()   // no data ever arrived for this type — skip it
+    private func legacy(type: RWfitHistoryType, token: UUID) async throws -> Int {
+        guard let command = type.legacyCommand,
+              let request = encoder.historyRequest(framing: .legacy, type: type) else { return 0 }
+        legacyFrames.removeAll()
+        _ = try await gate.execute(request)
+        // Legacy streams push subsequent frames. Silence after an actual response is a settle
+        // boundary; silence before any response is a failed transaction, never empty history.
+        let deadline = Date().addingTimeInterval(60)
+        repeat {
+            try await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
+            try check(token)
+            guard Date() < deadline else { throw RWfitSessionError.timeout }
+        } while Date().timeIntervalSince(lastLegacyFrameAt) < settleSeconds
+        let events = legacyFrames.flatMap { decoder.decodeLegacy(cmd: command, payload: $0) }
+            .filter { if case .commandAck = $0 { return false }; return true }
+        guard !events.contains(where: { if case .unknown = $0 { return true }; return false }) else {
+            throw RWfitSessionError.invalidResponse
         }
-    }
-
-    private func cancelTimers() {
-        settleTask?.cancel(); settleTask = nil
-        stallTask?.cancel(); stallTask = nil
+        try persist(events)
+        importedRecords += events.count
+        return events.count
     }
 }

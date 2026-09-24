@@ -328,6 +328,7 @@ enum SeedData {
 
     @MainActor
     static func clearAll(_ context: ModelContext) {
+        try? RWfitHistoryPersistence.clearAllSleepPages()
         deleteAll(Device.self, context)
         deleteAll(ActivityDaily.self, context)
         deleteAll(Measurement.self, context)

@@ -47,12 +47,35 @@ final class DiagnosticsSubscriber {
             log(.battery, .info, "Battery \(percent)%")
         case let .syncProgress(stage):
             log(.sync, .info, "Sync: \(stage)")
+        case let .rwfitDiagnostic(message, metadata):
+            log(.sync, .info, message, metadata: metadata)
+        case let .rwfitInitialization(state):
+            log(.connection, .info, "RwFit initialization: \(state)")
+        case let .rwfitMeasurement(type, status):
+            log(.sync, .info, "RwFit measurement status", metadata: ["type": String(type), "status": String(status)])
+        case let .rwfitMeasurementOutcome(outcome):
+            log(.sync, .info, "RwFit measurement outcome: \(outcome)")
+        case let .rwfitSyncOutcome(outcome):
+            recordRWfitOutcome(outcome)
         case .heartRateComplete:
             log(.sync, .info, "Heart-rate measurement complete")
         case .spo2Complete:
             log(.sync, .info, "SpO₂ measurement complete")
         default:
             break
+        }
+    }
+
+    private func recordRWfitOutcome(_ outcome: RWfitSyncOutcome) {
+        switch outcome {
+        case let .success(records):
+            log(.sync, .info, "RwFit sync complete", metadata: ["importedRecords": String(records)])
+        case let .partial(records, reason):
+            log(.sync, .warn, "RwFit sync incomplete", metadata: ["importedRecords": String(records), "reason": reason])
+        case let .failed(reason):
+            log(.error, .error, "RwFit sync failed", metadata: ["reason": reason])
+        case .cancelled:
+            log(.sync, .info, "RwFit sync cancelled")
         }
     }
 

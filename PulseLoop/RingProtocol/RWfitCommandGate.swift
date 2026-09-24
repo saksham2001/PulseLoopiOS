@@ -1,46 +1,35 @@
 import Foundation
 
-/// The RWfit protocol-level command queue: **one outstanding command at a time**, released by the
-/// device's transport ACK (legacy `0xFE` matching our serial+cmd; JieLi flag-0x11 matching our
-/// triple) or by a timeout after one retry. Mirrors `x5/d.java` / `x5/c.java`'s LinkedList queues,
-/// including their inter-command spacing (100 ms legacy / 230 ms JieLi).
-///
-/// Lives behind the driver (which owns the codecs and sees the ACKs); the sync engine and history
-/// pager submit logical `RWfitOutbound` commands and never see wire bytes. Our own outbound ACK
-/// frames deliberately bypass this queue — they expect no reply, and delaying one stalls the ring's
-/// retransmit loop (the vendor's `b3 == -1` fast path).
+/// Serial protocol transactions. A GATT completion and a matching protocol response are separate
+/// requirements; neither queue residence nor an unsolicited push counts as a response.
 @MainActor
 final class RWfitCommandGate {
-    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+    nonisolated deinit {}
+
+    private struct Request {
+        let id: UUID
+        let command: RWfitOutbound
+        let needsPayload: Bool
+        let completion: (Result<[UInt8], Error>) -> Void
+    }
 
     private weak var writer: RingCommandWriter?
     private let legacyCodec: RWfitLegacyCodec
     private let jlCodec: RWfitJLCodec
-
-    /// Response timeout per attempt; the vendor allows 2 retries at a shorter spacing, but
-    /// `RingBLEClient`'s own 4 s GATT write-ACK timeout already covers the transport layer, so one
-    /// protocol retry is enough to survive a dropped notification.
-    private let responseTimeout: TimeInterval
-    private let legacySpacing: TimeInterval = 0.1
-    private let jieliSpacing: TimeInterval = 0.23
-
-    /// The framing every submitted command is framed with. Set by the driver at service discovery,
-    /// before anything can be submitted (`runStartup` runs after `.connected`).
+    private let responseTimeout: TimeInterval?
     var framing: RWfitFraming = .legacy
-
-    private var queue: [RWfitOutbound] = []
-    private var inFlight: RWfitOutbound?
-    private var inFlightSerial = 0
-    private var retried = false
+    private var queue: [Request] = []
+    private var inFlight: Request?
+    private var serial = 0
+    private var attempts = 0
+    private var writeConfirmed = false
+    private var received: [UInt8]?
     private var timeoutTask: Task<Void, Never>?
     private var spacingTask: Task<Void, Never>?
+    private var attemptID = UUID()
 
-    init(
-        writer: RingCommandWriter?,
-        legacyCodec: RWfitLegacyCodec,
-        jlCodec: RWfitJLCodec,
-        responseTimeout: TimeInterval = 2
-    ) {
+    init(writer: RingCommandWriter?, legacyCodec: RWfitLegacyCodec,
+         jlCodec: RWfitJLCodec, responseTimeout: TimeInterval? = nil) {
         self.writer = writer
         self.legacyCodec = legacyCodec
         self.jlCodec = jlCodec
@@ -49,93 +38,146 @@ final class RWfitCommandGate {
 
     var isIdle: Bool { inFlight == nil && queue.isEmpty }
 
-    /// Enqueue a logical command; sends immediately when the channel is free.
+    /// Fire-and-forget callers still receive failure diagnostics. State machines use execute.
     func submit(_ command: RWfitOutbound) {
-        queue.append(command)
+        enqueue(command, needsPayload: false) { result in
+            if case let .failure(error) = result { rwfitDiagnostic("Command failed", ["reason": error.localizedDescription]) }
+        }
+    }
+
+    func execute(_ command: RWfitOutbound, needsPayload: Bool = true) async throws -> [UInt8] {
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                enqueue(command, id: id, needsPayload: needsPayload) { continuation.resume(with: $0) }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancel(id: id) }
+        }
+    }
+
+    private func enqueue(_ command: RWfitOutbound, id: UUID = UUID(), needsPayload: Bool,
+                         completion: @escaping (Result<[UInt8], Error>) -> Void) {
+        queue.append(Request(id: id, command: command, needsPayload: needsPayload, completion: completion))
         pump()
     }
 
-    /// Drop everything (disconnect/teardown). In-flight state must not survive into the next link —
-    /// its serial would never match and would wedge the queue.
     func cancel() {
         timeoutTask?.cancel(); timeoutTask = nil
         spacingTask?.cancel(); spacingTask = nil
+        attemptID = UUID()
+        let pending = queue + (inFlight.map { [$0] } ?? [])
         queue.removeAll()
         inFlight = nil
-        retried = false
+        received = nil
+        for request in pending { request.completion(.failure(CancellationError())) }
     }
 
-    // MARK: - ACKs from the device (driver calls these from `ingest`)
-
-    /// Legacy `0xFE`: release when serial and cmd match the in-flight command (`x5/d.java i()`).
-    func noteLegacyAck(cmd: UInt8, serial: Int) {
-        guard case let .legacy(inCmd, _)? = inFlight, inCmd == cmd, serial == inFlightSerial else { return }
-        release()
+    private func cancel(id: UUID) {
+        if inFlight?.id == id { finish(.failure(CancellationError())); return }
+        if let index = queue.firstIndex(where: { $0.id == id }) {
+            queue.remove(at: index).completion(.failure(CancellationError()))
+        }
     }
 
-    /// JieLi flag-0x11: release when the echoed triple matches (`x5/c.java f()`).
+    func noteLegacyAck(cmd: UInt8, serial: Int, status: UInt8 = 0) {
+        guard case let .legacy(expected, _)? = inFlight?.command,
+              expected == cmd, self.serial == serial else { return }
+        guard status == 0 else { finish(.failure(RWfitSessionError.invalidResponse)); return }
+        if inFlight?.needsPayload == false { receive([]) }
+    }
+
+    func noteLegacyFrame(cmd: UInt8, payload: [UInt8]) {
+        guard case let .legacy(expected, _)? = inFlight?.command, expected == cmd else { return }
+        receive(payload)
+    }
+
+    func noteJieliFrame(flag: UInt8, triple: RWfitJLTriple, payload: [UInt8]) {
+        guard flag != 0x21, case let .jieli(expected)? = inFlight?.command,
+              expected.count >= 3, expected[0] == triple.cmd, expected[1] == triple.key else { return }
+        receive(payload)
+    }
+
     func noteJieliAck(triple: RWfitJLTriple) {
-        guard case let .jieli(payload)? = inFlight, payload.count >= 3,
-              payload[0] == triple.cmd, payload[1] == triple.key, payload[2] == triple.keyFlag
-        else { return }
-        release()
+        noteJieliFrame(flag: 0x11, triple: triple, payload: triple.bytes)
     }
 
-    // MARK: - Pump
+    private func receive(_ payload: [UInt8]) {
+        received = payload
+        completeIfReady()
+    }
+
+    private func completeIfReady() {
+        guard writeConfirmed, let received else { return }
+        finish(.success(received))
+    }
 
     private func pump() {
         guard inFlight == nil, spacingTask == nil, !queue.isEmpty else { return }
-        let command = queue.removeFirst()
-        inFlight = command
-        retried = false
-        send(command)
+        inFlight = queue.removeFirst()
+        attempts = 0
+        send()
     }
 
-    private func send(_ command: RWfitOutbound) {
-        switch command {
+    private func send() {
+        guard let request = inFlight else { return }
+        guard let writer else { finish(.failure(RWfitSessionError.unavailable)); return }
+        attempts += 1
+        writeConfirmed = false
+        received = nil
+        let token = UUID()
+        attemptID = token
+        let frame: Data
+        switch request.command {
         case let .legacy(cmd, payload):
             let encoded = legacyCodec.encode(cmd: cmd, payload: payload)
-            inFlightSerial = encoded.serial
-            writer?.enqueue(encoded.frame)
-        case let .jieli(payload):
-            writer?.enqueue(jlCodec.encode(payload: payload))
+            serial = encoded.serial
+            frame = encoded.frame
+        case let .jieli(payload): frame = jlCodec.encode(payload: payload)
         }
-        armTimeout()
+        writer.enqueueTracked(frame) { [weak self] result in
+            guard let self, self.attemptID == token, self.inFlight?.id == request.id else { return }
+            switch result {
+            case .success:
+                self.writeConfirmed = true
+                if self.received != nil { self.completeIfReady() } else { self.armTimeout() }
+            case let .failure(error): self.finish(.failure(error))
+            }
+        }
     }
 
     private func armTimeout() {
         timeoutTask?.cancel()
+        let seconds = responseTimeout ?? (framing == .jieli ? 5 : 2)
         timeoutTask = Task { [weak self] in
-            let nanos = UInt64((self?.responseTimeout ?? 2) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
-            self.timedOut()
+            let maxAttempts: Int
+            if case let .jieli(payload)? = self.inFlight?.command, payload.count >= 3, payload[2] == 0x30 {
+                // A lost delete reply is ambiguous. Repeating a consume could erase the next page.
+                maxAttempts = 1
+            } else { maxAttempts = self.framing == .jieli ? 3 : 2 }
+            if self.attempts < maxAttempts {
+                rwfitDiagnostic("Retrying command", ["attempt": String(self.attempts + 1), "framing": self.framing.rawValue])
+                self.send()
+            } else { self.finish(.failure(RWfitSessionError.timeout)) }
         }
     }
 
-    private func timedOut() {
-        guard let command = inFlight else { return }
-        if retried {
-            // Two silent attempts: drop it and move on — wedging the queue on one lost command
-            // starves everything behind it (the vendor does the same after its retry budget).
-            release()
-        } else {
-            retried = true
-            send(command)
-        }
-    }
-
-    private func release() {
+    private func finish(_ result: Result<[UInt8], Error>) {
+        guard let request = inFlight else { return }
         timeoutTask?.cancel(); timeoutTask = nil
         inFlight = nil
-        // Inter-command spacing: the firmware drops back-to-back commands (the vendor paces at
-        // 100/230 ms), so the next send waits out the gap.
-        let spacing = framing == .jieli ? jieliSpacing : legacySpacing
+        received = nil
+        attemptID = UUID()
+        let seconds = framing == .jieli ? 0.23 : 0.1
         spacingTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(spacing * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             self.spacingTask = nil
             self.pump()
         }
+        request.completion(result)
     }
 }

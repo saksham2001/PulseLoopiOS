@@ -6,7 +6,22 @@ import Foundation
 /// so engines deal in *logical* (unframed) commands and never think about checksums or padding.
 @MainActor
 protocol RingCommandWriter: AnyObject {
+    var deviceIdentifier: String? { get }
     func enqueue(_ command: Data)
+    /// Completes when the GATT write is acknowledged (or accepted by the without-response buffer).
+    func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void)
+    /// Deliver a synthetic decoded event without inventing a received packet.
+    func emit(_ event: RingDecodedEvent)
+}
+
+extension RingCommandWriter {
+    var deviceIdentifier: String? { nil }
+    func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+        enqueue(command)
+        completion(.success(()))
+    }
+
+    func emit(_ event: RingDecodedEvent) {}
 }
 
 /// Connection + protocol handler for one wearable family — the "how do we talk to it" half of the
@@ -84,11 +99,11 @@ protocol WearableDriver: AnyObject {
     /// I/O, with every service UUID the peripheral exposes — including ones outside `serviceUUIDs`.
     ///
     /// Exists for the one family whose *wire framing* cannot be known before connect: RWfit rings all
-    /// share the `A00A`/`B002`/`B003` GATT but speak two different framings, distinguished only by
+    /// share the `A00A`/`B002`/`B003` GATT but speak two different framings, initially hinted at by
     /// which sibling services (JieLi `AE00`, Telink/PixArt OTA) the firmware exposes. The vendor app
     /// makes the same decision in `onServicesDiscovered`. Runs before notify subscription — and so
     /// before `.connected`, `immediatePostSubscriptionCommands()` and `runStartup()` — which
-    /// guarantees framing is fixed before the first outbound frame. Default: no-op.
+    /// provides an initial framing hint; RWfit validates it against received frames. Default: no-op.
     func servicesDiscovered(_ services: [CBUUID])
 }
 

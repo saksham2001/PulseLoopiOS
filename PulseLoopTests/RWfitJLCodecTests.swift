@@ -2,8 +2,7 @@ import XCTest
 @testable import PulseLoop
 
 /// The JieLi (`0xAB`) wire contract: header layout, CRC-16/ARC, the triple-echo ACK (with its
-/// `06 09` four-byte quirk), and headerless-continuation reassembly — against `x5/c.java g()` and
-/// the inline decoder in `r5/b.java`.
+/// exact three-byte payload), and headerless continuation reassembly against the official SDK.
 @MainActor
 final class RWfitJLCodecTests: XCTestCase {
 
@@ -32,24 +31,26 @@ final class RWfitJLCodecTests: XCTestCase {
         XCTAssertEqual(Array(ack[6...]), [0x05, 0x03, 0x10])
     }
 
-    func testRealtimeAckCarriesTrailingZero() {
-        // `r5/b.java`'s `CMD == 6 && Key == 9` special case: the 06 09 reply is ACKed with 4 bytes.
+    func testRealtimeAckEchoesOnlyTriple() {
+        // SDK ACKs all commands uniformly, including 0609 measurement state.
         let ack = [UInt8](RWfitJLCodec().ack(triple: RWfitJLTriple(cmd: 0x06, key: 0x09, keyFlag: 0x00)))
-        XCTAssertEqual(Array(ack[6...]), [0x06, 0x09, 0x00, 0x00])
+        XCTAssertEqual(Array(ack[6...]), [0x06, 0x09, 0x00])
+        XCTAssertEqual(ack.count, 9)
     }
 
     func testDecodeSingleFrameRoundTrip() {
         let codec = RWfitJLCodec()
         let payload: [UInt8] = [0x02, 0x03, 0x10, 0x5a, 0x0e, 0xd8]
         let events = codec.decode(codec.encode(payload: payload))
-        XCTAssertEqual(events, [.frame(triple: RWfitJLTriple(cmd: 0x02, key: 0x03, keyFlag: 0x10),
+        XCTAssertEqual(events, [.frame(flag: 0x01, triple: RWfitJLTriple(cmd: 0x02, key: 0x03, keyFlag: 0x10),
                                        payload: payload)])
     }
 
     func testDecodeDeviceAck() {
         let codec = RWfitJLCodec()
         let events = codec.decode(codec.encode(payload: [0x02, 0x01, 0x00], isAck: true))
-        XCTAssertEqual(events, [.deviceAck(triple: RWfitJLTriple(cmd: 0x02, key: 0x01, keyFlag: 0x00))])
+        XCTAssertEqual(events, [.frame(flag: 0x11, triple: RWfitJLTriple(cmd: 0x02, key: 0x01, keyFlag: 0x00),
+                                       payload: [0x02, 0x01, 0x00])])
     }
 
     func testHeaderlessContinuationReassembly() {
@@ -63,7 +64,7 @@ final class RWfitJLCodecTests: XCTestCase {
 
         XCTAssertTrue(codec.decode(headerPacket).isEmpty, "nothing surfaces mid-reassembly")
         let events = codec.decode(continuation)
-        XCTAssertEqual(events, [.frame(triple: RWfitJLTriple(cmd: 0x05, key: 0x03, keyFlag: 0x10),
+        XCTAssertEqual(events, [.frame(flag: 0x01, triple: RWfitJLTriple(cmd: 0x05, key: 0x03, keyFlag: 0x10),
                                        payload: payload)])
     }
 
@@ -89,4 +90,40 @@ final class RWfitJLCodecTests: XCTestCase {
         XCTAssertTrue(codec.decode(Data(whole[26...])).isEmpty,
                       "a continuation from the dropped link must not complete on the new one")
     }
+    func testEveryHeaderSplitPreservesResponseBodyAndPushFlag() {
+        for flag in [UInt8(0x01), 0x11, 0x21] {
+            for split in 1...6 {
+                let codec = RWfitJLCodec()
+                let payload: [UInt8] = [0x02, 0x03, 0x10, 76]
+                var frame = [UInt8](codec.encode(payload: payload))
+                frame[1] = flag
+                XCTAssertTrue(codec.decode(Data(frame.prefix(split))).isEmpty)
+                XCTAssertEqual(codec.decode(Data(frame.dropFirst(split))), [
+                    .frame(flag: flag, triple: .battery, payload: payload),
+                ])
+            }
+        }
+    }
+
+    func testMultipleFramesAndCRCRecoveryInOneNotification() {
+        let codec = RWfitJLCodec()
+        let payload: [UInt8] = [0x02, 0x03, 0x10, 76]
+        let valid = codec.encode(payload: payload)
+        var broken = [UInt8](valid)
+        broken[4] ^= 1
+        XCTAssertEqual(codec.decode(Data(broken) + valid + valid), [
+            .crcFailed, .frame(flag: 0x01, triple: .battery, payload: payload),
+            .frame(flag: 0x01, triple: .battery, payload: payload),
+        ])
+    }
+
+    func testOversizedHeaderCannotBlockNextValidFrame() {
+        let codec = RWfitJLCodec()
+        let payload: [UInt8] = [0x02, 0x03, 0x10, 76]
+        let invalid = Data([0xab, 0x01, 0x20, 0x01, 0, 0])
+        XCTAssertEqual(codec.decode(invalid + codec.encode(payload: payload)), [
+            .frame(flag: 0x01, triple: .battery, payload: payload),
+        ])
+    }
+
 }

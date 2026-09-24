@@ -18,6 +18,24 @@ struct RWfitEncoder {
     /// stores and echoes it. UTF-16LE on the wire (`y5/b.java m()`).
     static let bindUserID = "PL"
 
+    // SDK startup commands; session key flag is 0x20, password authentication is 0x10.
+    func sessionInitialize() -> RWfitOutbound {
+        .jieli(payload: [0x03, 0x02, 0x20, 0, 0, 0, 1])
+    }
+
+    func timezone(offsetSeconds: Int) -> RWfitOutbound {
+        let quarters = Int8(clamping: Int((Double(offsetSeconds) / 900).rounded()))
+        return .jieli(payload: [0x02, 0x02, 0x00, UInt8(bitPattern: quarters), 0x01])
+    }
+
+    func functionMenu() -> RWfitOutbound { .jieli(payload: [0x02, 0x63, 0x10]) }
+
+    func authenticate() -> RWfitOutbound {
+        .jieli(payload: [0x03, 0x04, 0x10] + Array("0000".utf8))
+    }
+
+    func historyDelete(type: UInt8) -> RWfitOutbound { .jieli(payload: [0x05, type, 0x30]) }
+
     // MARK: - Clock
 
     /// Set the ring's RTC from **local** calendar components — both firmwares stamp history off this
@@ -48,10 +66,9 @@ struct RWfitEncoder {
         request(framing, legacy: RWfitLegacyCommand.battery, jl: .battery)
     }
 
-    /// Capability discovery. Legacy: the `0x03` SupportMenuBean bitmap. JieLi: the bind-status
-    /// reply's trailing TLV carries the same information, so the request is the same `03 01 00`.
+    /// Capability discovery: legacy SupportMenuBean or the modern SDK 0263 function menu.
     func features(framing: RWfitFraming) -> RWfitOutbound {
-        request(framing, legacy: RWfitLegacyCommand.features, jl: .bindStatus)
+        request(framing, legacy: RWfitLegacyCommand.features, jl: RWfitJLTriple(cmd: 0x02, key: 0x63, keyFlag: 0x10))
     }
 
     func bindStatus(framing: RWfitFraming) -> RWfitOutbound {

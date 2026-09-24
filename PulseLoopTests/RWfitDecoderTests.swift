@@ -224,10 +224,10 @@ final class RWfitDecoderTests: XCTestCase {
     }
 
     func testJieliTemperatureAndBloodSugarScaling() {
-        // `U()`: u16 ÷ 10 °C. `R()`: u16 ÷ 10 mmol/L → mg/dL.
+        // SDK: whole Celsius + truncated hundredths. Blood sugar is u16 ÷ 10 mmol/L.
         let temp = decoder.decodeJieli(
             triple: RWfitJLTriple(cmd: 0x05, key: 0x08, keyFlag: 0x10),
-            payload: cat([0x05, 0x08, 0x10], jieliEpoch(), [0x01, 0x6d])   // 365 → 36.5 °C
+            payload: cat([0x05, 0x08, 0x10], jieliEpoch(), [36, 59])   // 36 + floor(59 / 10) / 10 → 36.5 °C
         )
         guard case let .historyMeasurement(kind, celsius, _)? = temp.first else { return XCTFail("unexpected event shape") }
         XCTAssertEqual(kind, .temperature)
@@ -242,20 +242,17 @@ final class RWfitDecoderTests: XCTestCase {
         XCTAssertEqual(mgdl, 5.5 * 18.016, accuracy: 0.01)
     }
 
-    func testJieliBindReplyGrantsTLVCapabilities() {
-        // `u()` @2636: `[3]` bindStatus; `(0x05, type)` pairs from offset 8 up to the first NUL.
-        let payload = cat(
-            [0x03, 0x01, 0x00], [1], [0, 0, 0, 0],
-            [0x05, 0x04, 0x05, 0x0a, 0x05, 0x08], [0x00], [0x05, 0x0d]   // BP, HRV, temp; stress after NUL
-        )
-        let events = decoder.decodeJieli(
-            triple: RWfitJLTriple(cmd: 0x03, key: 0x01, keyFlag: 0x00), payload: payload
-        )
-        guard case let .supportFunctions(caps)? = events.last else {
-            return XCTFail("expected supportFunctions, got \(events)")
-        }
-        XCTAssertEqual(caps, [.bloodPressure, .manualBloodPressure, .hrv, .manualHrv, .temperature])
-        XCTAssertFalse(caps.contains(.stress), "pairs after the first NUL are not capability TLV")
+    func testFunctionMenuUsesDocumentedOffsetsAndGlobalHealthGate() {
+        var payload = [UInt8](repeating: 0, count: 0x5f)
+        payload[0] = 2; payload[1] = 0x63; payload[2] = 0x10
+        for offset in [0x2c, 0x53, 0x54, 0x55, 0x56, 0x59, 0x5a, 0x5e] { payload[offset] = 1 }
+        let menu = RWfitFunctionMenu(payload: payload)
+        XCTAssertEqual(menu?.historyTypes, [.steps, .todaySteps, .heartRate, .bloodPressure, .spo2, .hrv, .temperature])
+        XCTAssertEqual(menu?.requiresPassword, true)
+        XCTAssertTrue(menu?.capabilities.contains(.manualHeartRate) == true)
+        payload[0x53] = 0
+        XCTAssertEqual(RWfitFunctionMenu(payload: payload)?.historyTypes, [])
+        XCTAssertNil(RWfitFunctionMenu(payload: Array(payload.dropLast())))
     }
 
     func testJieliBatteryFirmwareAndRealtime() {
@@ -271,16 +268,125 @@ final class RWfitDecoderTests: XCTestCase {
         guard case let .firmware(version)? = info.first else { return XCTFail("unexpected event shape") }
         XCTAssertEqual(version, "1.2.11")
 
-        // Realtime reply (`x5/b.java:3734`): value = data[5] + 10; type echoed at [3].
-        let hr = decoder.decodeJieli(
-            triple: .realtimeMeasure, payload: [0x06, 0x09, 0x00, 0x03, 0x05, 62]
-        )
-        guard case let .heartRateSample(bpm, _)? = hr.first else { return XCTFail("unexpected event shape") }
-        XCTAssertEqual(bpm, 72)
-
-        let warmup = decoder.decodeJieli(
+        let status = decoder.decodeJieli(
             triple: .realtimeMeasure, payload: [0x06, 0x09, 0x00, 0x03, 0x05, 0]
         )
-        guard case .commandAck? = warmup.first else { return XCTFail("zero value = still measuring") }
+        guard case let .rwfitMeasurementStatus(type, value)? = status.first else {
+            return XCTFail("expected completion status, never a reading")
+        }
+        XCTAssertEqual(type, 3)
+        XCTAssertEqual(value, 0)
+    }
+
+    func testLiveResultsUseTimestampedSixByteRecords() {
+        let hr = decoder.decodeJieli(
+            triple: RWfitJLTriple(cmd: 2, key: 0x24, keyFlag: 0),
+            payload: cat([2, 0x24, 0], jieliEpoch(), [72, 0])
+        )
+        guard case let .heartRateSample(bpm, timestamp)? = hr.first else { return XCTFail("expected live HR") }
+        XCTAssertEqual(bpm, 72)
+        XCTAssertEqual(timestamp, utc)
+        let bp = decoder.decodeJieli(
+            triple: RWfitJLTriple(cmd: 2, key: 0x31, keyFlag: 0),
+            payload: cat([2, 0x31, 0], jieliEpoch(), [120, 80])
+        )
+        guard case let .bloodPressureSample(sys, dia, _)? = bp.first else { return XCTFail("expected BP") }
+        XCTAssertEqual(sys, 120)
+        XCTAssertEqual(dia, 80)
+    }
+
+    func testLiveOxygenHrvAndTemperature() {
+        let oxygen = decoder.decodeJieli(
+            triple: RWfitJLTriple(cmd: 2, key: 0x4e, keyFlag: 0),
+            payload: cat([2, 0x4e, 0], jieliEpoch(), [98, 0])
+        )
+        guard case let .spo2Result(value, _)? = oxygen.first else { return XCTFail("expected SpO2") }
+        XCTAssertEqual(value, 98)
+        let hrv = decoder.decodeJieli(
+            triple: RWfitJLTriple(cmd: 2, key: 0x69, keyFlag: 0),
+            payload: cat([2, 0x69, 0], jieliEpoch(), [45, 0])
+        )
+        guard case let .hrvSample(ms, _)? = hrv.first else { return XCTFail("expected HRV") }
+        XCTAssertEqual(ms, 45)
+        let temperature = decoder.decodeJieli(
+            triple: RWfitJLTriple(cmd: 2, key: 0x30, keyFlag: 0),
+            payload: cat([2, 0x30, 0], jieliEpoch(), [36, 59])
+        )
+        guard case let .temperatureSample(celsius, _)? = temperature.first else { return XCTFail("expected temperature") }
+        XCTAssertEqual(celsius, 36.5, accuracy: 0.001)
+    }
+
+    func testTodayStepsEmitsCumulativeTotal() throws {
+        let payload = cat([5, 0x1a, 0x10], jieliEpoch(), [0, 0, 0x03, 0xe8],
+                          RWfitBytes.packU32BE(1250), RWfitBytes.packU32BE(5000))
+        let events = try decoder.validatedJieliHistory(key: 0x1a, payload: payload)
+        guard case let .activityUpdate(timestamp, steps, meters, calories)? = events.first else {
+            return XCTFail("expected cumulative current-day activity")
+        }
+        XCTAssertEqual(timestamp, utc)
+        XCTAssertEqual(steps, 1000)
+        XCTAssertEqual(meters, 500)
+        XCTAssertEqual(calories, 125)
+    }
+
+    func testTodayStepsPreservesHourlyDetailsBeforeCumulativeTotal() throws {
+        let total = cat([5, 0x1a, 0x10], jieliEpoch(), [0, 0, 0x03, 0xe8],
+                        RWfitBytes.packU32BE(1250), RWfitBytes.packU32BE(5000))
+        let hour = cat(jieliEpoch(3600), [1, 0, 0, 100],
+                       RWfitBytes.packU32BE(100), RWfitBytes.packU32BE(500))
+        let events = try decoder.validatedJieliHistory(key: 0x1a, payload: total + hour)
+        XCTAssertEqual(events.count, 2)
+        guard case let .activityBucket(timestamp, steps, meters) = events[0] else {
+            return XCTFail("expected hourly bucket")
+        }
+        XCTAssertEqual(timestamp, utc.addingTimeInterval(3600))
+        XCTAssertEqual(steps, 100)
+        XCTAssertEqual(meters, 50)
+        guard case let .activityUpdate(_, cumulative, _, _) = events[1] else {
+            return XCTFail("expected separate cumulative total, never a 1000-step bucket")
+        }
+        XCTAssertEqual(cumulative, 1000)
+        let bridged = events.flatMap { RingEventBridge.events(for: $0, now: utc.addingTimeInterval(7200)) }
+        XCTAssertEqual(bridged.count, 2)
+        guard case .activityBucket = bridged[0], case .activityUpdate = bridged[1] else {
+            return XCTFail("bridge must preserve bucket versus cumulative semantics")
+        }
+    }
+
+    func testValidatedHistoryRejectsPartialRecordsAndIncompleteSleep() throws {
+        XCTAssertThrowsError(try decoder.validatedJieliHistory(key: 3, payload: [5, 3, 0x10, 1]))
+        XCTAssertTrue(try decoder.validatedJieliHistory(key: 3, payload: [5, 3, 0x10]).isEmpty)
+        let open = cat([5, 5, 0x10], jieliEpoch(), [0x11, 0, 0])
+        XCTAssertNoThrow(try RWfitDecoder.validateJieliSleepPage(open))
+        XCTAssertThrowsError(try decoder.validatedJieliHistory(key: 5, payload: open))
+        let end = cat(jieliEpoch(600), [0x22, 0, 0])
+        let joined = open + end + Array(open.dropFirst(3))
+        let events = try decoder.validatedJieliHistory(key: 5, payload: joined)
+        guard case let .sleepTimeline(_, stages)? = events.first else { return XCTFail("expected assembled sleep") }
+        XCTAssertEqual(stages.count, 10)
+    }
+
+    func testSleepDeduplicatesChangedFlagsButRejectsConflictingStages() throws {
+        let start = cat(jieliEpoch(), [0x11, 0, 0])
+        let changedFlags = cat(jieliEpoch(), [0x11, 1, 0xff])
+        let end = cat(jieliEpoch(600), [0x22, 0, 0])
+        let events = try decoder.validatedJieliHistory(
+            key: 5, payload: [5, 5, 0x10] + start + end + changedFlags
+        )
+        guard case let .sleepTimeline(_, stages)? = events.first else { return XCTFail("expected sleep") }
+        XCTAssertEqual(stages.count, 10)
+        let conflicting = cat(jieliEpoch(), [1, 0, 0])
+        XCTAssertThrowsError(try decoder.validatedJieliHistory(
+            key: 5, payload: [5, 5, 0x10] + start + conflicting + end
+        ))
+    }
+
+    func testSDKStartupCommandBytes() {
+        let encoder = RWfitEncoder()
+        XCTAssertEqual(encoder.sessionInitialize(), .jieli(payload: [3, 2, 0x20, 0, 0, 0, 1]))
+        XCTAssertEqual(encoder.timezone(offsetSeconds: -14400), .jieli(payload: [2, 2, 0, 0xf0, 1]))
+        XCTAssertEqual(encoder.functionMenu(), .jieli(payload: [2, 0x63, 0x10]))
+        XCTAssertEqual(encoder.authenticate(), .jieli(payload: [3, 4, 0x10, 48, 48, 48, 48]))
+        XCTAssertEqual(encoder.historyDelete(type: 5), .jieli(payload: [5, 5, 0x30]))
     }
 }

@@ -274,6 +274,16 @@ struct MainTabView: View {
                 }
             }
             .pulseGlassContainer(spacing: 8)
+            if let error = coordinator.syncError {
+                HStack {
+                    Text(error).font(.caption)
+                    Spacer()
+                    Button("Retry") { coordinator.runStartupSequence() }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .contain)
+            }
             if #available(iOS 26, *) {
                 // iOS 26+: native TabView renders Apple's stock Liquid Glass tab bar —
                 // real lensing, morphing selection, and content diffusing under the bar.

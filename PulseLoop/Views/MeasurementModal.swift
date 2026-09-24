@@ -84,7 +84,9 @@ struct MeasurementSheet: View {
     /// Sourced from the coordinator: copying the literal is how the ring and the measurement desync.
     /// Nil in demo mode too — no 30s window is running there, so a countdown would be pure theatre.
     private var countdownWindow: Double? {
-        guard kind == .hr, ble.state == .connected else { return nil }
+        // RwFit first waits for a history page boundary and command acceptance, so total
+        // wall-clock duration is variable even though the sampling window remains fixed.
+        guard kind == .hr, ble.state == .connected, ble.activeDeviceType != .rwfit else { return nil }
         return Double(coordinator.hrMeasureSeconds)
     }
 

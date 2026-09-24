@@ -10,10 +10,9 @@ import Foundation
 /// - **JieLi `0xAB`**: CRC-16/ARC, `{CMD, Key, KeyFlag}` triple addressing, flag-0x11 ACKs
 ///   (`x5/c.java`, decode inline in `r5/b.java`).
 ///
-/// Which one a ring speaks is decided *after* connect from the sibling services it exposes
-/// (`r5/b.java onServicesDiscovered`): JieLi `AE00`, Telink OTA or PixArt `FF00` present ⇒ JieLi
-/// framing; none of them ⇒ legacy. The advertisement carries no such signal, which is why the whole
-/// family is one `RingDeviceType` and the driver owns the decision (`RWfitDriver.servicesDiscovered`).
+/// Service markers are hints; the driver confirms framing using a CRC/checksum-verified response.
+/// Modern protocol reference (startup, menu, live values and history consumption):
+/// https://github.com/RWFitSDK/RW_weixi_miniprogram_sdk/blob/8613daec2c08a41fa6c0bf5476af4f125e1532e5/RW_SDK_DEMO/sdk/rw-ble-sdk.min.js
 enum RWfitUUIDs {
     /// Primary data service, both framings (`y5/a.java f19994a`).
     static let service = "0000a00a-0000-1000-8000-00805f9b34fb"
@@ -32,9 +31,7 @@ enum RWfitUUIDs {
     static let pixartOTA = "0000ff00-0000-1000-8000-00805f9b34fb"
 }
 
-/// The two wire framings served by `RWfitDriver`. `.legacy` is the safe default when the discovery
-/// hook never fires — a legacy frame sent to a JieLi ring is ignored (wrong magic), while the reverse
-/// would also be ignored; legacy is the more common firmware in the vendor's install base.
+/// The two wire framings served by `RWfitDriver`, confirmed by validated inbound frames.
 enum RWfitFraming: String, Sendable {
     case legacy
     case jieli
@@ -117,7 +114,7 @@ enum RWfitJLDataType {
 /// One history stream, unified across the two framings so the pager and progress labels don't care
 /// which wire it rides.
 enum RWfitHistoryType: CaseIterable, Sendable {
-    case steps, sleep, heartRate, bloodPressure, spo2, temperature, breathe, hrv, stress, bloodSugar
+    case todaySteps, steps, sleep, heartRate, bloodPressure, spo2, temperature, breathe, hrv, stress, bloodSugar
 
     /// Legacy request command, or nil where the legacy protocol has no such stream
     /// (`blesdk/service/l.java` — HRV/stress/blood-sugar are JieLi-only).
@@ -130,7 +127,7 @@ enum RWfitHistoryType: CaseIterable, Sendable {
         case .spo2: return RWfitLegacyCommand.spo2History
         case .temperature: return RWfitLegacyCommand.temperatureHistory
         case .breathe: return RWfitLegacyCommand.breatheHistory
-        case .hrv, .stress, .bloodSugar: return nil
+        case .todaySteps, .hrv, .stress, .bloodSugar: return nil
         }
     }
 
@@ -138,6 +135,7 @@ enum RWfitHistoryType: CaseIterable, Sendable {
     /// (breathe is legacy-only).
     var jlType: UInt8? {
         switch self {
+        case .todaySteps: return 0x1a
         case .steps: return RWfitJLDataType.steps
         case .sleep: return RWfitJLDataType.sleep
         case .heartRate: return RWfitJLDataType.heartRate
@@ -153,6 +151,7 @@ enum RWfitHistoryType: CaseIterable, Sendable {
 
     var label: String {
         switch self {
+        case .todaySteps: return "today’s activity"
         case .steps: return "activity"
         case .sleep: return "sleep"
         case .heartRate: return "heart rate"
@@ -178,6 +177,41 @@ enum RWfitHistoryType: CaseIterable, Sendable {
     init?(jlType: UInt8) {
         guard let match = Self.allCases.first(where: { $0.jlType == jlType }) else { return nil }
         self = match
+    }
+}
+
+/// The SDK's 0263 menu uses bit zero at absolute payload offsets (including the triple).
+struct RWfitFunctionMenu {
+    let historyTypes: Set<RWfitHistoryType>
+    let capabilities: Set<WearableCapability>
+    let requiresPassword: Bool
+
+    init?(payload: [UInt8]) {
+        guard payload.count >= 0x5f else { return nil }
+        requiresPassword = payload[0x2c] & 1 != 0
+        var streams: Set<RWfitHistoryType> = []
+        var caps: Set<WearableCapability> = []
+        if payload[0x53] & 1 != 0 {
+            let offsets: [(Int, RWfitHistoryType)] = [
+                (0x54, .steps), (0x55, .heartRate), (0x56, .bloodPressure), (0x57, .sleep),
+                (0x59, .spo2), (0x5a, .hrv), (0x5b, .stress), (0x5c, .bloodSugar), (0x5e, .temperature),
+            ]
+            for (offset, type) in offsets where payload[offset] & 1 != 0 { streams.insert(type) }
+        }
+        if streams.contains(.steps) {
+            streams.insert(.todaySteps)
+            caps.insert(.steps)
+        }
+        if streams.contains(.sleep) { caps.formUnion([.sleep, .remSleep]) }
+        if streams.contains(.heartRate) { caps.formUnion([.heartRate, .manualHeartRate, .realtimeHeartRate]) }
+        if streams.contains(.spo2) { caps.formUnion([.spo2, .manualSpo2]) }
+        if streams.contains(.bloodPressure) { caps.formUnion([.bloodPressure, .manualBloodPressure]) }
+        if streams.contains(.hrv) { caps.formUnion([.hrv, .manualHrv]) }
+        if streams.contains(.stress) { caps.insert(.stress) }
+        if streams.contains(.bloodSugar) { caps.insert(.bloodSugar) }
+        if streams.contains(.temperature) { caps.insert(.temperature) }
+        historyTypes = streams
+        capabilities = caps
     }
 }
 

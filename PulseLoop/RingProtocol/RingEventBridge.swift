@@ -180,6 +180,10 @@ enum RingEventBridge {
 
     private static func extraMetricEvents(for decoded: RingDecodedEvent) -> [PulseEvent] {
         switch decoded {
+        case let .rwfitMeasurementStatus(type, status):
+            return [.rwfitMeasurement(type: type, status: status)]
+
+
         case let .bloodPressureSample(systolic, diastolic, timestamp):
             guard systolicRange.contains(systolic), diastolicRange.contains(diastolic) else { return [] }
             return [.bloodPressureSample(systolic: systolic, diastolic: diastolic, timestamp: timestamp)]
