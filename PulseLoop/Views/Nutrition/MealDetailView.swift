@@ -87,11 +87,14 @@ struct MealDetailView: View {
 
     // MARK: - Sections
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEE, MMM d · h:mm a"
-        return f
-    }()
+    // Two formatters rather than one pattern: the " · " is ours, but the day and time either side of
+    // it belong to the locale (field order, and 12- vs 24-hour).
+    private static let dayFormatter = DateFormatter.localizedTemplate("EEEMMMd")
+    private static let timeFormatter = DateFormatter.localizedTemplate("jmm")
+
+    private static func timestampLabel(_ date: Date) -> String {
+        "\(dayFormatter.string(from: date)) · \(timeFormatter.string(from: date))"
+    }
 
     private func titleBlock(_ entry: MealEntry) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -105,7 +108,7 @@ struct MealDetailView: View {
                     .background(PulseColors.calories.opacity(0.14), in: Capsule())
                 ProvenanceBadge(source: entry.source, userEdited: entry.userEdited)
             }
-            Text(Self.timeFormatter.string(from: entry.timestamp))
+            Text(Self.timestampLabel(entry.timestamp))
                 .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
         }

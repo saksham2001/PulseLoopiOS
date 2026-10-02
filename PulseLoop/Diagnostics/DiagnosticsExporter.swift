@@ -10,10 +10,14 @@ import UIKit
 /// (the remote-tester workflow for rings nobody on the project has in hand).
 @MainActor
 enum DiagnosticsExporter {
+    /// One shared formatter: the log and packet maps below run this once per row, and constructing
+    /// an `ISO8601DateFormatter` is far more expensive than using one.
+    private static let iso = ISO8601DateFormatter()
+
     /// Serialize a diagnostics report to pretty-printed JSON.
     static func exportJSON(context: ModelContext, maxLogs: Int = 500) -> String {
         var root: [String: Any] = [:]
-        root["generatedAt"] = ISO8601DateFormatter().string(from: Date())
+        root["generatedAt"] = iso.string(from: Date())
         root["app"] = appInfo()
         root["device"] = deviceInfo(context: context)
         root["logs"] = recentLogs(context: context, limit: maxLogs)
@@ -31,7 +35,7 @@ enum DiagnosticsExporter {
     /// Write the report to a temporary file and return its URL (for a share sheet).
     static func exportFile(context: ModelContext) -> URL? {
         let json = exportJSON(context: context)
-        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let stamp = iso.string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("pulseloop-diagnostics-\(stamp).json")
         do {
             try json.data(using: .utf8)?.write(to: url)
@@ -61,7 +65,7 @@ enum DiagnosticsExporter {
             info["wearableName"] = device.name
             info["capabilities"] = device.capabilities.csv
             info["firmware"] = device.firmwareVersion ?? "?"
-            info["lastSyncAt"] = device.lastSyncAt.map { ISO8601DateFormatter().string(from: $0) } ?? ""
+            info["lastSyncAt"] = device.lastSyncAt.map { iso.string(from: $0) } ?? ""
         }
         return info
     }
@@ -72,7 +76,7 @@ enum DiagnosticsExporter {
         let logs = (try? context.fetch(descriptor)) ?? []
         return logs.map { log in
             var row: [String: Any] = [
-                "at": ISO8601DateFormatter().string(from: log.timestamp),
+                "at": iso.string(from: log.timestamp),
                 "category": log.categoryRaw,
                 "level": log.levelRaw,
                 "message": log.message,
@@ -89,7 +93,7 @@ enum DiagnosticsExporter {
         let packets = (try? context.fetch(descriptor)) ?? []
         return packets.map { p in
             [
-                "at": ISO8601DateFormatter().string(from: p.timestamp),
+                "at": iso.string(from: p.timestamp),
                 "direction": p.directionRaw,
                 "hex": p.hexPayload,
                 "decoded": p.decodedKind ?? "",
