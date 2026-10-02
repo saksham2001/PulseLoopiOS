@@ -17,6 +17,9 @@ struct CoachContextPacket: Encodable {
     var lastSevenDays: WeekContext
     var latestVitals: VitalsContext
     var latestSleep: SleepContext?
+    /// Menstrual-cycle summary. `nil` unless the user explicitly enabled "Share cycle data
+    /// with the AI Coach" — cycle data must never leave the device as a default.
+    var cycle: CycleContext?
     var recentWorkouts: [WorkoutContext]
     var memories: [MemoryContext]
     var conversationSummary: String?
@@ -98,6 +101,16 @@ struct CoachContextPacket: Encodable {
         var score: Int?
         var confidence: String
         var decoderNote: String
+    }
+
+    struct CycleContext: Encodable {
+        var cycleDay: Int
+        var phase: String
+        /// "not_detected" | "probable" | "confirmed"
+        var ovulationStatus: String
+        var nextPeriodExpected: String?
+        var typicalCycleLengthDays: Int?
+        var note: String
     }
 
     struct WorkoutContext: Encodable {

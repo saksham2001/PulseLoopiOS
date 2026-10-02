@@ -120,6 +120,7 @@ enum CoachContextBuilder {
             lastSevenDays: week,
             latestVitals: vitals,
             latestSleep: sleep,
+            cycle: cycleContext(context: context, now: now),
             recentWorkouts: recentWorkouts(context: context, limit: budget.maxWorkouts),
             memories: memories(context: context, limit: budget.maxMemories, valueCap: budget.memoryValueCap),
             conversationSummary: cap(conversationSummary, to: budget.conversationSummaryCap),
@@ -164,6 +165,29 @@ enum CoachContextBuilder {
     private static func cap(_ text: String?, to limit: Int) -> String? {
         guard let text, limit != .max, text.count > limit else { return text }
         return String(text.prefix(limit)) + "…"
+    }
+
+    /// Cycle data is the most sensitive thing the app stores: it only enters the coach
+    /// context behind the dedicated "Share cycle data with the AI Coach" opt-in (off by
+    /// default), and even then only as a compact summary — never raw logs or notes.
+    private static func cycleContext(context: ModelContext, now: Date) -> CoachContextPacket.CycleContext? {
+        let store = CycleSettingsStore.shared
+        guard store.isActive, store.settings.shareWithCoach else { return nil }
+        guard let analysis = CycleService.overview(context: context, today: now).analysis else { return nil }
+        let status: String
+        switch analysis.ovulation {
+        case .notDetected: status = "not_detected"
+        case .probable: status = "probable"
+        case .confirmed: status = "confirmed"
+        }
+        return CoachContextPacket.CycleContext(
+            cycleDay: analysis.dayNumber,
+            phase: analysis.phase.rawValue,
+            ovulationStatus: status,
+            nextPeriodExpected: analysis.nextPeriod.map { localDate($0.expected) },
+            typicalCycleLengthDays: analysis.typicalCycleLengthDays,
+            note: "Estimates from ring skin temperature — not clinically validated; use cautious wellness language."
+        )
     }
 
     private static func recentWorkouts(context: ModelContext, limit: Int = 8) -> [CoachContextPacket.WorkoutContext] {

@@ -41,6 +41,12 @@ final class CoachNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // Cycle period-prompt actions ("Yes — log day 1") are handled without opening a thread.
+        if response.notification.request.content.categoryIdentifier == CycleNotificationCenter.categoryIdentifier {
+            let action = response.actionIdentifier
+            await MainActor.run { CycleNotificationCenter.shared.handleAction(identifier: action) }
+            return
+        }
         let info = response.notification.request.content.userInfo
         if let idString = info[CoachNotificationService.conversationIdKey] as? String,
            let id = UUID(uuidString: idString) {

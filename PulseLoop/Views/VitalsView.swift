@@ -13,6 +13,7 @@ struct VitalsView: View {
     @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
     @State private var dataChange = PulseDataChange.shared
+    @State private var cycleSettings = CycleSettingsStore.shared
     /// Owns the prepared vitals state. Created lazily in `.task` (never in `body`) so a `body`
     /// re-render never triggers DB work — it just reads the already-prepared store.
     @State private var store: VitalsStore?
@@ -140,6 +141,10 @@ struct VitalsView: View {
                     displayName: { $0.reorderDisplayName },
                     symbolName: { $0.reorderSymbolName }
                 )
+            }
+            // Cycle tracking (opt-in, rides on the Colmi's passive overnight temperature).
+            if cycleSettings.isActive && store.capabilities.contains(.temperature) {
+                CycleVitalsCard(path: $path)
             }
         }
     }
