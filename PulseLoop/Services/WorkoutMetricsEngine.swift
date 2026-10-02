@@ -5,15 +5,18 @@ struct MetricsProfileValues: Sendable, Equatable {
     var sex: String?
     var age: Int?
     var weightKg: Double?
+    /// Only the daily model consumes height (BMR + stride); the workout Keytel/MET paths ignore it.
+    var heightCm: Double?
 
-    init(sex: String? = nil, age: Int? = nil, weightKg: Double? = nil) {
+    init(sex: String? = nil, age: Int? = nil, weightKg: Double? = nil, heightCm: Double? = nil) {
         self.sex = sex
         self.age = age
         self.weightKg = weightKg
+        self.heightCm = heightCm
     }
 
     init(profile: UserProfile?) {
-        self.init(sex: profile?.sex, age: profile?.age, weightKg: profile?.weightKg)
+        self.init(sex: profile?.sex, age: profile?.age, weightKg: profile?.weightKg, heightCm: profile?.heightCm)
     }
 }
 
@@ -102,7 +105,9 @@ enum WorkoutMetricsEngine {
     }
 
     /// kcal/min for a given heart rate (Keytel et al. 2005, without VO2max), clamped ≥ 0.
-    private static func keytelRate(hr: Double, male: Bool, age: Double, weightKg: Double) -> Double {
+    /// Internal (not private) so `DailyCalorieMath` reuses the exact same coefficients for all-day
+    /// HR segments.
+    static func keytelRate(hr: Double, male: Bool, age: Double, weightKg: Double) -> Double {
         let kj = male
             ? -55.0969 + 0.6309 * hr + 0.1988 * weightKg + 0.2017 * age
             : -20.4022 + 0.4472 * hr - 0.1263 * weightKg + 0.0740 * age

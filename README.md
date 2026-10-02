@@ -69,8 +69,10 @@ your sleep, heart rate, activity, and recovery.
 (heart rate, SpO₂, steps, distance, calories, sleep stages, raw packets).
 - **Today / Vitals / Sleep / Activity** dashboards built natively in SwiftUI,
 backed by SwiftData for local persistence.
-- **AI Coach** — an agentic loop (OpenAI, Google Gemini, OpenRouter, or Apple's
-on-device Foundation Models) with tools for data retrieval, on-the-fly analysis,
+- **AI Coach** — an agentic loop (OpenAI, Google Gemini, OpenRouter, MiniMax,
+Apple's on-device Foundation Models, or **any OpenAI-compatible server you run
+yourself** — Ollama, llama.cpp, vLLM, SGLang, LM Studio) with tools for data
+retrieval, on-the-fly analysis,
 chart generation, long-term memory, and web search. It also takes image input,
 so you can send a photo of a meal or a label. Every answer is grounded in your
 actual ring data.

@@ -14,6 +14,8 @@ struct PrivacyDataSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingBLEClient.self) private var ble
     @State private var diagnosticsURL: URL?
+    /// Mirrors `RawPacketCapture.userOptedIn` so the toggle re-renders; the defaults key is the truth.
+    @State private var captureRawPackets = RawPacketCapture.userOptedIn
 
     /// Which destructive App-data action is awaiting confirmation.
     @State private var pendingReset: ResetAction?
@@ -83,10 +85,36 @@ struct PrivacyDataSettingsView: View {
 
                 SettingsGroup(
                     header: "Diagnostics",
-                    footer: "A local snapshot for troubleshooting — nothing leaves the device unless you share it."
+                    footer: "A local snapshot for troubleshooting — nothing leaves the device unless you share it. "
+                        + "Bluetooth capture stores the raw packets exchanged with your ring (which encode your "
+                        + "health readings) and includes them in exports; leave it off unless support asked for it."
                 ) {
                     actionRow("Export diagnostics", systemImage: "square.and.arrow.up") {
                         diagnosticsURL = DiagnosticsExporter.exportFile(context: modelContext)
+                    }
+                    HStack(spacing: 12) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .font(PulseFont.body)
+                            .foregroundStyle(PulseColors.textPrimary)
+                            .frame(width: 24)
+                        Toggle(isOn: Binding(
+                            get: { captureRawPackets },
+                            set: { enabled in
+                                captureRawPackets = enabled
+                                RawPacketCapture.userOptedIn = enabled
+                            }
+                        )) {
+                            Text("Capture Bluetooth diagnostics")
+                                .font(PulseFont.body)
+                                .foregroundStyle(PulseColors.textPrimary)
+                        }
+                        .tint(PulseColors.accent)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 50)
+                    actionRow("Clear captured packets", systemImage: "trash") {
+                        DebugRepository.pruneRawPackets(maxRows: 0, context: modelContext)
+                        try? modelContext.save()
                     }
                 }
 

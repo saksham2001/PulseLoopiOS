@@ -60,6 +60,9 @@ struct ActivityTileView: View {
     var onTap: () -> Void
 
     private var effectiveCalories: Double? { caloriesAvailable ? summary.calories : nil }
+    /// The goal ring measures active energy (`UserGoal.calories` is an active-energy goal), even
+    /// when the displayed number is an estimated total that includes the BMR baseline.
+    private var effectiveActiveCalories: Double? { caloriesAvailable ? summary.activeCalories : nil }
     private var distanceGoalDisplay: Double {
         Double(UnitsFormatter.distance(meters: summary.goals.distanceMetersDaily, units: units).value) ?? 0
     }
@@ -86,7 +89,7 @@ struct ActivityTileView: View {
                 ActivityRingsView(rings: [
                     ActivityRing(value: summary.steps.map(Double.init), goal: Double(summary.goals.stepsDaily), color: PulseColors.steps),
                     ActivityRing(value: distanceDisplay, goal: distanceGoalDisplay, color: PulseColors.distance),
-                    ActivityRing(value: effectiveCalories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
+                    ActivityRing(value: effectiveActiveCalories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
                 ], size: 88, stroke: 9, spacing: 4)
                 // Nudge into the card padding so the bigger loop doesn't crowd the numbers.
                 .padding(.leading, -6)

@@ -26,6 +26,13 @@ struct WearableModel: Identifiable {
     /// The native apps this exact product is sold with, when there is more than one (the Colmi line).
     /// Empty for single-firmware models, which stay fully auto-detected and show no picker.
     var appVariants: [AppVariantOption] = []
+    /// Scan classifications this card may deliberately override with its own `family`.
+    ///
+    /// Empty for normal cards: their scan match remains authoritative unless an app variant says
+    /// otherwise. CRP's R11 is the exception because its generic `SMART_RING` advertisement is
+    /// indistinguishable from jring until GATT discovery, so its explicit card accepts only the two
+    /// classifications that can legitimately describe that hardware (`.jring` and `.crp`).
+    var forcedFamilyScanMatches: Set<RingDeviceType> = []
 
     /// Maturity of this model's driver, mirrored from its `family` (the real source of truth).
     var supportLevel: WearableSupportLevel { family.supportLevel }
@@ -53,7 +60,11 @@ enum RingAppVariant: String, CaseIterable, Identifiable, Sendable {
         switch family {
         case .colmiR02: self = .qring
         case .colmiSmartHealth: self = .smartHealth
-        case .jring, .tk5, .luckRing, .ycbt: return nil
+        // RWfit's two firmwares differ in *wire framing*, not app — one family, and the driver
+        // detects the framing from the GATT, so there is nothing for the user to declare.
+        // CRP is the converse: the app *is* the distinction, but it's declared by picking the
+        // "Colmi R11 (Da Rings app)" card, so by the time we're here the family is already settled.
+        case .jring, .tk5, .luckRing, .ycbt, .rwfit, .crp: return nil
         }
     }
 
@@ -117,6 +128,13 @@ extension RingDeviceType {
         // Validated end-to-end on an R10M FCF4 running firmware 2.32 — pairing, handshake, reconnect,
         // activity and history sync, HR/SpO₂/BP, battery, sleep stages and REM.
         case .ycbt: return .full
+        // Reconstructed entirely from the vendor app's decompiled source, no hardware seen yet —
+        // every layout is cited in docs/hardware/rwfit.md and awaits the first diagnostics capture.
+        case .rwfit: return .limited
+        // Reconstructed from the decompiled "Da Rings" app. Parts are capture-confirmed against
+        // zaggash's ring (sleep, the all-day vital timelines, a real SpO₂ reading), but the newest
+        // opcodes aren't yet — so it keeps the "Limited support" badge until a full validation pass.
+        case .crp: return .limited
         }
     }
 }
@@ -201,6 +219,31 @@ extension WearableModel {
         id: "luckring-tk18", displayName: "TK18", brand: "LuckRing", family: .luckRing,
         tint: PulseColors.accent, blurb: "HR · SpO₂ · HRV · Temp · BP · Sleep · Steps",
         advertisedNamePatterns: ["^TK18([ _-].*)?$"], imageName: "luckring-tk18"
+    )
+
+    /// RWfit rings (the `com.rw.revivalfit` app) — sold under assorted brands; the known unit was
+    /// bought as a "Colmi", which is why the blurb names the app, not a brand. `advertisedNamePatterns`
+    /// is **deliberately empty**: no RWfit hardware has been captured yet, so any pattern would be a
+    /// guess, and the coordinator recognizes these rings by service/manufacturer data alone — the
+    /// pattern list is user-facing identity only, and it gets filled in from the first diagnostics
+    /// export. No `imageName`: `RingArtView`'s generic fallback is the honest choice until then.
+    static let rwfitRing = WearableModel(
+        id: "rwfit-ring", displayName: "RWfit ring", brand: "RWfit", family: .rwfit,
+        tint: PulseColors.spo2, blurb: "HR · SpO₂ · Sleep · Steps — works with RWfit-app rings",
+        advertisedNamePatterns: []
+    )
+
+    /// The **CRP-firmware** R11 — the same physical ring as `colmiR11`, but its official app is
+    /// Moyoung "Da Rings" and it speaks the proprietary `fdda` CRP protocol, not the Colmi/QRing UART
+    /// (see `CRPCoordinator`). "R11 / SMART_RING" is sold under both firmwares; a unit is this one when
+    /// the user picks this card. No usable name pattern — the ring advertises the same generic
+    /// `SMART_RING` as jring, so there is nothing for the scan to match on and the pick is the only
+    /// entry point. Reuses the `yawell-r11` art (same hardware as `colmiR11`).
+    static let colmiR11CRP = WearableModel(
+        id: "colmi-r11-crp", displayName: "Colmi R11 (Da Rings app)", brand: "Colmi", family: .crp,
+        tint: PulseColors.hrv, blurb: "HR · Steps",
+        advertisedNamePatterns: [], imageName: "yawell-r11",
+        forcedFamilyScanMatches: [.jring, .crp]
     )
 
     // Yawell-branded variants of the same hardware.
@@ -308,9 +351,17 @@ extension WearableModel {
         rowFamily: RingDeviceType?,
         hinted: RingAppVariant?
     ) -> RingDeviceType? {
+        if let rowFamily, forcedFamilyScanMatches.contains(rowFamily) { return family }
         guard let variant = variant(picked: picked, rowFamily: rowFamily, hinted: hinted) else { return nil }
         guard rowFamily.map(families.contains) ?? true else { return nil }
         return family(for: variant)
+    }
+
+    /// Whether a scan-tagged row belongs under this card. Usually this is exactly `families`; the CRP
+    /// R11 additionally admits the ambiguous `.jring` tag that its `SMART_RING` name receives.
+    func acceptsScanFamily(_ scanFamily: RingDeviceType?) -> Bool {
+        guard let scanFamily else { return false }
+        return families.contains(scanFamily) || forcedFamilyScanMatches.contains(scanFamily)
     }
 
     /// The other app on this card, offered as one-tap recovery after a wrong pick.
@@ -335,6 +386,9 @@ extension WearableModel {
         r10m,
         tk5,
         luckRingTK18,
+        // Position is irrelevant for matching — neither card has any name patterns to race.
+        rwfitRing,
+        colmiR11CRP,
     ]
 
     static func model(id: String?) -> WearableModel? {

@@ -16,6 +16,12 @@ PulseLoop is built **local-first**, which is the whole point.
 - **Nothing leaves the device** except a coach question you explicitly ask — that
   single request goes to whichever LLM provider you configured, with the API key
   you supply.
+- **The coach can be made to leave nothing at all.** On iOS, choose Apple's
+  on-device model, or point the coach at your own OpenAI-compatible server
+  (Ollama, llama.cpp, vLLM, SGLang, LM Studio) — the request then goes to your
+  hardware and no third party sees it. Plain `http://` is accepted only for a
+  server that cannot be on the public internet, and those requests refuse
+  redirects, so a question cannot be bounced off your network in the clear.
 - **API keys are stored securely on-device** — the iOS Keychain, or Android's
   `EncryptedSharedPreferences`.
 

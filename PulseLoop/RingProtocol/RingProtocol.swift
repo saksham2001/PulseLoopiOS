@@ -150,6 +150,16 @@ enum RingDecodedEvent: Sendable {
     /// the owner's R99 refuses HRV (mode `0x0a` → status `0x01`), and without this the app polls a ring
     /// that already said no for the full 45-second window before reporting a generic failure.
     case measurementRejected(mode: UInt8)
+    case rwfitMeasurementStatus(type: UInt8, status: UInt8)
+    /// One frame of a CRP all-day "timing" vital timeline just landed. The ring returns a day in
+    /// fixed-size frames and only sends the next one when asked, so `CRPSyncEngine.handle` uses this
+    /// as a cursor: request `frameIndex + 1` until the vital's terminal frame (the vendor's sequential
+    /// `insertBleMessage(<query>.b(day, index + 1))` in `e1/{f,d,g,l}.java`). `cmd` identifies the
+    /// vital, `day` is 0 = today.
+    ///
+    /// Produces no `PulseEvent` — the samples themselves arrive as separate `.historyMeasurement`
+    /// events; this only advances the cursor.
+    case timingHistoryFrame(cmd: Int, day: Int, frameIndex: Int)
     case timeSyncAck(timestamp: Date)
     case commandAck(commandId: UInt8)
     case unknown(commandId: UInt8, raw: Data)
@@ -182,6 +192,8 @@ enum RingDecodedEvent: Sendable {
         case .chipScheme: return "chip_scheme"
         case .wearingStatus: return "wearing_status"
         case .measurementRejected: return "measurement_rejected"
+        case .rwfitMeasurementStatus: return "rwfit_measurement_status"
+        case .timingHistoryFrame: return "timing_history_frame"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"
         case .unknown: return "unknown"
@@ -240,6 +252,8 @@ enum RingDecodedEvent: Sendable {
             return #"{"worn":\#(worn)}"#
         case let .measurementRejected(mode):
             return #"{"rejected_mode":\#(mode)}"#
+        case let .timingHistoryFrame(cmd, day, frameIndex):
+            return #"{"cmd":\#(cmd),"day":\#(day),"frameIndex":\#(frameIndex)}"#
         case let .historySyncProgress(stage):
             return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):

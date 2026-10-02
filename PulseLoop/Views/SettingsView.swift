@@ -35,6 +35,10 @@ struct SettingsView: View {
             return OpenRouterModel(rawValue: settings.model)?.label ?? settings.openRouterModel
         case .userMiniMaxKey:
             return MiniMaxModel(rawValue: settings.model)?.label ?? settings.minimaxModel
+        case .localOpenAICompat:
+            // The model name is whatever the user's own server calls it, so there's no preset to
+            // map. Blank is legitimate (llama.cpp ignores the field), hence the fallback.
+            return settings.resolvedLocalModel.isEmpty ? "Self-hosted" : settings.resolvedLocalModel
         case .backendProxy:
             return "Backend proxy"
         }

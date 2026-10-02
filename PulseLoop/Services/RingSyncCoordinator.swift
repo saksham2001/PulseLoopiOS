@@ -197,8 +197,12 @@ final class RingSyncCoordinator {
     /// Driven by `.syncProgress` events; cleared on the `"done"` stage, on disconnect, or by a
     /// safety timeout so a dropped completion signal can't leave the progress bar stuck on.
     private(set) var syncStage: String?
+    private(set) var syncError: String?
     /// Whether a ring data sync is in flight — drives the thin progress bar under the header.
-    var isSyncing: Bool { syncStage != nil }
+    /// Stored and mutated only on start/end transitions (not derived from `syncStage`): a computed
+    /// `syncStage != nil` would register observers on `syncStage` itself, invalidating the whole
+    /// tab tree on every progress packet instead of twice per sync.
+    private(set) var isSyncing = false
     private var syncTimeoutTask: Task<Void, Never>?
     /// Hard ceiling on how long the bar stays up without a fresh progress event.
     private let syncStallTimeout: UInt64 = 20
@@ -223,6 +227,14 @@ final class RingSyncCoordinator {
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
     private var hrNoReadingReported = false
+    /// The ring told us it isn't on the finger during a spot measure (CRP wear-state push). Read by
+    /// the Vitals sheet to show "put the ring on" instead of the generic steadiness hint. Set only
+    /// when the not-worn signal arrives *before* any reading, so a wear-state drop right after a good
+    /// reading can't turn a success into a failure.
+    private(set) var measureNotWorn = false
+    /// SpO2's counterpart to `hrNoReadingReported`: SpO2 has no "complete with no reading" reply, so
+    /// the wear-state push is the only thing that can abort it early.
+    private var spo2NotWornReported = false
     /// The samples of the HR measurement in flight, and the rule for whether they settled — see
     /// `HRSampleWindow`, which owns the warm-up echo and the consistency gate.
     private var hrWindow = HRSampleWindow()
@@ -330,12 +342,13 @@ final class RingSyncCoordinator {
         if cal.hasBPReference {
             engine?.setBloodPressureCalibration(systolic: cal.bpReferenceSystolic, diastolic: cal.bpReferenceDiastolic)
         }
+        syncError = nil
         engine?.runStartup()
         // Refresh the jring GATT battery on every manual sync (jring only pushes battery on connect);
         // Colmi's battery re-request is part of its `runStartup` handshake. No-op when the GATT
         // characteristic is absent.
         client.readBattery()
-        lastSyncAt = Date()
+        if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
         // Show the progress bar immediately; the engine's own `.syncProgress` stages refine the
         // label and the `"done"` stage (or the stall timeout) clears it.
         updateSync(stage: "Syncing…")
@@ -480,16 +493,27 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureHR() async -> Int? {
         guard hrState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { hrState = .failed; return nil }
         hrState = .measuring
         // NOTE: do *not* clear `latestHRValue` — it's the live value the workout UI shows, so a new
         // measurement keeps the last reading on screen until a fresh one replaces it (no blanking to —).
         hrNoReadingReported = false
+        measureNotWorn = false
         hrWindow.begin()
         // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69
         // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
         let token = spot.begin(mode: YCBTMeasurementMode.heartRate)
         engine?.measureHeartRateSpot()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.heartRate)) {
+            engine?.stopHeartRate()
+            spot.end(token)
+            hrState = .failed
+            return nil
+        }
+        if client.activeDeviceType == .rwfit { hrWindow.begin() }
 
         // Sample the full window in 0.5s steps: `handle(_:)` discards everything inside the warm-up and
         // collects the rest into `hrSamples`. We break out early only where continuing is pointless —
@@ -534,15 +558,27 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureSpO2() async -> Int? {
         guard spo2State != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
+        measureNotWorn = false
+        spo2NotWornReported = false
         let token = spot.begin(mode: YCBTMeasurementMode.spo2)
         engine?.startSpO2()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.spo2)) {
+            engine?.stopSpO2()
+            spot.end(token)
+            spo2State = .failed
+            return nil
+        }
         let result = await pollForValue(
             window: spo2MeasureSeconds,
             value: { self.latestSpO2Value },
-            abort: { self.spot.isRejected(token) }
+            // The ring refused the measurement, or told us it isn't on the finger.
+            abort: { self.spot.isRejected(token) || self.spo2NotWornReported }
         )
         spot.end(token)
         engine?.stopSpO2()
@@ -561,11 +597,20 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureHRV() async -> Int? {
         guard hrvState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { hrvState = .failed; return nil }
         hrvState = .measuring
         latestHRVValue = nil
         let token = spot.begin(mode: YCBTMeasurementMode.hrv)
         engine?.startHRV()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.hrv)) {
+            engine?.stopHRV()
+            spot.end(token)
+            hrvState = .failed
+            return nil
+        }
         let result = await pollForValue(
             window: hrvMeasureSeconds,
             value: { self.latestHRVValue },
@@ -585,11 +630,20 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureBloodPressure() async -> BloodPressureReading? {
         guard bpState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { bpState = .failed; return nil }
         bpState = .measuring
         latestBloodPressureValue = nil
         let token = spot.begin(mode: YCBTMeasurementMode.bloodPressure)
         engine?.startBloodPressure()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.bloodPressure)) {
+            engine?.stopBloodPressure()
+            spot.end(token)
+            bpState = .failed
+            return nil
+        }
         _ = await pollForValue(
             window: bpMeasureSeconds,
             value: { self.latestBloodPressureValue?.systolic },
@@ -654,6 +708,7 @@ final class RingSyncCoordinator {
     // MARK: - Event handling
 
     private func handle(_ event: PulseEvent) {
+        if handleRWfit(event) { return }
         switch event {
         case let .heartRateSample(bpm, _):
             latestHRValue = bpm
@@ -669,8 +724,25 @@ final class RingSyncCoordinator {
             // The ring reported a genuine error/no-reading (worn incorrectly). Only fast-fail if this
             // measurement hasn't already produced a real reading.
             if hrState == .measuring, !measurementReceivedReading { hrNoReadingReported = true }
+        case let .wearState(worn):
+            // `worn == false` means no skin contact, so an optical spot measure can't read. Fast-fail
+            // the in-flight measure instead of idling out the full window, and flag *why* — but only
+            // if no reading landed first (a wear-state drop right after a good reading must not turn a
+            // success into a failure). Gated to CRP: other families' wear polarity is unverified.
+            if !worn, client.activeDeviceType == .crp {
+                var flagged = false
+                if hrState == .measuring, !measurementReceivedReading {
+                    hrNoReadingReported = true
+                    flagged = true
+                }
+                if spo2State == .measuring, latestSpO2Value == nil {
+                    spo2NotWornReported = true
+                    flagged = true
+                }
+                if flagged { measureNotWorn = true }
+            }
         case .deviceStateChanged(.connected, _):
-            lastSyncAt = Date()
+            if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was
             // running, so re-issue the live HR command.
             restartWorkoutHeartRateIfActive()
@@ -683,15 +755,52 @@ final class RingSyncCoordinator {
             }
         case let .syncProgress(stage):
             updateSync(stage: stage)
-        case let .rawPacket(direction, _, decoded):
+        case let .decodedPacket(decoded):
             // `.measurementRejected` has no `PulseEvent` of its own — it is a verdict on a command, not
             // data — so the raw-packet feed (which carries every decoded frame) is where a measurement
             // hears the ring say no.
-            guard direction == .incoming, case let .measurementRejected(mode) = decoded else { break }
+            guard case let .measurementRejected(mode) = decoded else { break }
             spot.noteRejected(mode: mode)
         default:
             mirrorLiveValue(event)
         }
+    }
+
+    private func handleRWfit(_ event: PulseEvent) -> Bool {
+        switch event {
+        case let .rwfitInitialization(state):
+            switch state {
+            case .initializing:
+                syncError = nil
+                updateSync(stage: "Connecting to your ring…")
+            case .ready: break
+            case let .failed(reason):
+                endSync()
+                syncError = reason
+            }
+        case let .rwfitSyncOutcome(outcome):
+            endSync()
+            switch outcome {
+            case .success:
+                lastSyncAt = Date()
+                syncError = nil
+            case let .partial(_, reason), let .failed(reason): syncError = reason
+            case .cancelled: break
+            }
+        case let .rwfitMeasurementOutcome(outcome):
+            guard case let .failed(type, _) = outcome else { return true }
+            let mode: UInt8?
+            switch type {
+            case RWfitJLDataType.heartRate: mode = YCBTMeasurementMode.heartRate
+            case RWfitJLDataType.spo2: mode = YCBTMeasurementMode.spo2
+            case RWfitJLDataType.hrv: mode = YCBTMeasurementMode.hrv
+            case RWfitJLDataType.bloodPressure: mode = YCBTMeasurementMode.bloodPressure
+            default: mode = nil
+            }
+            if let mode { spot.noteRejected(mode: mode) }
+        default: return false
+        }
+        return true
     }
 
     // MARK: - Sync progress
@@ -704,9 +813,12 @@ final class RingSyncCoordinator {
     /// `syncHistory()` is a no-op on jring/Colmi) keeps the label honest for the families whose history
     /// only comes down with the connect handshake.
     private func updateSync(stage: String) {
-        lastSyncAt = Date()
+        if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
         guard stage != "done" else { endSync(); return }
         syncStage = stage
+        // Transition-guarded: Observation notifies on every set (no equality check), so an
+        // unconditional write here would put the per-packet churn back into every observer.
+        if !isSyncing { isSyncing = true }
         armSyncTimeout()
     }
 
@@ -714,6 +826,7 @@ final class RingSyncCoordinator {
         syncTimeoutTask?.cancel()
         syncTimeoutTask = nil
         syncStage = nil
+        if isSyncing { isSyncing = false }
         // The sync just ended (done / disconnect / stall timeout) — wake anyone waiting on it.
         for id in Array(syncWaiters.keys) { resumeSyncWaiter(id) }
     }

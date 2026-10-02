@@ -18,6 +18,9 @@ struct SleepView: View {
     /// Observed so the tab re-fetches when a background sync writes new sleep data (matches
     /// Today/Vitals). Without it, `sleepRange` is a plain call the body never re-runs on sync.
     @State private var dataChange = PulseDataChange.shared
+    /// True while a press-and-hold scrub is active on a hypnogram. Pauses this screen's scroll
+    /// views (outer vertical + session carousel) so the scrub drag doesn't pan them.
+    @State private var hypnogramScrubbing = false
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
@@ -60,6 +63,8 @@ struct SleepView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 96)
         }
+        // Applies to every scrollable below (outer + carousel), so an active scrub owns the drag.
+        .scrollDisabled(hypnogramScrubbing)
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .pulseScrollEdges()
@@ -105,16 +110,14 @@ struct SleepView: View {
     private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool) -> some View {
         let sessions = SleepInsights.validSessions(summary.sessions).sorted { $0.session.startAt < $1.session.startAt }
         if sessions.isEmpty {
-            let noData = SleepInsights.noDataState(.day)
-            SleepHeroCardView(label: noData.label, value: noData.value, support: noData.support, score: nil, noData: true)
+            // The "wear your ring" explainer lives in the architecture card ONLY — the hero and
+            // stage cards just dash out, so the message isn't repeated all over one page.
+            SleepHeroCardView(label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep", value: "—", score: nil)
             VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: false) {
                 InlineEmptyState(title: "No sleep recorded", message: "Wear your ring overnight to see your hypnogram here.")
                     .frame(height: 180)
             }
             SleepStageSummaryCardsView(deep: "—", light: "—", awake: "—")
-            if coachEnabled {
-                CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
-            }
         } else {
             // The primary (longest) session drives the day-level coach fallback.
             let primary = sessions.max { $0.session.totalMinutes < $1.session.totalMinutes } ?? sessions[0]
@@ -145,7 +148,8 @@ struct SleepView: View {
             scoreLabel: score.label.rawValue
         )
         VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
-            SleepHypnogramView(blocks: s.blocks, totalMin: s.session.totalMinutes, startTs: s.session.startAt)
+            SleepHypnogramView(blocks: s.blocks, totalMin: s.session.totalMinutes, startTs: s.session.startAt,
+                               onScrubActiveChanged: { hypnogramScrubbing = $0 })
         }
         SleepStageSummaryCardsView(
             deep: SleepFormat.duration(s.deepMinutes),

@@ -13,6 +13,12 @@ enum PulseEvent: Sendable {
     )
     case deviceForgotten
     case batteryLevel(percent: Int)
+    case decodedPacket(RingDecodedEvent)
+    case rwfitSyncOutcome(RWfitSyncOutcome)
+    case rwfitInitialization(RWfitInitializationState)
+    case rwfitDiagnostic(message: String, metadata: [String: String])
+    case rwfitMeasurementOutcome(RWfitMeasurementOutcome)
+    case rwfitMeasurement(type: UInt8, status: UInt8)
     case rawPacket(direction: PacketDirection, data: Data, decoded: RingDecodedEvent)
     case derivedUpdate(kind: String, entityType: String, entityId: String, payloadJSON: String?)
     case activityUpdate(timestamp: Date, steps: Int, distanceMeters: Double, calories: Double)
@@ -36,6 +42,11 @@ enum PulseEvent: Sendable {
     case fatigueSample(value: Int, timestamp: Date)
     case bloodSugarSample(mgdl: Double, timestamp: Date)
     /// Firmware version string parsed from the ring's status/firmware payload; persisted on the Device.
+    /// The ring reported whether it is on the finger (CRP group-3/cmd-7 `onWearStateChange`).
+    /// `RingSyncCoordinator` uses `worn == false` to fast-fail an in-flight spot measure: an optical
+    /// sensor with no skin contact cannot read, so idling out the full window only wastes the user's
+    /// time. Not persisted — it is a live condition, not data.
+    case wearState(worn: Bool)
     case firmwareVersion(String)
     /// Friendly history-sync progress for the product UI (e.g. "Syncing sleep…"). Never protocol terms.
     case syncProgress(stage: String)
@@ -89,18 +100,18 @@ final class EventPersistenceSubscriber {
     private let context: ModelContext
     private var task: Task<Void, Never>?
 
-    #if DEBUG
-    /// Rolling cap for the DEBUG-only raw-packet trace, and how often we prune (every Nth insert,
-    /// so we don't pay a fetch on every packet during a sync burst).
+    /// Rolling cap for the raw-packet trace, and how often we prune (every Nth insert, so we don't
+    /// pay a fetch on every packet during a sync burst). DEBUG builds always capture; release
+    /// builds only when the user opts in (see `RawPacketCapture`).
     private let rawPacketCap = 2_000
     private let rawPacketPruneInterval = 200
     private var rawPacketInsertsSincePrune = 0
-    #endif
 
     /// Coalesced-save state. During a sync the ring streams hundreds of events; saving per event
     /// woke every `@Query` hundreds of times (the re-render storm). Instead we insert/mutate without
     /// saving, then flush (one `save()` + one "data changed" signal) after the stream briefly idles
     /// or a hard cap of pending writes is reached.
+    private var mergingRWfitSleep = false
     private var pendingWrites = 0
     private var flushTask: Task<Void, Never>?
     /// Idle window after the last event before we flush a batch.
@@ -141,6 +152,10 @@ final class EventPersistenceSubscriber {
 
     func start() {
         guard task == nil else { return }
+        RWfitHistoryPersistence.save = { [weak self] events in
+            guard let self else { throw RWfitHistoryPersistence.PersistenceError.unavailable }
+            try self.saveRWfitHistory(events)
+        }
         task = Task {
             let stream = await PulseEventBus.shared.stream()
             for await event in stream {
@@ -152,6 +167,7 @@ final class EventPersistenceSubscriber {
     }
 
     func stop() {
+        RWfitHistoryPersistence.save = nil
         flushTask?.cancel()
         flushNow()
         task?.cancel()
@@ -161,7 +177,72 @@ final class EventPersistenceSubscriber {
     /// Persist any pending batched writes immediately. Call on app background/suspend so a sync that
     /// is mid-batch isn't lost.
     func flush() {
+        // A suspended mid-sync burst may never see `.syncProgress("done")` — settle any pending
+        // calorie-estimate recomputes before the save (no-op when nothing is dirty).
+        DailyCalorieEstimator.flushDirty(context: context)
         flushNow()
+    }
+
+    /// Destructive history consumption is allowed only after this synchronous durable commit.
+    func saveRWfitHistory(_ events: [RingDecodedEvent], commit: (() throws -> Void)? = nil) throws {
+        let typed = try events.flatMap { decoded -> [PulseEvent] in
+            let mapped = RingEventBridge.events(for: decoded)
+            guard !mapped.isEmpty else { throw RWfitHistoryPersistence.PersistenceError.rejectedRecord }
+            return mapped
+        }
+        // Existing import helpers intentionally tolerate read errors for live data. Preflight those
+        // tables here so the destructive history path fails closed instead of treating a failed fetch
+        // as an empty database.
+        var measurements = try context.fetch(FetchDescriptor<Measurement>())
+        let activity = try RWfitActivityPersistence(context: context)
+        _ = try context.fetch(FetchDescriptor<SleepSession>())
+        _ = try context.fetch(FetchDescriptor<SleepStageBlock>())
+        // Commit unrelated live-event writes first. A failed history transaction can then roll
+        // back safely without discarding another stream's pending measurements.
+        try context.save()
+        pendingWrites = 0
+        flushTask?.cancel()
+        flushTask = nil
+        mergingRWfitSleep = true
+        defer { mergingRWfitSleep = false }
+        do {
+            for event in typed {
+                if activity.apply(event) { continue }
+                if case let .historyMeasurement(kind, value, timestamp) = event {
+                    if let row = measurements.first(where: {
+                        $0.kindRaw == kind.rawValue && $0.timestamp == timestamp && $0.sourceRaw == MeasurementSource.history.rawValue
+                    }) {
+                        row.value = value
+                    } else {
+                        let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: .history)
+                        context.insert(row)
+                        measurements.append(row)
+                        context.insert(DerivedUpdateRow(kind: "history_measurement", entityType: "measurement",
+                                                       entityId: row.id.uuidString))
+                        _ = ActivityRecorderService.linkSample(kind: kind, value: value, timestamp: timestamp,
+                            measurementId: row.id, source: .history, confidence: .known, context: context)
+                    }
+                    continue
+                }
+                if case let .sleepTimeline(timestamp, stages) = event {
+                    // Inject throwing reads so the shared best-effort sleep helper never performs
+                    // a swallowed fetch on the destructive-import path.
+                    let sessions = try context.fetch(FetchDescriptor<SleepSession>())
+                    let blocks = try context.fetch(FetchDescriptor<SleepStageBlock>())
+                    persistSleepTimeline(start: timestamp, stages: stages, sessions: sessions, blocks: blocks)
+                } else {
+                    applyPersist(event)
+                }
+            }
+            if let commit { try commit() } else { try context.save() }
+            for day in activity.touchedDays { DailyCalorieEstimator.markDirty(day) }
+            pendingWrites = 0
+            PulseDataChange.shared.notify()
+        } catch {
+            context.rollback()
+            seenHistoryKeys.removeAll()
+            throw error
+        }
     }
 
     func persist(_ event: PulseEvent) {
@@ -207,7 +288,7 @@ final class EventPersistenceSubscriber {
             device.bleAddressHint = address ?? device.bleAddressHint
             if state == .connected {
                 device.lastConnectedAt = Date()
-                device.lastSyncAt = Date()
+                if device.deviceType != .rwfit { device.lastSyncAt = Date() }
             }
             context.insert(device)
         case let .deviceIdentified(deviceType, wearableModelID, advertisedName, capabilities):
@@ -239,9 +320,12 @@ final class EventPersistenceSubscriber {
             context.insert(device)
             recordBatterySample(percent)
         case let .rawPacket(direction, data, decoded):
-            // The raw byte trace is a developer diagnostic only — never stored in release builds, so
-            // production never persists protocol hex/opcodes.
-            #if DEBUG
+            // The raw byte trace is a developer diagnostic. DEBUG builds always keep it; release
+            // builds keep it only while the user has explicitly enabled capture in Privacy & Data —
+            // the toggle exists so a remote tester on TestFlight can hand back protocol bytes from a
+            // ring family we've never had in hand (raw packets encode health data, hence opt-in,
+            // off by default and clearable).
+            guard RawPacketCapture.isEnabled else { return }
             context.insert(
                 RawPacketRow(
                     direction: direction,
@@ -252,14 +336,13 @@ final class EventPersistenceSubscriber {
                     confidence: decoded.confidence
                 )
             )
-            // Keep the debug trace a rolling window so it can't grow without bound. Prune only
-            // every Nth insert to avoid a fetch on every packet during a sync burst.
+            // Keep the trace a rolling window so it can't grow without bound. Prune only every Nth
+            // insert to avoid a fetch on every packet during a sync burst.
             rawPacketInsertsSincePrune += 1
             if rawPacketInsertsSincePrune >= rawPacketPruneInterval {
                 rawPacketInsertsSincePrune = 0
                 DebugRepository.pruneRawPackets(maxRows: rawPacketCap, context: context)
             }
-            #endif
         case let .derivedUpdate(kind, entityType, entityId, payloadJSON):
             context.insert(DerivedUpdateRow(kind: kind, entityType: entityType, entityId: entityId, payloadJSON: payloadJSON))
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):
@@ -281,6 +364,11 @@ final class EventPersistenceSubscriber {
                 entityId: row.id.uuidString,
                 payloadJSON: #"{"steps":\#(row.steps),"calories":\#(Int(row.calories)),"distance_m":\#(Int(row.distanceMeters))}"#
             ))
+            // Devices that report no calorie counter (send 0): keep today's on-device estimate
+            // tracking the live step ratchet. Throttled — cumulative packets can stream every second.
+            if calories <= 0 {
+                DailyCalorieEstimator.recomputeThrottled(day: timestamp, context: context)
+            }
         case let .activityBucket(timestamp, steps, distanceMeters):
             // Per-quarter-hour ring history: upserted by timestamp + the day total recomputed as the
             // sum of distinct buckets, so re-syncs are idempotent (no drift). Calories omitted.
@@ -338,13 +426,28 @@ final class EventPersistenceSubscriber {
             // Stamp the *completion* of a full history sync so the coach freshness gate can tell a
             // finished sync from a bare CONNECT (`lastSyncAt`, re-stamped every connect).
             if stage == "done" {
-                if let device = DeviceRepository.current(context: context) {
+                if let device = DeviceRepository.current(context: context), device.deviceType != .rwfit {
                     device.lastFullSyncAt = Date()
                 }
                 // The rows are committed by now; the next sync re-checks against the database.
                 seenHistoryKeys.removeAll(keepingCapacity: true)
+                // Recompute calorie estimates for every day this sync touched, in one pass — the
+                // batched flush below saves the writes and fires the coalesced change signal.
+                DailyCalorieEstimator.flushDirty(context: context)
             }
-        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
+        case let .rwfitSyncOutcome(outcome):
+            if case .success = outcome, let device = DeviceRepository.current(context: context) {
+                let now = Date()
+                device.lastSyncAt = now
+                device.lastFullSyncAt = now
+            }
+            seenHistoryKeys.removeAll(keepingCapacity: true)
+            DailyCalorieEstimator.flushDirty(context: context)
+        case .decodedPacket, .rwfitInitialization, .rwfitDiagnostic, .rwfitMeasurement, .rwfitMeasurementOutcome:
+            break
+        // `.wearState` is a live condition the measurement flow reacts to, not data — nothing to store.
+        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused,
+             .workoutResumed, .workoutFinished, .coachTrace, .wearState:
             break
         }
         // NB: no per-event save here — `scheduleFlush()` (called by `persist`) batches the save.
@@ -447,7 +550,8 @@ final class EventPersistenceSubscriber {
     /// recomputing session bounds. The ring streams ~20 timeline packets (15 samples each) per
     /// night, so blocks must accumulate into one session rather than spawning a session per
     /// packet. Mirrors `persistence._on_sleep_timeline`.
-    private func persistSleepTimeline(start: Date, stages: [SleepStage]) {
+    private func persistSleepTimeline(start: Date, stages: [SleepStage],
+                                      sessions: [SleepSession]? = nil, blocks: [SleepStageBlock]? = nil) {
         let calendar = Calendar.current
 
         // Group packets by the waking-day boundary (sleep from 7 PM rolls to the next morning) so a
@@ -459,7 +563,7 @@ final class EventPersistenceSubscriber {
         // day is empty), deduping by block start across every session on the day. Then hand off to
         // `SleepService.reconcileWakingDay`, which re-splits the day's blocks into distinct sessions
         // (main night vs. naps separated by a >= 60 min gap) and recomputes each session's bounds.
-        let allSessions = (try? context.fetch(FetchDescriptor<SleepSession>())) ?? []
+        let allSessions = sessions ?? ((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
         let daySessions = allSessions.filter { calendar.isDate($0.date, inSameDayAs: dateKey) }
         let container = daySessions.min { $0.startAt < $1.startAt }
             ?? {
@@ -472,8 +576,39 @@ final class EventPersistenceSubscriber {
         let sessionsForDay = daySessions.contains(where: { $0.id == container.id }) ? daySessions : daySessions + [container]
 
         let daySessionIds = Set(sessionsForDay.map { $0.id })
-        let existingDayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
+        let existingDayBlocks = (blocks ?? ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []))
             .filter { daySessionIds.contains($0.sessionId) }
+        if mergingRWfitSleep {
+            // A recovered journal may extend or overlap an already-imported session. Normalize by
+            // minute so a shorter previously saved block cannot suppress the rest of a replay.
+            var minuteStages: [Date: SleepStage] = [:]
+            for block in existingDayBlocks {
+                for minute in 0..<max(0, block.durationMinutes) {
+                    minuteStages[block.startAt.addingTimeInterval(Double(minute) * 60)] = block.stage
+                }
+            }
+            for (minute, stage) in stages.enumerated() {
+                minuteStages[start.addingTimeInterval(Double(minute) * 60)] = stage
+            }
+            for block in existingDayBlocks { context.delete(block) }
+            let dates = minuteStages.keys.sorted()
+            var merged: [SleepStageBlock] = []
+            for date in dates {
+                guard let stage = minuteStages[date] else { continue }
+                if let last = merged.last, last.stage == stage,
+                   last.startAt.addingTimeInterval(Double(last.durationMinutes) * 60) == date {
+                    last.durationMinutes += 1
+                } else {
+                    let block = SleepStageBlock(sessionId: container.id, startAt: date,
+                                                startMinute: 0, durationMinutes: 1, stage: stage)
+                    context.insert(block)
+                    merged.append(block)
+                }
+            }
+            SleepService.reconcileWakingDay(dateKey: dateKey, context: context,
+                                            daySessions: sessionsForDay, dayBlocks: merged)
+            return
+        }
         var existingStarts = Set(existingDayBlocks.map { $0.startAt })
         var newBlocks: [SleepStageBlock] = []
 

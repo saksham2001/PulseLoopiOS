@@ -162,8 +162,11 @@ final class YCBTDecoderTests: XCTestCase {
         }
         XCTAssertFalse(isWorn)
 
-        // It must stay out of the typed fan-out — nothing in the app gates on wear state yet.
-        XCTAssertTrue(RingEventBridge.events(for: .wearingStatus(worn: true, timestamp: Date())).isEmpty)
+        // Wear state now fans out (the CRP measurement flow fast-fails a not-worn spot measure), so
+        // the guard against YCBT's unverified polarity moved from the bridge to the coordinator: the
+        // bridge is family-agnostic, and `RingSyncCoordinator` only acts on it for `.crp`. That keeps a
+        // wrong polarity guess here from reaching the UI while still letting CRP use the signal.
+        XCTAssertEqual(RingEventBridge.events(for: .wearingStatus(worn: true, timestamp: Date())).count, 1)
     }
 
     // MARK: Device pushes (group 0x04, DevControl)

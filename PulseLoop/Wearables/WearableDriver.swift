@@ -6,7 +6,22 @@ import Foundation
 /// so engines deal in *logical* (unframed) commands and never think about checksums or padding.
 @MainActor
 protocol RingCommandWriter: AnyObject {
+    var deviceIdentifier: String? { get }
     func enqueue(_ command: Data)
+    /// Completes when the GATT write is acknowledged (or accepted by the without-response buffer).
+    func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void)
+    /// Deliver a synthetic decoded event without inventing a received packet.
+    func emit(_ event: RingDecodedEvent)
+}
+
+extension RingCommandWriter {
+    var deviceIdentifier: String? { nil }
+    func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+        enqueue(command)
+        completion(.success(()))
+    }
+
+    func emit(_ event: RingDecodedEvent) {}
 }
 
 /// Connection + protocol handler for one wearable family — the "how do we talk to it" half of the
@@ -79,6 +94,17 @@ protocol WearableDriver: AnyObject {
 
     /// The stateful brain: startup sequence + (for Colmi) the response-driven history machine.
     func makeSyncEngine() -> RingSyncEngine
+
+    /// Called once per GATT link, immediately after service discovery and before any characteristic
+    /// I/O, with every service UUID the peripheral exposes — including ones outside `serviceUUIDs`.
+    ///
+    /// Exists for the one family whose *wire framing* cannot be known before connect: RWfit rings all
+    /// share the `A00A`/`B002`/`B003` GATT but speak two different framings, initially hinted at by
+    /// which sibling services (JieLi `AE00`, Telink/PixArt OTA) the firmware exposes. The vendor app
+    /// makes the same decision in `onServicesDiscovered`. Runs before notify subscription — and so
+    /// before `.connected`, `immediatePostSubscriptionCommands()` and `runStartup()` — which
+    /// provides an initial framing hint; RWfit validates it against received frames. Default: no-op.
+    func servicesDiscovered(_ services: [CBUUID])
 }
 
 extension WearableDriver {
@@ -91,6 +117,8 @@ extension WearableDriver {
     /// starts notifying.
     var requiredSubscriptionsBeforeConnected: [CBUUID] { [] }
     func immediatePostSubscriptionCommands() -> [Data] { [] }
+    /// Only a driver whose framing depends on the discovered GATT (RWfit) cares.
+    func servicesDiscovered(_ services: [CBUUID]) {}
 }
 
 /// User-chosen all-day measurement configuration, passed as a plain value from the app layer into a
@@ -149,6 +177,14 @@ struct UserProfileValues: Sendable, Equatable {
 /// Lives behind the driver so `RingBLEClient` / `RingSyncCoordinator` stay clean.
 @MainActor
 protocol RingSyncEngine: AnyObject {
+    /// A new GATT link is starting. Auto-reconnect can reuse the same engine instance, so engines
+    /// with per-link one-shot flags or response-driven transfers reset them here before startup.
+    func connectionDidStart()
+
+    /// The active GATT link ended. Engines with timers or in-flight transfers must cancel them here
+    /// so stale work cannot leak across the reconnect gap or report a false successful sync.
+    func connectionDidEnd()
+
     /// Run the connect-time sequence (status/time/locale/etc. for jring; phone-name/time/prefs +
     /// settings reads for Colmi).
     func runStartup()
@@ -233,6 +269,10 @@ protocol RingSyncEngine: AnyObject {
 }
 
 extension RingSyncEngine {
+    /// Stateless engines have no per-link lifecycle work.
+    func connectionDidStart() {}
+    func connectionDidEnd() {}
+
     /// Default: a spot measurement is just the live start (jring has no separate manual command).
     func measureHeartRateSpot() { startHeartRate() }
 

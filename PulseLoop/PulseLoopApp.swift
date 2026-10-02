@@ -114,6 +114,10 @@ struct PulseLoopApp: App {
         // internally, so this is a cheap no-op most launches).
         RestingHRBaselineService.refreshIfStale(context: container.mainContext)
 
+        // One-shot upgrade backfill: give the trailing week's rows a calorie estimate if they
+        // predate the estimator (no-op once every recent day carries one).
+        DailyCalorieEstimator.recomputeRecentDays(onlyMissing: true, context: container.mainContext)
+
         // Start persistence + coordinator draining the bus; auto-reconnect happens when
         // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).
         subscriber.start()

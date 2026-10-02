@@ -5,8 +5,9 @@ import UIKit
 #endif
 
 /// Builds a shareable diagnostics bundle (JSON): app/OS/device info + the recent `WearableLog`
-/// timeline. Raw BLE packets (`RawPacketRow`) are included only in DEBUG builds, so release exports
-/// never leak protocol bytes.
+/// timeline. Raw BLE packets (`RawPacketRow`) ride along only while `RawPacketCapture.isEnabled` —
+/// always in DEBUG builds, and in release only under the user's explicit Privacy & Data opt-in
+/// (the remote-tester workflow for rings nobody on the project has in hand).
 @MainActor
 enum DiagnosticsExporter {
     /// Serialize a diagnostics report to pretty-printed JSON.
@@ -16,9 +17,9 @@ enum DiagnosticsExporter {
         root["app"] = appInfo()
         root["device"] = deviceInfo(context: context)
         root["logs"] = recentLogs(context: context, limit: maxLogs)
-        #if DEBUG
-        root["rawPackets"] = recentPackets(context: context, limit: 200)
-        #endif
+        if RawPacketCapture.isEnabled {
+            root["rawPackets"] = recentPackets(context: context, limit: 200)
+        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {

@@ -42,6 +42,19 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                // Test tooling: `-demoEstimatedCalories YES` reshapes the seeded recent days into
+                // what a phone-away ring-history sync produces (source `ring_history`, no device
+                // calories) so the on-device estimated-total path is visible in the UI.
+                if UserDefaults.standard.bool(forKey: "demoEstimatedCalories") {
+                    for offset in 0...2 {
+                        guard let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date()),
+                              let row = MetricsRepository.activity(on: day, context: modelContext) else { continue }
+                        row.source = ActivityService.ringHistorySource
+                        DailyCalorieEstimator.recompute(day: day, context: modelContext)
+                    }
+                    try? modelContext.save()
+                    PulseDataChange.shared.notify()
+                }
                 // Test tooling: fake a connected Strava account. Must run before anything touches
                 // StravaAuthService.shared (it reads the token store at init).
                 if UserDefaults.standard.bool(forKey: "demoStravaConnected") {
@@ -261,6 +274,16 @@ struct MainTabView: View {
                 }
             }
             .pulseGlassContainer(spacing: 8)
+            if let error = coordinator.syncError {
+                HStack {
+                    Text(error).font(.caption)
+                    Spacer()
+                    Button("Retry") { coordinator.runStartupSequence() }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .contain)
+            }
             if #available(iOS 26, *) {
                 // iOS 26+: native TabView renders Apple's stock Liquid Glass tab bar —
                 // real lensing, morphing selection, and content diffusing under the bar.
@@ -471,14 +494,22 @@ struct ConnectionStatusPill: View {
         .pulseGlass(Capsule(), interactive: true)
         .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
         .fixedSize(horizontal: true, vertical: false)
-        .onAppear {
-            guard isPulsing else { return }
-            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
-        }
+        .onAppear { startPulse(isPulsing) }
+        // The pill stays mounted across state changes, so `onAppear` alone would miss a later
+        // idle → connecting flip — and would leave the repeatForever loop running after connect.
+        .onChange(of: isPulsing) { _, now in startPulse(now) }
     }
 
     private var isPulsing: Bool {
         state == .connecting || state == .reconnecting
+    }
+
+    /// Restart or cancel the dot pulse. The non-animated reset replaces the old repeatForever
+    /// transaction; without it the loop keeps animating the header for the app's whole lifetime.
+    private func startPulse(_ on: Bool) {
+        pulse = false
+        guard on else { return }
+        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
     }
 
     private var dotColor: Color {

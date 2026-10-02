@@ -688,51 +688,63 @@ struct ActivityWorkoutRow: View {
 /// A thin, full-width indeterminate progress bar shown under the app header while the ring is
 /// syncing. We only have stage labels (not a percentage), so this is indeterminate: an accent
 /// segment sweeps left→right over a recessed track. Under Reduce Motion it degrades to a steady
-/// pulsing full-width fill (no horizontal travel). Visuals use the existing `PulseColors` tokens
-/// and the `ConnectionStatusPill` animation idiom.
+/// pulsing full-width fill (no horizontal travel). Visuals use the existing `PulseColors` tokens.
+///
+/// Driven by `TimelineView(.animation)` with the position a pure function of wall-clock time —
+/// never a `@State` + `repeatForever` pair. The bar is mounted behind `if isSyncing`, so state-based
+/// animation restarts from phase 0 on every sync (and can be committed against a pre-layout width
+/// of 0, which reads as a frozen or jumping bar). Wall-clock math is phase-continuous across
+/// remounts and self-corrects after dropped frames instead of accumulating jank.
 struct SyncProgressBar: View {
     /// Bar thickness in points — deliberately thin so it reads as a status accent, not a control.
     var height: CGFloat = 3
     /// Fraction of the track width the moving segment occupies.
     private let segmentFraction: CGFloat = 0.4
+    /// One edge-to-edge sweep; the out-and-back cycle is 2×. Matches the previous
+    /// `.easeInOut(duration: 1.1).repeatForever(autoreverses: true)` look.
+    private let sweepDuration: Double = 1.1
+    /// Reduce Motion: half-period of the full-width opacity breathe (was easeInOut(0.8)).
+    private let pulseHalfPeriod: Double = 0.8
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var animate = false
 
     var body: some View {
-        GeometryReader { geo in
-            let trackWidth = geo.size.width
-            let segmentWidth = trackWidth * segmentFraction
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            GeometryReader { geo in
+                let trackWidth = geo.size.width
+                let segmentWidth = trackWidth * segmentFraction
 
-            ZStack(alignment: .leading) {
-                Rectangle().fill(PulseColors.elevated)
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(PulseColors.elevated)
 
-                if reduceMotion {
-                    // No travel — a gentle opacity pulse on a full-width fill.
-                    Rectangle()
-                        .fill(PulseColors.accent)
-                        .opacity(animate ? 0.55 : 1.0)
-                } else {
-                    Capsule()
-                        .fill(PulseColors.accent)
-                        .frame(width: segmentWidth)
-                        // Sweep from just off the left edge to just off the right edge.
-                        .offset(x: animate ? (trackWidth - segmentWidth) : 0)
+                    if reduceMotion {
+                        // No travel — a gentle opacity pulse on a full-width fill (1.0 ↔ 0.55).
+                        Rectangle()
+                            .fill(PulseColors.accent)
+                            .opacity(1.0 - 0.45 * Self.easedTriangle(t, halfPeriod: pulseHalfPeriod))
+                    } else {
+                        Capsule()
+                            .fill(PulseColors.accent)
+                            .frame(width: segmentWidth)
+                            // Sweep from the left edge to the right edge and back.
+                            .offset(x: (trackWidth - segmentWidth) * Self.easedTriangle(t, halfPeriod: sweepDuration))
+                    }
                 }
+                .clipped()
             }
-            .frame(height: height)
-            .clipped()
         }
         .frame(height: height)
-        .onAppear {
-            if reduceMotion {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { animate = true }
-            } else {
-                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { animate = true }
-            }
-        }
         .accessibilityElement()
         .accessibilityLabel("Syncing")
         .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    /// 0→1→0 triangle wave of wall-clock time with a sine ease applied per leg — the stateless
+    /// equivalent of `.easeInOut(halfPeriod).repeatForever(autoreverses: true)`.
+    private static func easedTriangle(_ t: TimeInterval, halfPeriod: Double) -> CGFloat {
+        let phase = t.truncatingRemainder(dividingBy: halfPeriod * 2) / halfPeriod   // 0..<2
+        let tri = phase < 1 ? phase : 2 - phase
+        return CGFloat(0.5 - cos(.pi * tri) / 2)
     }
 }

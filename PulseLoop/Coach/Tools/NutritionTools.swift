@@ -141,6 +141,28 @@ enum NutritionTools {
             case quantity, servingDescription = "serving_description"
             case source, offProductCode = "off_product_code", confidence, notes
         }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self, forKey: .name)
+            mealType = try c.decode(String.self, forKey: .mealType)
+            date = try c.decode(String.self, forKey: .date)
+            time = try c.decodeIfPresent(String.self, forKey: .time)
+            calories = try c.decode(Double.self, forKey: .calories)
+            proteinG = try c.decodeIfPresent(Double.self, forKey: .proteinG)
+            carbsG = try c.decodeIfPresent(Double.self, forKey: .carbsG)
+            fatG = try c.decodeIfPresent(Double.self, forKey: .fatG)
+            fiberG = try c.decodeIfPresent(Double.self, forKey: .fiberG)
+            sugarG = try c.decodeIfPresent(Double.self, forKey: .sugarG)
+            sodiumMg = try c.decodeIfPresent(Double.self, forKey: .sodiumMg)
+            quantity = try c.decodeIfPresent(Double.self, forKey: .quantity)
+            servingDescription = try c.decodeIfPresent(String.self, forKey: .servingDescription)
+            // Missing provenance must never be treated as database-grounded.
+            source = try c.decodeIfPresent(String.self, forKey: .source) ?? "estimate"
+            offProductCode = try c.decodeIfPresent(String.self, forKey: .offProductCode)
+            confidence = try c.decodeIfPresent(String.self, forKey: .confidence) ?? "low"
+            notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        }
     }
 
     private static var logMeal: AnyCoachTool {

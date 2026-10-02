@@ -262,4 +262,25 @@ final class EventBridgeTests: XCTestCase {
         XCTAssertTrue(RingEventBridge.events(
             for: .activityBucket(timestamp: unsetRingClock, steps: 120, distanceMeters: 90)).isEmpty)
     }
+
+    // MARK: - Wear state
+
+    /// Wear state must reach the coordinator — it used to stop at the decoder, which is why a
+    /// not-worn measure spun the full window with no explanation.
+    func testWearStateFansOutBothPolarities() {
+        for worn in [true, false] {
+            let events = RingEventBridge.events(for: .wearingStatus(worn: worn, timestamp: Date()))
+            XCTAssertEqual(events.count, 1)
+            guard case let .wearState(mapped) = events[0] else {
+                return XCTFail("expected wearState, got \(events[0])")
+            }
+            XCTAssertEqual(mapped, worn)
+        }
+    }
+
+    /// The bridge fans out unconditionally; family gating lives in the coordinator, because only
+    /// CRP's wear polarity is hardware-confirmed.
+    func testWearStateIsNotFamilyGatedInTheBridge() {
+        XCTAssertEqual(RingEventBridge.events(for: .wearingStatus(worn: false, timestamp: Date())).count, 1)
+    }
 }

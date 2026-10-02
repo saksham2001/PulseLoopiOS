@@ -83,6 +83,13 @@ extension MeasurementSheet.Kind {
         }
     }
 
+    /// Shown instead of `failureMessage` when the ring reported it wasn't on the finger (CRP wear
+    /// state). Deliberately one message for every kind: the fix is the same regardless of which vital
+    /// was being measured, and naming the vital here would only bury the one instruction that matters.
+    var notWornMessage: String {
+        "The ring isn't detecting your finger. Put it on snugly, then try again."
+    }
+
     /// SpO₂ breathes rather than beats — its ambient pulse runs at a slower cadence.
     var slowBreathing: Bool { self == .spo2 }
 }

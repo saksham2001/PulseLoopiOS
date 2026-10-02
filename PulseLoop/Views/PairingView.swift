@@ -131,8 +131,7 @@ struct PairingView: View {
     /// Matching on *every* family the card can be — not just its default — is what keeps a row the scan
     /// tagged `.colmiSmartHealth` visible under the Colmi card.
     private var matchingRings: [RingBLEClient.DiscoveredRing] {
-        let families = selectedModel.families
-        let matches = ble.discovered.filter { $0.deviceType.map(families.contains) ?? false }
+        let matches = ble.discovered.filter { selectedModel.acceptsScanFamily($0.deviceType) }
         return matches.isEmpty ? ble.discovered : matches
     }
 

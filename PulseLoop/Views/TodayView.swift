@@ -241,7 +241,11 @@ struct TodayView: View {
         case .steps:
             ActivityTileView(
                 summary: store.summary, units: units,
-                caloriesAvailable: MetricsService.isVisible(.calories, context: modelContext, scope: .today),
+                // From the store's per-rebuild snapshot — never a SwiftData fetch on the body path
+                // (this body re-runs on every store/prefs change). `.calories` can't be hidden
+                // (Settings folds it into the Activity tile), so this reduces to the device
+                // capability gate, and capability changes already flow through the store rebuild.
+                caloriesAvailable: store.visibleMetrics.contains(.calories),
                 onTap: { selectedTab = .activity }
             )
         case .nutrition:

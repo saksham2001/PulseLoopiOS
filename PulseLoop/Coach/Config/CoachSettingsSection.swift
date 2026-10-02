@@ -26,6 +26,7 @@ struct CoachSettingsSection: View {
     private let geminiKeyStore = GeminiKeychainStore()
     private let openRouterKeyStore = OpenRouterKeychainStore()
     private let minimaxKeyStore = MiniMaxKeychainStore()
+    private let localKeyStore = LocalLLMKeychainStore()
 
     /// Picker tag that selects the free-text "Custom" OpenRouter model entry.
     private let customModelTag = "__custom__"
@@ -41,6 +42,8 @@ struct CoachSettingsSection: View {
             return selected == customModelTag ? "Custom…" : (OpenRouterModel(rawValue: selected)?.label ?? selected)
         case .userMiniMaxKey:
             return MiniMaxModel(rawValue: selected)?.label ?? selected
+        case .localOpenAICompat:
+            return store.settings.resolvedLocalModel.isEmpty ? "Not set" : store.settings.resolvedLocalModel
         default:
             return CoachModel(rawValue: selected)?.label ?? selected
         }
@@ -70,12 +73,22 @@ struct CoachSettingsSection: View {
     @State private var showMiniMaxKey: Bool = false
     @State private var minimaxKeyError: String?
 
+    // Local / self-hosted state. The key is optional here, so it has the same shape as the others
+    // but never gates anything.
+    @State private var localKeyDraft: String = ""
+    @State private var hasLocalKey: Bool = false
+    @State private var showLocalKey: Bool = false
+    @State private var localKeyError: String?
+
     private var flags: CoachFeatureFlags {
         let hasKey: Bool
         switch store.settings.providerMode {
         case .userGeminiKey: hasKey = hasGeminiKey
         case .userOpenRouterKey: hasKey = hasOpenRouterKey
         case .userMiniMaxKey: hasKey = hasMiniMaxKey
+        // The local provider's key is optional; a usable base URL is what makes it ready. Mirrors
+        // the readiness sentinel in `CoachClientResolver`, which is what actually gates a turn.
+        case .localOpenAICompat: hasKey = LocalEndpoint.validate(store.settings.localBaseURL) == nil
         default: hasKey = hasSavedKey
         }
         return CoachFeatureFlags(settings: store.settings, hasAPIKey: hasKey)
@@ -141,6 +154,10 @@ struct CoachSettingsSection: View {
                 // model picker.
                 if store.settings.providerMode == .appleOnDevice {
                     appleOnDeviceCard
+                } else if store.settings.providerMode == .localOpenAICompat {
+                    // The model list comes from the user's own server, so it belongs with the rest
+                    // of the server setup below rather than in a fixed picker here.
+                    EmptyView()
                 } else {
                     FormMenuRow(title: "Model", value: currentModelLabel) {
                         Picker("Model", selection: modelPickerBinding) {
@@ -220,6 +237,23 @@ struct CoachSettingsSection: View {
                 )
             }
 
+            if store.settings.providerMode == .localOpenAICompat {
+                LocalServerSettingsSection()
+                // The key field stays here so it looks and behaves exactly like every other
+                // provider's — it is simply optional for this one.
+                apiKeyField(
+                    placeholder: "Optional API key",
+                    hint: "Only needed if you started your server with --api-key. Ollama ignores it "
+                        + "entirely. Stored in your device Keychain.",
+                    draft: $localKeyDraft,
+                    showRaw: $showLocalKey,
+                    hasSaved: hasLocalKey,
+                    error: localKeyError,
+                    onSave: saveLocalKey,
+                    onRemove: removeLocalKey
+                )
+            }
+
             // OpenRouter-only routing controls. OpenRouter exposes a unified
             // reasoning-effort hint plus provider-level privacy and sort options
             // the native OpenAI/Gemini clients don't, so they only appear here.
@@ -256,7 +290,11 @@ struct CoachSettingsSection: View {
                 // and the on-device model is tool-less — so the toggle is only offered
                 // for providers that can actually search.
                 if store.settings.providerMode != .appleOnDevice,
-                   store.settings.providerMode != .userMiniMaxKey {
+                   store.settings.providerMode != .userMiniMaxKey,
+                   // No local engine hosts a web-search tool; `LocalOpenAICompatClient` drops the
+                   // spec defensively, and offering the switch would only promise something the
+                   // server can't do.
+                   store.settings.providerMode != .localOpenAICompat {
                     FormToggleRow(title: "Web search", isOn: webSearchBinding)
                 }
 
@@ -393,6 +431,28 @@ struct CoachSettingsSection: View {
     }
 
     // MARK: - Custom OpenRouter model field
+
+    private func saveLocalKey() {
+        do {
+            try localKeyStore.saveKey(localKeyDraft)
+            hasLocalKey = true
+            localKeyDraft = ""
+            localKeyError = nil
+        } catch {
+            localKeyError = error.localizedDescription
+        }
+    }
+
+    private func removeLocalKey() {
+        do {
+            try localKeyStore.deleteKey()
+            hasLocalKey = false
+            localKeyDraft = ""
+            localKeyError = nil
+        } catch {
+            localKeyError = error.localizedDescription
+        }
+    }
 
     private var customModelField: some View {
         FormField {
@@ -543,6 +603,7 @@ struct CoachSettingsSection: View {
         hasGeminiKey = ((try? geminiKeyStore.readKey()) ?? nil) != nil
         hasOpenRouterKey = ((try? openRouterKeyStore.readKey()) ?? nil) != nil
         hasMiniMaxKey = ((try? minimaxKeyStore.readKey()) ?? nil) != nil
+        hasLocalKey = ((try? localKeyStore.readKey()) ?? nil) != nil
     }
 
     private func saveOpenAIKey() {

@@ -31,6 +31,12 @@ On iOS you can choose how the coach runs:
 - **Apple on-device Foundation Models.** Runs the model locally on supported
   devices with no API key and no data leaving the phone. Availability is gated
   to hardware that supports it.
+- **Local / self-hosted.** Point the coach at any OpenAI-compatible server you
+  run yourself — Ollama, llama.cpp, vLLM, SGLang, LM Studio. The API key is
+  optional, since most of them run unauthenticated on a LAN, and nothing leaves
+  your network. Unlike the Apple on-device option this works on any device, and
+  the model is whatever you chose to run. See
+  [Local / self-hosted LLM coach](../local-llm-coach.md).
 - **Offline** scripted fallback when no provider is configured.
 
 Beyond provider choice, the iOS coach is:

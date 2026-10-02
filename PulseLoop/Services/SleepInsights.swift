@@ -306,12 +306,6 @@ enum SleepInsights {
         )
     }
 
-    static let dayNoDataCoach = SleepCoach(
-        headline: "No sleep tracked last night",
-        body: "I don't see sleep data for last night. Wear your ring overnight and sync in the morning so I can compare your sleep against your baseline.",
-        chips: []
-    )
-
     static func aggregateCoach(range: SleepRangeKey, sessions: [SleepSummary], expectedNights: Int, goalMin: Int?) -> SleepCoach {
         // Collapse naps into their day so "N nights tracked" counts distinct nights, matching the
         // collapsed average this copy sits next to (a night + 2 naps is 1 night, not 3).

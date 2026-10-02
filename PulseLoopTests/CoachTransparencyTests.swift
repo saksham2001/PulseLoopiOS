@@ -8,6 +8,21 @@ import XCTest
 @MainActor
 final class CoachTransparencyTests: XCTestCase {
 
+    private actor FailingContinuationClient: ResponsesClient {
+        private var sentInitial = false
+        let first: OpenAIResponse
+
+        init(first: OpenAIResponse) { self.first = first }
+
+        func send(requestBody: Data) async throws -> OpenAIResponse {
+            if !sentInitial {
+                sentInitial = true
+                return first
+            }
+            throw URLError(.timedOut)
+        }
+    }
+
     private func writeFlags() -> CoachFeatureFlags {
         var s = TestSupport.enabledCoachSettings()
         s.enableWriteTools = true
@@ -75,6 +90,29 @@ final class CoachTransparencyTests: XCTestCase {
         XCTAssertEqual(result.loggedActivityIds.first, sessions.first?.id)
     }
 
+    func testFailedToolTraceSurvivesAContinuationTimeout() async throws {
+        let c = try TestSupport.makeContext()
+        let flags = writeFlags()
+        let malformedCall = OpenAIResponse(id: "r1", outputItems: [
+            .functionCall(.init(
+                name: "create_activity_session_from_description",
+                callID: "c1", arguments: "{}")),
+        ])
+        let client = FailingContinuationClient(first: malformedCall)
+        let orchestrator = CoachOrchestrator(
+            client: client, registry: ToolRegistry(flags: flags), flags: flags,
+            toolContext: ToolExecutionContext(modelContext: c, flags: flags))
+
+        let result = await orchestrator.runTurn(
+            userText: "log a run", packet: packet(c), recentMessages: [])
+
+        XCTAssertNotNil(result.error)
+        XCTAssertEqual(result.trace.count, 1)
+        XCTAssertEqual(result.trace.first?.toolName, "create_activity_session_from_description")
+        XCTAssertEqual(result.trace.first?.status, "error")
+        XCTAssertTrue(result.trace.first?.resultSummary.contains("invalid arguments") == true)
+    }
+
     // MARK: TurnResult.loggedActivityIds populated by an immediate (today) update
 
     func testUpdateTodaySessionPopulatesLoggedActivityIds() async throws {
@@ -129,4 +167,5 @@ final class CoachTransparencyTests: XCTestCase {
         let decoded = try JSONDecoder().decode([UUID].self, from: Data(json.utf8))
         XCTAssertEqual(decoded, ids)
     }
+
 }

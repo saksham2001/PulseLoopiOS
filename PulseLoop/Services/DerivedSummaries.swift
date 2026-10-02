@@ -227,7 +227,10 @@ struct LatestReading: Equatable {
 struct TodaySummary {
     var date: Date
     var steps: Int?
+    /// Display value: device-reported, or the estimated TOTAL burn (BMR + net active).
     var calories: Double?
+    /// Active-energy portion (device value or net estimate) — what the calorie goal ring measures.
+    var activeCalories: Double?
     var distanceMeters: Double?
     var activeMinutes: Int?
     var activeMinutesSource: String

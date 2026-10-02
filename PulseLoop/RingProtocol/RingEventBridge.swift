@@ -114,6 +114,11 @@ enum RingEventBridge {
             guard (0...100).contains(percent) else { return [] }
             return [.batteryLevel(percent: percent)]
 
+        case let .wearingStatus(worn, _):
+            // Fanned out unconditionally; `RingSyncCoordinator` is what gates on family, because only
+            // CRP's polarity is hardware-confirmed (see `RingDecodedEvent.wearingStatus`).
+            return [.wearState(worn: worn)]
+
         case let .status(address):
             // The status reply carries the ring's embedded address; surface it (and refresh
             // last-sync) by re-asserting the connected state with the address attached.
@@ -175,6 +180,10 @@ enum RingEventBridge {
 
     private static func extraMetricEvents(for decoded: RingDecodedEvent) -> [PulseEvent] {
         switch decoded {
+        case let .rwfitMeasurementStatus(type, status):
+            return [.rwfitMeasurement(type: type, status: status)]
+
+
         case let .bloodPressureSample(systolic, diastolic, timestamp):
             guard systolicRange.contains(systolic), diastolicRange.contains(diastolic) else { return [] }
             return [.bloodPressureSample(systolic: systolic, diastolic: diastolic, timestamp: timestamp)]

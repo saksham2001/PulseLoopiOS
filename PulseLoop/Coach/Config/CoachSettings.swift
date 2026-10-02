@@ -10,6 +10,10 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     case userGeminiKey
     case userOpenRouterKey
     case userMiniMaxKey
+    /// Any OpenAI-Chat-Completions-compatible server the user runs themselves: Ollama, llama.cpp,
+    /// vLLM, SGLang, LM Studio. Declared after the keyed providers so inserting it doesn't disturb
+    /// anyone's stored `rawValue`.
+    case localOpenAICompat
     case backendProxy
 
     var id: String { rawValue }
@@ -22,7 +26,39 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
         case .userGeminiKey: return "Gemini"
         case .userOpenRouterKey: return "OpenRouter"
         case .userMiniMaxKey: return "MiniMax"
+        case .localOpenAICompat: return "Local / self-hosted"
         case .backendProxy: return "Backend proxy"
+        }
+    }
+}
+
+/// How hard to constrain a local model's output shape — see `docs/local-llm-coach.md` §5.
+///
+/// `.off` is the default because it's the only mode implemented by every backend: the coach's
+/// shape is carried by `CoachResponseSchema.promptInstruction` in the system message, with the
+/// orchestrator's JSON-repair loop as the backstop. The other two are opt-in because the support
+/// matrix is genuinely uneven — LM Studio implements `json_schema` but not `json_object`, and some
+/// llama.cpp builds error when `json_schema` collides with a server-side `grammar`.
+enum LocalStructuredOutput: String, Codable, CaseIterable, Identifiable, Sendable {
+    case off
+    case jsonObject
+    case jsonSchema
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return "Prompt only"
+        case .jsonObject: return "JSON mode"
+        case .jsonSchema: return "Strict schema"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .off: return "Works everywhere (default)"
+        case .jsonObject: return "response_format: json_object — not on LM Studio"
+        case .jsonSchema: return "response_format: json_schema — best when supported"
         }
     }
 }
@@ -189,6 +225,34 @@ struct CoachSettings: Codable, Equatable {
     /// can ground practical advice (outdoor vs indoor, hydration, rain). City-level
     /// only — never the precise location. Off by default.
     var enableEnvironmentContext: Bool = false
+    /// Local-only: base URL of the self-hosted server, as typed (`http://192.168.1.50:11434`).
+    /// A URL that `LocalEndpoint.validate` accepts — not the key — is what gates readiness.
+    var localBaseURL: String = ""
+    /// Local-only: model name the server expects. Free-form; `/v1/models` populates the picker.
+    var localModel: String = ""
+    /// Local-only: send `tools`. Off for a server started without tool-call support (vLLM without
+    /// `--enable-auto-tool-choice` returns HTTP 400) or a model that can't call them.
+    var localToolCalling: Bool = true
+    /// Local-only: how hard to constrain the output shape. Default off — the only mode every
+    /// backend supports.
+    var localStructuredOutput: LocalStructuredOutput = .off
+    /// Local-only: `max_tokens`; 0 = omit and let the server decide.
+    var localMaxTokens: Int = 0
+    /// Local-only: read timeout in seconds. Long, because CPU inference is slow.
+    var localTimeoutSeconds: Int = LocalOpenAICompatClient.defaultReadTimeoutSeconds
+
+    /// The local base URL with surrounding whitespace gone; blank when unconfigured. There's no
+    /// default to fall back to — every engine listens on a different port.
+    var resolvedLocalBaseURL: String {
+        localBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The local model name. Blank is sent as-is rather than substituted: llama.cpp ignores the
+    /// field entirely, so an empty value is legitimate there, and inventing a slug would turn a
+    /// working setup into a 404 on the servers that do read it.
+    var resolvedLocalModel: String {
+        localModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// The OpenRouter model slug to use. Free-form (the user may type any slug);
     /// falls back to the default only when the stored `model` is blank.
@@ -231,6 +295,12 @@ struct CoachSettings: Codable, Equatable {
         eveningHour = try c.decodeIfPresent(Int.self, forKey: .eveningHour) ?? d.eveningHour
         proactiveAlertsEnabled = try c.decodeIfPresent(Bool.self, forKey: .proactiveAlertsEnabled) ?? d.proactiveAlertsEnabled
         enableEnvironmentContext = try c.decodeIfPresent(Bool.self, forKey: .enableEnvironmentContext) ?? d.enableEnvironmentContext
+        localBaseURL = try c.decodeIfPresent(String.self, forKey: .localBaseURL) ?? d.localBaseURL
+        localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? d.localModel
+        localToolCalling = try c.decodeIfPresent(Bool.self, forKey: .localToolCalling) ?? d.localToolCalling
+        localStructuredOutput = try c.decodeIfPresent(LocalStructuredOutput.self, forKey: .localStructuredOutput) ?? d.localStructuredOutput
+        localMaxTokens = try c.decodeIfPresent(Int.self, forKey: .localMaxTokens) ?? d.localMaxTokens
+        localTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .localTimeoutSeconds) ?? d.localTimeoutSeconds
     }
 }
 

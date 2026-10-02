@@ -79,6 +79,8 @@ struct ProfileSettingsView: View {
         draft.apply(to: profile)
         try? modelContext.save()
         coordinator.applyUserProfile()
+        // Weight/height/age/sex shift every term of the daily calorie estimate.
+        DailyCalorieEstimator.recomputeRecentDays(context: modelContext)
     }
 
     private func importFromHealth() {

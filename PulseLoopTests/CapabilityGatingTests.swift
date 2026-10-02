@@ -52,6 +52,34 @@ final class CapabilityGatingTests: XCTestCase {
         }
     }
 
+    /// The RWfit baseline is deliberately narrow — only what both wire framings serve
+    /// unconditionally — with every per-unit sensor *and* the whole on-demand measurement set
+    /// bitmap-gated: the manual/realtime commands are JieLi-only, so a legacy link must never
+    /// render measure buttons that could only time out.
+    func testRWfitBaselineIsNarrowAndRealtimeIsGated() {
+        let coordinator = RWfitCoordinator()
+        XCTAssertEqual(coordinator.capabilities,
+                       [.battery])
+        for cap: WearableCapability in [.realtimeHeartRate, .manualHeartRate, .manualSpo2,
+                                        .bloodPressure, .temperature, .hrv, .stress, .bloodSugar] {
+            XCTAssertFalse(coordinator.capabilities.contains(cap), cap.rawValue)
+            XCTAssertTrue(coordinator.bitmapGatedCapabilities.contains(cap), cap.rawValue)
+        }
+    }
+
+    /// `refinedCapabilities` folds the JieLi framing grant + the ring's own TLV into the baseline,
+    /// and refuses anything the family didn't pre-approve.
+    func testRWfitRefinementAddsOnlyPreApprovedCapabilities() {
+        let coordinator = RWfitCoordinator()
+        let granted: Set<WearableCapability> = [.heartRate, .realtimeHeartRate, .manualHeartRate,
+                                                   .manualSpo2, .bloodPressure, .findDevice, .powerOff]
+        let refined = coordinator.refinedCapabilities(bitmapDerived: granted)
+        XCTAssertTrue(refined.isSuperset(of: [.heartRate, .realtimeHeartRate, .manualHeartRate,
+                                              .manualSpo2, .bloodPressure]))
+        XCTAssertFalse(refined.contains(.findDevice), "not pre-approved — the bitmap cannot conjure it")
+        XCTAssertFalse(refined.contains(.powerOff))
+    }
+
     func testColmiShowsRichMetrics() throws {
         let context = try TestSupport.makeContext()
         let colmi = Device(

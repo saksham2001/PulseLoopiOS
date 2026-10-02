@@ -146,7 +146,17 @@ struct CoachOrchestrator {
 
             rounds += 1
             onTrace(CoachTraceEvent(label: "Putting it together…", status: .writingAnswer))
-            response = try await send(input: outputs, tools: toolSpecs, textFormat: textFormat, previousResponseId: response.id, tally: tally)
+            do {
+                response = try await send(
+                    input: outputs, tools: toolSpecs, textFormat: textFormat,
+                    previousResponseId: response.id, tally: tally)
+            } catch {
+                // Tool execution already happened locally. Preserve its trace (and any ids it
+                // wrote) when the follow-up model request times out or loses its connection;
+                // otherwise the error bubble hides the only evidence of what failed or succeeded.
+                onTrace(CoachTraceEvent(label: "Couldn't finish the answer", status: .failedTool))
+                return failedTurn(error, trace: trace, tally: tally)
+            }
             noteWebSearch(response, onTrace: onTrace)
         }
 
@@ -164,7 +174,23 @@ struct CoachOrchestrator {
             return TurnResult(
                 assistant: CoachFallbacks.fallback(), trace: trace, usage: tally.total,
                 error: CoachTurnError(code: "Bad response", reason: parseError.reason))
+        } catch {
+            // A schema-repair request can fail after one or more tools already ran. Keep those
+            // calls attached to the resulting error message just like a parse exhaustion does.
+            onTrace(CoachTraceEvent(label: "Couldn't finish the answer", status: .failedTool))
+            return failedTurn(error, trace: trace, tally: tally)
         }
+    }
+
+    private func failedTurn(
+        _ error: Error, trace: [CoachToolCallTrace], tally: UsageTally
+    ) -> TurnResult {
+        TurnResult(
+            assistant: CoachFallbacks.fallback(), trace: trace,
+            pendingActions: toolContext.pendingActions,
+            loggedActivityIds: toolContext.loggedActivityIds,
+            loggedMealIds: toolContext.loggedMealIds,
+            usage: tally.total, error: CoachTurnError(error))
     }
 
     /// Thrown by `parseFinal` when the model never returns valid coach_response

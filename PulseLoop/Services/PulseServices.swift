@@ -39,9 +39,10 @@ enum MetricsService {
         let spo2Freshness = freshness(lastUpdatedAt: latestSpO2?.timestamp, isDemo: isDemo)
         let sleep = SleepService.latestSleep(context: context)
         let goals = goalsSummary(context: context)
+        let profileValues = MetricsProfileValues(profile: ProfileRepository.profile(context: context))
         let trends = TrendsSummary(
             steps7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: Double($0.steps)) },
-            calories7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: $0.calories) },
+            calories7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: $0.effectiveCalories(profile: profileValues) ?? 0) },
             distance7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: $0.distanceMeters) },
             hrSamples24h: hrSamplesDisplay,
             spo2Samples24h: spo2SamplesDisplay
@@ -58,13 +59,14 @@ enum MetricsService {
             isDemo: isDemo
         ))
         
-        // The ring's calorie field is unverified, so ring-history days don't carry calories — show
-        // "—" rather than a misleading 0. Steps/distance from the ring are trustworthy.
-        let todayCalories: Double? = today?.source == ActivityService.ringHistorySource ? nil : today?.calories
+        // Device-reported calories when the ring gave them; otherwise the on-device estimated
+        // TOTAL burn (BMR accrued over elapsed minutes + net active estimate). Days with neither
+        // stay nil and render "—". The goal ring keeps measuring the active-energy portion.
         return TodaySummary(
             date: today?.date ?? calendar.startOfDay(for: Date()),
             steps: today?.steps,
-            calories: todayCalories,
+            calories: today?.effectiveCalories(profile: profileValues),
+            activeCalories: today?.effectiveActiveCalories,
             distanceMeters: today?.distanceMeters,
             activeMinutes: today?.activeMinutes,
             activeMinutesSource: today?.source ?? "none",
@@ -264,6 +266,8 @@ enum MetricsService {
         let rows = MetricsRepository.activityRows(context: context)
         let isDemo = rows.contains { $0.source == "mock" }
         let filtered = rowsSinceCutoff(rows: rows, range: range, includeAll: isDemo)
+        // Fetched once per call — the calorie read path needs the profile for the BMR baseline.
+        let profileValues = MetricsProfileValues(profile: ProfileRepository.profile(context: context))
         if range == .twelveMonths {
             let calendar = Calendar.current
             let grouped = Dictionary(grouping: filtered) { row in
@@ -274,17 +278,18 @@ enum MetricsService {
                 guard let first = rows.map(\.date).min() else { return nil }
                 let components = calendar.dateComponents([.year, .month], from: first)
                 let monthStart = calendar.date(from: DateComponents(year: components.year, month: components.month, day: 1, hour: 12)) ?? first
-                return MetricSample(timestamp: monthStart, value: rows.reduce(0) { $0 + value(row: $1, metric: metric) })
+                let monthTotal = rows.reduce(0) { $0 + value(row: $1, metric: metric, profile: profileValues) }
+                return MetricSample(timestamp: monthStart, value: monthTotal)
             }
             .sorted { $0.timestamp < $1.timestamp }
         }
-        return filtered.map { MetricSample(timestamp: $0.date, value: value(row: $0, metric: metric)) }
+        return filtered.map { MetricSample(timestamp: $0.date, value: value(row: $0, metric: metric, profile: profileValues)) }
     }
-    
-    private static func value(row: ActivityDaily, metric: MetricKey) -> Double {
+
+    private static func value(row: ActivityDaily, metric: MetricKey, profile: MetricsProfileValues) -> Double {
         switch metric {
         case .steps: return Double(row.steps)
-        case .calories: return row.calories
+        case .calories: return row.effectiveCalories(profile: profile) ?? 0
         case .distance: return row.distanceMeters
         case .activeMinutes: return Double(row.activeMinutes)
         default: return 0
@@ -797,6 +802,9 @@ enum ActivityService {
         }
         row.syncedAt = syncedAt
         row.updatedAt = Date()
+        // Cheap during a sync burst — the day recomputes its calorie estimate once, when the
+        // event bus sees the sync complete (`DailyCalorieEstimator.flushDirty`).
+        DailyCalorieEstimator.markDirty(dayStart)
         return row
     }
 
@@ -824,6 +832,8 @@ enum ActivityService {
         // Preserve explicitly provided calories (coach-created sessions) at finish.
         let summary = recomputeSummary(for: session, preserveProvidedCalories: true, context: context)
         creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
+        // After the rollup credit so a workout on an otherwise-empty day has its ActivityDaily row.
+        DailyCalorieEstimator.recompute(around: session, context: context)
         return summary
     }
 
@@ -833,7 +843,10 @@ enum ActivityService {
     /// here (the stored value came from this engine at finish; late HR improves the estimate).
     @discardableResult
     static func refreshSummary(for session: ActivitySession, context: ModelContext) -> ActivitySessionSummary {
-        recomputeSummary(for: session, preserveProvidedCalories: false, context: context)
+        let summary = recomputeSummary(for: session, preserveProvidedCalories: false, context: context)
+        // Late-arriving ring HR changes the session's calories, which feed the day's estimate.
+        DailyCalorieEstimator.recompute(around: session, context: context)
+        return summary
     }
 
     private static func recomputeSummary(for session: ActivitySession, preserveProvidedCalories: Bool, context: ModelContext) -> ActivitySessionSummary {
@@ -900,6 +913,10 @@ enum ActivityService {
         else { return false }
 
         let payload = editPayload(from: session, newType: newType, newStart: newStartedAt, newEnd: newEndedAt)
+        // Capture the pre-edit window: the old day(s) need their calorie estimate recomputed after
+        // the workout moves away from them.
+        let oldStartedAt = session.startedAt
+        let oldEndedAt = session.endedAt
         reverseDailyRollup(for: session, context: context)
 
         session.type = newType
@@ -919,6 +936,13 @@ enum ActivityService {
 
         let summary = refreshSummary(for: session, context: context)
         creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
+        // Old day(s) lose the workout's energy; the new day(s) recompute after the rollup credit
+        // (which creates the ActivityDaily row when the workout moved to an empty day).
+        DailyCalorieEstimator.recompute(day: oldStartedAt, context: context)
+        if let oldEndedAt, !Calendar.current.isDate(oldEndedAt, inSameDayAs: oldStartedAt) {
+            DailyCalorieEstimator.recompute(day: oldEndedAt, context: context)
+        }
+        DailyCalorieEstimator.recompute(around: session, context: context)
         try? context.save()
         PulseDataChange.shared.notify()
         return true
@@ -1105,6 +1129,10 @@ enum ActivityRecorderService {
     static func delete(_ session: ActivitySession, context: ModelContext) {
         ActivityService.reverseDailyRollup(for: session, context: context)
 
+        // Capture before the row is gone; the day's calorie estimate recomputes without it below.
+        let affectedStart = session.startedAt
+        let affectedEnd = session.endedAt
+
         let id = session.id
         ActivityRepository.samples(sessionId: id, context: context).forEach(context.delete)
         ActivityRepository.gpsPoints(sessionId: id, context: context).forEach(context.delete)
@@ -1112,6 +1140,11 @@ enum ActivityRecorderService {
         let polls = ((try? context.fetch(FetchDescriptor<ActivitySensorPollEvent>())) ?? []).filter { $0.sessionId == id }
         polls.forEach(context.delete)
         context.delete(session)
+        try? context.save()
+        DailyCalorieEstimator.recompute(day: affectedStart, context: context)
+        if let affectedEnd, !Calendar.current.isDate(affectedEnd, inSameDayAs: affectedStart) {
+            DailyCalorieEstimator.recompute(day: affectedEnd, context: context)
+        }
         try? context.save()
         HealthSyncService.shared.deleteExportedWorkout(sessionId: id)
         PulseDataChange.shared.notify()

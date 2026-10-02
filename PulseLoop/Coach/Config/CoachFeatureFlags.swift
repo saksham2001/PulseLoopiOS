@@ -30,6 +30,10 @@ struct CoachFeatureFlags {
             return AppleOnDeviceAvailability.current.isAvailable
         case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey, .userMiniMaxKey:
             return hasAPIKey
+        case .localOpenAICompat:
+            // `hasAPIKey` carries the local provider's readiness sentinel, which is a *usable base
+            // URL* rather than a key — the key is optional on every engine in scope.
+            return hasAPIKey
         case .backendProxy:
             return false  // not implemented in v1
         }
@@ -60,6 +64,10 @@ struct CoachFeatureFlags {
         case .offlineStub: return "offline-stub"
         case .userOpenRouterKey: return settings.openRouterModel
         case .userMiniMaxKey: return settings.minimaxModel
+        // Blank is legitimate: llama.cpp ignores the field unless started with --alias. Label it
+        // rather than leave the usage row empty.
+        case .localOpenAICompat:
+            return settings.resolvedLocalModel.isEmpty ? "local-model" : settings.resolvedLocalModel
         case .userOpenAIKey, .userGeminiKey, .backendProxy: return settings.model
         }
     }
@@ -80,6 +88,10 @@ struct CoachFeatureFlags {
             return hasAPIKey ? "Ready · \(settings.openRouterModel)" : "Add an OpenRouter key to enable."
         case .userMiniMaxKey:
             return hasAPIKey ? "Ready · \(settings.minimaxModel)" : "Add a MiniMax key to enable."
+        case .localOpenAICompat:
+            guard hasAPIKey else { return "Add your server's address to enable." }
+            let model = settings.resolvedLocalModel
+            return model.isEmpty ? "Ready · self-hosted" : "Ready · \(model)"
         case .backendProxy:
             return "Backend proxy not available yet."
         }

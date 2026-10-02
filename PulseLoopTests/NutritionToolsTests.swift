@@ -136,6 +136,19 @@ final class NutritionToolsTests: XCTestCase {
         XCTAssertEqual(Calendar.current.component(.hour, from: entry.timestamp), 12)
     }
 
+    func testLogMealAcceptsOmittedOptionalMetadata() async throws {
+        let c = try TestSupport.makeContext()
+        let context = ctx(c)
+        let args = #"{"name":"Banana","meal_type":"snack","date":"2026-07-23","calories":105}"#
+
+        let result = try await tool("log_meal").run(Data(args.utf8), context)
+
+        XCTAssertEqual((try parse(result))["ok"] as? Bool, true)
+        let entry = try XCTUnwrap(NutritionRepository.entry(id: context.loggedMealIds[0], context: c))
+        XCTAssertEqual(entry.source, .llmEstimate)
+        XCTAssertEqual(entry.confidence, .unknown)
+    }
+
     func testLogMealDatabaseSourceMapsToOffSearch() async throws {
         let c = try TestSupport.makeContext()
         let context = ctx(c)

@@ -6,6 +6,32 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Attach a photo to ask the AI Coach about it.</string>
+	<!--
+	  Cleartext HTTP for the "Local / self-hosted" AI Coach provider only.
+
+	  A user's own inference server (Ollama on 11434, llama.cpp on 8080, vLLM on 8000, SGLang on
+	  30000, LM Studio on 1234) sits on the LAN with no TLS certificate, so every request to it
+	  would otherwise fail App Transport Security.
+
+	  NSAllowsLocalNetworking is deliberately narrower than NSAllowsArbitraryLoads: it re-permits
+	  cleartext ONLY for local-network destinations, so the platform keeps enforcing HTTPS for
+	  everything else. Every cloud provider endpoint in the app is a hardcoded https:// constant
+	  and is unaffected.
+
+	  Two things this does NOT cover on its own, handled in code:
+	   - LocalEndpoint.validate rejects a plaintext URL whose host could be on the public internet,
+	     so the Settings field can explain the problem before the first request fails.
+	   - LocalHTTP sends with redirects disabled. validate() vets the URL the user typed, not the
+	     one a request ends up on, and a 307 off the LAN would resend the coach's health-context
+	     POST body in the clear.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PulseLoop connects to the AI model server you run on your own network, so coaching can happen without sending your health data to a cloud provider.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

@@ -677,6 +677,120 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertNil(RingAppVariant(family: .luckRing), "single-firmware family — no app picker")
     }
 
+    // MARK: - RWfit
+
+    /// The vendor scanner's three manufacturer-data signatures (`r5/d.java`): company `0x05D6`
+    /// (little-endian `d6 05`) + `02 00`, the same company + ASCII "AT", and company `0x06D6`
+    /// ("T-Ring"). Payload tails synthesized — no RWfit hardware has been captured yet.
+    private var rwfitMfrAdvs: [AdvertisementInfo] {
+        ["d6050200a1b2c3d4e5f6", "d6054154a1b2c3d4e5f6", "d6060200a1b2c3d4e5f6"].map {
+            AdvertisementInfo(serviceUUIDs: [], manufacturerData: bytes($0))
+        }
+    }
+
+    func testRWfitClaimedByServiceUUIDInBothForms() {
+        for uuid in ["A00A", "0000A00A-0000-1000-8000-00805F9B34FB"] {
+            let adv = AdvertisementInfo(serviceUUIDs: [CBUUID(string: uuid)], manufacturerData: nil)
+            XCTAssertTrue(RWfitCoordinator.matches(name: nil, advertisement: adv), uuid)
+            XCTAssertEqual(RingBLEClient.matchDeviceType(name: nil, advertisement: adv), .rwfit, uuid)
+        }
+    }
+
+    func testRWfitClaimedByEachManufacturerSignatureAndByNobodyElse() {
+        for adv in rwfitMfrAdvs {
+            let hex = adv.manufacturerData!.hexString
+            XCTAssertEqual(RingBLEClient.matchDeviceType(name: nil, advertisement: adv), .rwfit, hex)
+            // The full registry walk claiming `.rwfit` above already proves no earlier coordinator
+            // matched; spell the interesting neighbours out anyway so a matcher loosened later
+            // fails with a named culprit.
+            XCTAssertFalse(LuckRingCoordinator.matches(name: nil, advertisement: adv), hex)
+            XCTAssertFalse(ColmiSmartHealthCoordinator.matches(name: nil, advertisement: adv), hex)
+            XCTAssertFalse(TK5Coordinator.matches(name: nil, advertisement: adv), hex)
+        }
+    }
+
+    func testRWfitNeverClaimsNamesAndNeverCrossClaims() {
+        // Name-blind by design: rebranders rename rings (the known unit was sold as a "Colmi"),
+        // so only the service/manufacturer signals may claim — and a bare name never does.
+        for name in ["RWfit Ring", "R09_00AA", "SMART_RING", "TK18", "Colmi R02"] {
+            XCTAssertFalse(RWfitCoordinator.matches(name: name, advertisement: noAdv), name)
+        }
+        // …and the other families' real advertisements stay theirs.
+        XCTAssertFalse(RWfitCoordinator.matches(name: nil, advertisement: luckRingAdv))
+        XCTAssertFalse(RWfitCoordinator.matches(name: "TK5 24AA", advertisement: tk5Adv))
+        XCTAssertFalse(RWfitCoordinator.matches(name: "R09_00AA", advertisement: qringAdv))
+        XCTAssertFalse(RWfitCoordinator.matches(name: "R99 54DC", advertisement: smartHealthAdv))
+    }
+
+    /// Last is RWfit's documented registry slot — matching only family-exclusive signals and no
+    /// names, it can neither shadow nor be shadowed, and this pins a re-sort from moving it ahead
+    /// of coordinators whose matchers it has no need to precede.
+    func testRWfitIsRegisteredLast() {
+        XCTAssertEqual(RingBLEClient.coordinators.last?.deviceType, .rwfit)
+    }
+
+    func testRWfitCardIsNameBlindAndLimited() {
+        XCTAssertTrue(WearableModel.rwfitRing.advertisedNamePatterns.isEmpty,
+                      "no hardware captured yet — a guessed pattern would mislabel rings")
+        XCTAssertEqual(RingDeviceType.rwfit.supportLevel, .limited)
+        XCTAssertNil(RingAppVariant(family: .rwfit),
+                     "the two RWfit framings are GATT-detected, not user-declared")
+        XCTAssertNil(WearableModel.rwfitRing.imageName, "nil takes the generic-art fallback path")
+        XCTAssertEqual(WearableModel.resolve(advertisedName: nil, selectedModelID: "rwfit-ring", family: .rwfit)?.id,
+                       "rwfit-ring")
+    }
+
+    // MARK: - CRP / Colmi R11 (Da Rings app)
+
+    /// A CRP ring advertising its family-exclusive `fdda` service.
+    private var crpServiceAdv: AdvertisementInfo {
+        AdvertisementInfo(serviceUUIDs: [CRPUUIDs.serviceCBUUID], manufacturerData: nil)
+    }
+
+    /// The CRP R11 has no scan signature (generic `SMART_RING`, no service UUID), so it is reached only
+    /// by the carousel card — not by any name or (in practice) service match. The coordinator still
+    /// claims a ring that *does* advertise `fdda`, so such a ring lands on the CRP driver, not jring.
+    func testCRPClaimsOnlyTheFddaServiceAndNeverTheSmartRingName() {
+        XCTAssertTrue(CRPCoordinator.matches(name: "SMART_RING", advertisement: crpServiceAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "Unlabeled", advertisement: crpServiceAdv), .crp)
+        // The bare `SMART_RING` the CRP R11 actually advertises is claimed by jring, as before — the
+        // CRP driver is reached by the user's pick, not the scan.
+        XCTAssertFalse(CRPCoordinator.matches(name: "SMART_RING", advertisement: noAdv))
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "SMART_RING", advertisement: noAdv), .jring)
+        // jring claims the *named* `SMART_RING` even alongside the `fdda` service — it matches on the
+        // name alone — so a named CRP R11 lands on jring at scan, which is why the pick is the entry
+        // point. Only an *unlabeled* `fdda` ring is unambiguously the CRP driver's.
+        XCTAssertEqual(RingBLEClient.matchDeviceType(name: "SMART_RING", advertisement: crpServiceAdv), .jring)
+        XCTAssertFalse(JringCoordinator.matches(name: "Unlabeled", advertisement: crpServiceAdv))
+        XCTAssertFalse(ColmiCoordinator.matches(name: "Unlabeled", advertisement: crpServiceAdv))
+    }
+
+    /// The card carries no name pattern, so it resolves purely from the family + selected model id —
+    /// the explicit-pick path a `preferredFamily = .crp` connect takes.
+    func testCRPModelResolvesFromTheExplicitPick() {
+        XCTAssertEqual(WearableModel.colmiR11CRP.family, .crp)
+        XCTAssertTrue(WearableModel.colmiR11CRP.advertisedNamePatterns.isEmpty)
+        XCTAssertEqual(
+            WearableModel.resolve(advertisedName: "SMART_RING", selectedModelID: "colmi-r11-crp", family: .crp)?.id,
+            "colmi-r11-crp"
+        )
+        // The CRP coordinator serves the CRP family, so picking the card can't silently fall back to jring.
+        XCTAssertEqual(RingBLEClient.coordinatorType(preferredFamily: .crp, autoMatched: .jring).deviceType, .crp)
+    }
+
+    func testCRPSupportLevelIsLimitedAndHasNoAppPicker() {
+        XCTAssertEqual(RingDeviceType.crp.supportLevel, .limited)
+        XCTAssertEqual(WearableModel.colmiR11CRP.supportLevel, .limited)
+        XCTAssertNil(RingAppVariant(family: .crp), "single-firmware family — no app picker")
+        XCTAssertTrue(WearableModel.colmiR11CRP.appVariants.isEmpty)
+        XCTAssertEqual(RingDeviceType.crp.displayName, "Colmi / Moyoung ring (CRP)")
+    }
+
+    /// The CRP card reuses the Yawell R11 art (same physical ring as the QRing-firmware `colmiR11`).
+    func testCRPReusesYawellR11Image() {
+        XCTAssertEqual(WearableModel.colmiR11CRP.imageName, WearableModel.yawellR11.imageName)
+    }
+
     // MARK: - Support level
 
     func testSupportLevelIsPerFamily() {
@@ -686,11 +800,15 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertEqual(RingDeviceType.colmiSmartHealth.supportLevel, .full)
     }
 
-    /// Only unproven families get a badge — the TK5 (never connected on hardware) and the LuckRing
-    /// family (only the TK18 unit is proven). The SmartHealth-Colmi graduated to `.full` once an R99
-    /// ran against the driver on hardware, so neither Colmi picker position wears a badge anymore.
+    /// Only unproven families get a badge — the TK5 (never connected on hardware), the LuckRing
+    /// family (only the TK18 unit is proven), and RWfit (reconstructed from decompiled source, no
+    /// hardware seen yet). The SmartHealth-Colmi graduated to `.full` once an R99 ran against the
+    /// driver on hardware, so neither Colmi picker position wears a badge anymore.
     func testLimitedSupportFamiliesCarryTheBadge() {
-        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.luckRingTK18.id]
+        let limitedByDefault: Set<String> = [
+            WearableModel.tk5.id, WearableModel.luckRingTK18.id, WearableModel.rwfitRing.id,
+            WearableModel.colmiR11CRP.id,
+        ]
         for model in WearableModel.catalog {
             let expected: WearableSupportLevel = limitedByDefault.contains(model.id) ? .limited : .full
             XCTAssertEqual(model.supportLevel, expected, model.displayName)

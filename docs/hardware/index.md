@@ -76,6 +76,17 @@ section breaks the hardware down by manufacturer.
 
     [:octicons-arrow-right-24: LuckRing / TK18](luckring.md)
 
+-   :material-flask-outline: __RWfit rings__
+
+    ---
+
+    🧪 Limited. The RWfit-app (`com.rw.revivalfit`) family — one `A00A` GATT,
+    **two wire protocols** (legacy `0x7E` / JieLi `0xAB`), rebuilt from the
+    vendor's own source with their cooperation. Often rebranded; the known
+    field unit was sold as a "Colmi".
+
+    [:octicons-arrow-right-24: RWfit rings](rwfit.md)
+
 -   :material-help-circle-outline: __SIMSONLAB__
 
     ---
@@ -208,6 +219,7 @@ Multiple hardware platforms span from $7 commodity rings to $350 premium devices
 | **[TK5](tk5.md)** | JieLi (part ❓) | Yucheng YCBT (`be940`) | SmartHealth | ❓ | 🧪 App (limited) |
 | **[R10M / LittleMeatball](r10m.md)** | ❓ | Yucheng YCBT (`be940`) | SmartHealth | $15–30 | ✅ App (validated on FW 2.32) |
 | **[LuckRing / TK18](luckring.md)** | ❓ (Coolwear/Kewo OEM) | Custom "K6" (`F618`) | LuckRing | ~$10 | 🧪 App (limited) |
+| **[RWfit rings](rwfit.md)** | ❓ (JieLi on the `0xAB` line) | Legacy `0x7E` / JieLi `0xAB` (`A00A`) | RWfit | ❓ | 🧪 App (limited, vendor-assisted) |
 | **[SIMSONLAB](simsonlab.md)** | Phyplus PHY6222 | Unknown | SIMSONLAB app | ~$10–20 | ❌ |
 
 ### Premium Rings

@@ -180,7 +180,12 @@ final class ActivityDaily {
     var syncedAt: Date?
     var createdAt: Date
     var updatedAt: Date
-    
+    /// On-device NET active-energy estimate (workouts + HR segments + step cadence), written by
+    /// `DailyCalorieEstimator`. Device-reported `calories` always wins at read time; the displayed
+    /// total adds the BMR baseline at read. Optional/defaulted for additive lightweight migration —
+    /// same pattern as `UserProfile`'s physiology fields.
+    var estimatedActiveCalories: Double? = nil
+
     init(
         id: UUID = UUID(),
         date: Date,

@@ -15,6 +15,9 @@ enum CoachClientResolver {
         geminiKeyStore: APIKeyStore,
         openRouterKeyStore: APIKeyStore,
         minimaxKeyStore: APIKeyStore,
+        // Defaulted so the four existing call sites don't each have to learn about a provider
+        // whose key is optional anyway.
+        localKeyStore: APIKeyStore = LocalLLMKeychainStore(),
         openAIClientFactory: (String) -> ResponsesClient = { OpenAIResponsesClient(apiKey: $0) }
     ) -> (key: String?, client: ResponsesClient) {
         switch settings.providerMode {
@@ -31,6 +34,7 @@ enum CoachClientResolver {
                 settings.providerMode, settings: settings,
                 openAIKeyStore: openAIKeyStore, geminiKeyStore: geminiKeyStore,
                 openRouterKeyStore: openRouterKeyStore, minimaxKeyStore: minimaxKeyStore,
+                localKeyStore: localKeyStore,
                 openAIClientFactory: openAIClientFactory
             )
         }
@@ -46,6 +50,7 @@ enum CoachClientResolver {
         geminiKeyStore: APIKeyStore,
         openRouterKeyStore: APIKeyStore,
         minimaxKeyStore: APIKeyStore,
+        localKeyStore: APIKeyStore,
         openAIClientFactory: (String) -> ResponsesClient
     ) -> (key: String?, client: ResponsesClient) {
         switch mode {
@@ -62,6 +67,24 @@ enum CoachClientResolver {
         case .userMiniMaxKey:
             let key = (try? minimaxKeyStore.readKey()) ?? nil
             return (key, MiniMaxClient(apiKey: key ?? "", model: settings.minimaxModel))
+        case .localOpenAICompat:
+            // Readiness is a base URL that would actually work — `validate`, not "non-empty".
+            // Settings persists the field as the user types, so a non-empty check would flip the
+            // coach to "Active" on the first character and every turn would then fail inside
+            // `send()` with the same URL error the Settings field is already showing inline.
+            // The key may legitimately be absent and is passed through as nil so the client omits
+            // the Authorization header entirely.
+            let baseURL = settings.resolvedLocalBaseURL
+            let key = (try? localKeyStore.readKey()) ?? nil
+            let ready = LocalEndpoint.validate(baseURL) == nil ? baseURL : nil
+            return (ready, LocalOpenAICompatClient(
+                baseURL: baseURL,
+                model: settings.resolvedLocalModel,
+                apiKey: key,
+                toolCallingEnabled: settings.localToolCalling,
+                structuredOutput: settings.localStructuredOutput,
+                maxOutputTokens: settings.localMaxTokens > 0 ? settings.localMaxTokens : nil,
+                readTimeoutSeconds: settings.localTimeoutSeconds))
         default:
             // userOpenAIKey / offlineStub / backendProxy (and appleOnDevice never
             // reaches here) all use the OpenAI key + factory.

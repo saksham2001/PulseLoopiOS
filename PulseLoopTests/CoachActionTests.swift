@@ -51,6 +51,19 @@ final class CoachActionTests: XCTestCase {
         XCTAssertEqual(sessions.first?.type, "run")
     }
 
+    func testCreateSessionAcceptsOmittedMetadataAndTwelveHourTime() async throws {
+        let c = try TestSupport.makeContext()
+        let t = try tool("create_activity_session_from_description", c)
+        let args = #"{"activity_type":"run","date":"2026-06-01","start_time":"7:00 PM","duration_min":20}"#
+
+        let result = try await t.run(Data(args.utf8), ctx(c))
+
+        XCTAssertEqual((try parse(result))["created"] as? Bool, true)
+        let session = try XCTUnwrap(ActivityRepository.sessions(context: c).first)
+        XCTAssertEqual(Calendar.current.component(.hour, from: session.startedAt), 19)
+        XCTAssertNil(session.notes, "the activity service normalizes an omitted note to nil")
+    }
+
     // MARK: log_user_note → typed memory
 
     func testLogUserNoteWritesTypedMemory() async throws {

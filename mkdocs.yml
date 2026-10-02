@@ -106,6 +106,7 @@ nav:
       - iOS: getting-started/ios.md
       - Sideloading the IPA: getting-started/sideloading.md
       - Android: getting-started/android.md
+      - Local / self-hosted AI Coach: local-llm-coach.md
   - Hardware:
       - Overview: hardware/index.md
       - Jring / 56ff: hardware/jring.md
@@ -113,6 +114,7 @@ nav:
       - R10M / LittleMeatball: hardware/r10m.md
       - TK5 / SmartHealth: hardware/tk5.md
       - LuckRing / TK18: hardware/luckring.md
+      - RWfit rings: hardware/rwfit.md
       - SIMSONLAB: hardware/simsonlab.md
       - Premium Rings: hardware/premium.md
   - Platforms:

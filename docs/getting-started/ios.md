@@ -38,7 +38,9 @@ to request an invite, or ask on the [Discord](https://discord.gg/t9y85ebaKD).
   hardware, so the simulator can't reach the ring.
 - A compatible `56ff` or Colmi/Yawell BLE ring (see
   [supported rings](../hardware/index.md)).
-- An **OpenAI or Gemini API key** — only needed for the AI Coach features.
+- An AI provider for the optional Coach. Apple's on-device model and a
+  [local / self-hosted server](../local-llm-coach.md) need no cloud API key;
+  hosted providers use the key from that provider.
 
 ### Run it
 
@@ -64,9 +66,9 @@ to request an invite, or ask on the [Discord](https://discord.gg/t9y85ebaKD).
 4. Build & run (`⌘R`).
 5. On first launch, complete onboarding, then keep the ring nearby — the app
    auto-scans and connects when Bluetooth powers on.
-6. To enable the Coach, open **Settings → Coach** and paste your API key, then
-   pick a provider and model. The key is stored in the iOS Keychain and never
-   leaves the device except to call the model you chose.
+6. To enable the Coach, open **Settings → AI Coach**, choose a provider and
+   model, then follow its setup. Cloud-provider keys and optional local-server
+   keys are stored in the iOS Keychain.
 
 ### Demo data (no ring required)
 

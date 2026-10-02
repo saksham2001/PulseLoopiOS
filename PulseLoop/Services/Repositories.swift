@@ -532,9 +532,11 @@ enum DebugRepository {
     }
 
     /// Cap the raw-packet debug table to its most recent `maxRows` rows, deleting older ones.
-    /// `RawPacketRow` is a DEBUG-only byte trace that otherwise grows without bound (one row per
-    /// BLE packet); this keeps it a rolling window so it can't bloat the store or slow the Debug
-    /// feed. Does NOT save — the caller batches the save with its own writes.
+    /// `RawPacketRow` is a byte trace (DEBUG builds always; release only under the Privacy & Data
+    /// capture opt-in) that otherwise grows without bound (one row per BLE packet); this keeps it a
+    /// rolling window so it can't bloat the store or slow the Debug feed. `maxRows: 0` is the
+    /// "clear captured packets" action. Does NOT save — the caller batches the save with its own
+    /// writes.
     @MainActor
     static func pruneRawPackets(maxRows: Int, context: ModelContext) {
         var descriptor = FetchDescriptor<RawPacketRow>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])

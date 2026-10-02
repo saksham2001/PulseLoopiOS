@@ -195,6 +195,9 @@ final class WidgetSnapshotPublisher {
     private func activityPayload(_ summary: TodaySummary, units: UnitsPreference) -> WidgetActivityPayload {
         let caloriesAvailable = MetricsService.isVisible(.calories, context: modelContext, scope: .today)
         let calories = caloriesAvailable ? summary.calories : nil
+        // Ring progress measures the active-energy portion vs the active-energy goal (matches
+        // ActivityTileView); the text shows the display value (device or estimated total).
+        let activeCalories = caloriesAvailable ? summary.activeCalories : nil
         let distanceText = summary.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value }
         return WidgetActivityPayload(
             steps: summary.steps.map(Double.init),
@@ -202,7 +205,7 @@ final class WidgetSnapshotPublisher {
             distanceDisplay: distanceText.flatMap(Double.init),
             distanceGoalDisplay: Double(UnitsFormatter.distance(meters: summary.goals.distanceMetersDaily, units: units).value) ?? 0,
             distanceUnitLabel: units == .imperial ? "MI" : "KM",
-            calories: calories,
+            calories: activeCalories,
             caloriesGoal: Double(summary.goals.caloriesDaily),
             stepsText: summary.steps.map { $0.formatted() },
             distanceText: distanceText,
