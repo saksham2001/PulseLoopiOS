@@ -91,9 +91,10 @@ enum SeedData {
             let light = blocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
             let deep = blocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
             let awake = blocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+            let rem = blocks.filter { $0.stage == .rem }.reduce(0) { $0 + $1.durationMinutes }
             let summary = SleepSummary(
                 session: SleepSession(date: dayDate, startAt: startAt, endAt: wake, totalMinutes: totalMin),
-                lightMinutes: light, deepMinutes: deep, awakeMinutes: awake, blocks: blocks
+                lightMinutes: light, deepMinutes: deep, awakeMinutes: awake, remMinutes: rem, blocks: blocks
             )
             let score = SleepScore.calculate(summary)
             let session = SleepSession(date: dayDate, startAt: startAt, endAt: wake, totalMinutes: totalMin, score: score.score, syncedAt: wake)
@@ -111,9 +112,10 @@ enum SeedData {
                 let napLight = napBlocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
                 let napDeep = napBlocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
                 let napAwake = napBlocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+                let napRem = napBlocks.filter { $0.stage == .rem }.reduce(0) { $0 + $1.durationMinutes }
                 let napSummary = SleepSummary(
                     session: SleepSession(date: dayDate, startAt: napStart, endAt: napEnd, totalMinutes: nap.minutes),
-                    lightMinutes: napLight, deepMinutes: napDeep, awakeMinutes: napAwake, blocks: napBlocks
+                    lightMinutes: napLight, deepMinutes: napDeep, awakeMinutes: napAwake, remMinutes: napRem, blocks: napBlocks
                 )
                 let napScore = SleepScore.calculate(napSummary)
                 let napSession = SleepSession(date: dayDate, startAt: napStart, endAt: napEnd, totalMinutes: nap.minutes, score: napScore.score, syncedAt: napEnd)

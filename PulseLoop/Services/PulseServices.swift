@@ -637,11 +637,13 @@ enum SleepService {
         let light = blocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
         let deep = blocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
         let awake = blocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+        let rem = blocks.filter { $0.stage == .rem }.reduce(0) { $0 + $1.durationMinutes }
         return SleepSummary(
             session: session,
             lightMinutes: light,
             deepMinutes: deep,
             awakeMinutes: awake,
+            remMinutes: rem,
             blocks: includeStages ? blocks : []
         )
     }
