@@ -631,17 +631,45 @@ enum SleepService {
     static func summary(for session: SleepSession, context: ModelContext) -> SleepSummary {
         summary(for: session, includeStages: true, context: context)
     }
+
+    /// How many days back to look for the bedtime baseline. Wider than the 14 nights actually used
+    /// so a fortnight with a few unworn nights still reaches the 7-night floor.
+    static let bedtimeBaselineLookbackDays = 30
+
+    /// The user's usual bedtime as of `night`, or nil when there isn't a week of prior nights.
+    ///
+    /// A windowed predicate fetch rather than `SleepRepository.sessions`, which reads the whole
+    /// table. Stage blocks aren't loaded — only `startAt` matters here.
+    static func bedtimeBaseline(before night: Date, context: ModelContext) -> BedtimeBaseline? {
+        let start = Calendar.current.date(byAdding: .day, value: -bedtimeBaselineLookbackDays, to: night) ?? night
+        let descriptor = FetchDescriptor<SleepSession>(
+            predicate: #Predicate { $0.date >= start && $0.date < night },
+            sortBy: [SortDescriptor(\.date, order: .reverse)]
+        )
+        let sessions = ((try? context.fetch(descriptor)) ?? []).map {
+            SleepSummary(session: $0, lightMinutes: 0, deepMinutes: 0, awakeMinutes: 0, remMinutes: 0, blocks: [])
+        }
+        // Reuse the collapse so a day's nap can't contribute a second "bedtime"; `for:` needs a
+        // night to compare against, and every fetched session is already strictly before `night`.
+        let anchor = SleepSummary(
+            session: SleepSession(date: night, startAt: night, endAt: night, totalMinutes: 0),
+            lightMinutes: 0, deepMinutes: 0, awakeMinutes: 0, remMinutes: 0, blocks: []
+        )
+        return SleepInsights.bedtimeBaseline(for: anchor, among: sessions)
+    }
     
     private static func summary(for session: SleepSession, includeStages: Bool, context: ModelContext) -> SleepSummary {
         let blocks = SleepRepository.blocks(sessionId: session.id, context: context)
         let light = blocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
         let deep = blocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
         let awake = blocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+        let rem = blocks.filter { $0.stage == .rem }.reduce(0) { $0 + $1.durationMinutes }
         return SleepSummary(
             session: session,
             lightMinutes: light,
             deepMinutes: deep,
             awakeMinutes: awake,
+            remMinutes: rem,
             blocks: includeStages ? blocks : []
         )
     }

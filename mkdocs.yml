@@ -122,6 +122,7 @@ nav:
   - Project:
       - Roadmap: project/roadmap.md
       - Architecture: project/architecture.md
+      - Sleep score: project/sleep-score.md
       - Contributing: project/contributing.md
       - Contributors: project/contributors.md
       - Privacy: project/privacy.md

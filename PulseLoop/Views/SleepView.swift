@@ -53,7 +53,10 @@ struct SleepView: View {
 
                 if range == .day {
                     dayNavHeader(shownDay: SleepService.dayReferenceNight(now: effectiveNow))
-                    dayView(summary: summary, activitySteps: activitySteps, isToday: dayOffset == 0)
+                    dayView(summary: summary, activitySteps: activitySteps, isToday: dayOffset == 0,
+                            bedtimeBaseline: SleepService.bedtimeBaseline(
+                                before: SleepService.dayReferenceNight(now: effectiveNow), context: modelContext
+                            ))
                         .id(dayOffset)
                         .transition(reduceMotion ? .opacity : .push(from: dayNavEdge))
                 } else {
@@ -107,7 +110,8 @@ struct SleepView: View {
     // MARK: Day
 
     @ViewBuilder
-    private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool) -> some View {
+    private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool,
+                         bedtimeBaseline: BedtimeBaseline?) -> some View {
         let sessions = SleepInsights.validSessions(summary.sessions).sorted { $0.session.startAt < $1.session.startAt }
         if sessions.isEmpty {
             // The "wear your ring" explainer lives in the architecture card ONLY — the hero and
@@ -121,14 +125,14 @@ struct SleepView: View {
         } else {
             // The primary (longest) session drives the day-level coach fallback.
             let primary = sessions.max { $0.session.totalMinutes < $1.session.totalMinutes } ?? sessions[0]
-            let primaryScore = SleepScore.calculate(primary)
+            let primaryScore = SleepScore.calculate(primary, bedtimeBaseline: bedtimeBaseline)
             let dayFallback = SleepInsights.dayCoach(primary, score: primaryScore.score, awakePct: primaryScore.awakePct, deepPct: primaryScore.deepPct, activitySteps: activitySteps)
 
             if sessions.count == 1 {
                 // Single session: render exactly as before, no carousel chrome.
-                sessionPage(sessions[0])
+                sessionPage(sessions[0], bedtimeBaseline: bedtimeBaseline)
             } else {
-                sleepCarousel(sessions: sessions)
+                sleepCarousel(sessions: sessions, bedtimeBaseline: bedtimeBaseline)
             }
             // The LLM day summary describes last night only; on a past day fall back to the
             // scripted coach (deterministically computed from that day's own primary session).
@@ -138,11 +142,11 @@ struct SleepView: View {
 
     /// One session's stack: Hero + hypnogram VisualizationCard + stage cards.
     @ViewBuilder
-    private func sessionPage(_ s: SleepSummary) -> some View {
-        let score = SleepScore.calculate(s)
+    private func sessionPage(_ s: SleepSummary, bedtimeBaseline: BedtimeBaseline?) -> some View {
+        let score = SleepScore.calculate(s, bedtimeBaseline: bedtimeBaseline)
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep",
-            value: SleepFormat.duration(s.session.totalMinutes),
+            value: SleepFormat.duration(score.asleepMinutes),
             support: "\(SleepFormat.clockTime(s.session.startAt)) to \(SleepFormat.clockTime(s.session.endAt))",
             score: score.score,
             scoreLabel: score.label.rawValue
@@ -154,14 +158,15 @@ struct SleepView: View {
         SleepStageSummaryCardsView(
             deep: SleepFormat.duration(s.deepMinutes),
             light: SleepFormat.duration(s.lightMinutes),
-            awake: SleepFormat.duration(s.awakeMinutes)
+            awake: SleepFormat.duration(s.awakeMinutes),
+            rem: s.hasRemSignal ? SleepFormat.duration(s.remMinutes) : nil
         )
     }
 
     /// Horizontal paged carousel across multiple sleep sessions in one day.
     /// Sizes to the tallest visible page (no fixed height) and shows a dot row.
     @ViewBuilder
-    private func sleepCarousel(sessions: [SleepSummary]) -> some View {
+    private func sleepCarousel(sessions: [SleepSummary], bedtimeBaseline: BedtimeBaseline?) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(sessions.enumerated()), id: \.element.session.id) { idx, s in
@@ -172,7 +177,7 @@ struct SleepView: View {
                             .textCase(.uppercase)
                             .kerning(0.5)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        sessionPage(s)
+                        sessionPage(s, bedtimeBaseline: bedtimeBaseline)
                     }
                     .containerRelativeFrame(.horizontal)
                     .id(idx)
@@ -444,7 +449,8 @@ struct SleepView: View {
             prefix: "Avg ",
             deep: stageAvg.map { SleepFormat.duration($0.deep) } ?? "—",
             light: stageAvg.map { SleepFormat.duration($0.light) } ?? "—",
-            awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—"
+            awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—",
+            rem: stageAvg?.rem.map { SleepFormat.duration($0) }
         )
         summaryCard(rangeSummary(range), fallback: coach)
     }
