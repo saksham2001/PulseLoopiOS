@@ -120,6 +120,9 @@ final class TK5Coordinator: WearableCoordinator {
     let bitmapGatedCapabilities: Set<WearableCapability> = [
         .temperature, .bloodPressure, .manualBloodPressure,
         .stress, .fatigue, .bloodSugar,
+        // The HRV panel (SDNN/RMSSD/pNN50/LF/HF) rides `IS_HAS_PRESSURE` with stress and fatigue —
+        // all three are fields of the one `05 33` body-data record that bit gates.
+        .hrvDetail,
     ]
 
     let iconSystemName = "circle.circle.fill"

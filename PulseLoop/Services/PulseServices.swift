@@ -197,32 +197,39 @@ enum MetricsService {
         DeviceRepository.devices(context: context)
     }
     
+    /// Ordinary resting-adult ranges per kind, for demo/debug rows. A table rather than a `switch`
+    /// so adding a `MeasurementKind` doesn't push `insertMockMeasurement` further past SwiftLint's
+    /// cyclomatic-complexity gate — and so the whole set can be read at a glance.
+    ///
+    /// `wholeNumber` marks the kinds whose display precision is integral; only temperature and the
+    /// LF/HF ratio carry a decimal.
+    static let mockValueRanges: [MeasurementKind: (range: ClosedRange<Double>, wholeNumber: Bool)] = [
+        .heartRate: (62...86, true),
+        .spo2: (96...99, true),
+        .stress: (20...70, true),
+        .hrv: (30...90, true),
+        .temperature: (33...36, false),
+        .bloodPressureSystolic: (110...130, true),
+        .bloodPressureDiastolic: (70...85, true),
+        .fatigue: (20...70, true),
+        .bloodSugar: (85...110, true),
+        .respiratoryRate: (12...18, true),
+        .vo2max: (35...50, true),
+        // The HRV panel, so demo data exercises the Autonomic screen with something plausible.
+        .sdnn: (40...110, true),
+        .rmssd: (25...85, true),
+        .pnn50: (5...35, true),
+        .lfPower: (400...1600, true),
+        .hfPower: (300...1400, true),
+        .lfHfRatio: (0.6...2.8, false),
+    ]
+
     static func insertMockMeasurement(kind: MeasurementKind, context: ModelContext) {
-        let value: Double
-        switch kind {
-        case .heartRate:
-            value = Double(Int.random(in: 62...86))
-        case .spo2:
-            value = Double(Int.random(in: 96...99))
-        case .stress:
-            value = Double(Int.random(in: 20...70))
-        case .hrv:
-            value = Double(Int.random(in: 30...90))
-        case .temperature:
-            value = Double.random(in: 33...36)
-        case .bloodPressureSystolic:
-            value = Double(Int.random(in: 110...130))
-        case .bloodPressureDiastolic:
-            value = Double(Int.random(in: 70...85))
-        case .fatigue:
-            value = Double(Int.random(in: 20...70))
-        case .bloodSugar:
-            value = Double(Int.random(in: 85...110))
-        case .respiratoryRate:
-            value = Double(Int.random(in: 12...18))
-        case .vo2max:
-            value = Double(Int.random(in: 35...50))
-        }
+        // A kind absent from the table is a programming error, not a runtime case — every one is
+        // listed, and `testEveryMeasurementKindHasAMockRange` fails if a new one isn't.
+        let spec = mockValueRanges[kind] ?? (0...100, true)
+        let raw = Double.random(in: spec.range)
+        let value = spec.wholeNumber ? raw.rounded() : raw
         let row = MeasurementRepository.insertMeasurement(
             kind: kind,
             value: value,

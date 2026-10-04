@@ -574,7 +574,7 @@ final class PairingMatchingTests: XCTestCase {
 
         XCTAssertEqual(refined, [
             .heartRate, .spo2, .spo2History, .steps, .battery,
-            .hrv, .manualHrv, .bloodPressure, .manualBloodPressure,
+            .hrv, .manualHrv, .hrvDetail, .bloodPressure, .manualBloodPressure,
             .temperature, .stress, .fatigue, .bloodSugar,
             .sleep, .remSleep,
             .manualHeartRate, .manualSpo2,
@@ -588,17 +588,18 @@ final class PairingMatchingTests: XCTestCase {
     /// `ISHASFATIGUE` in the SDK; what there is, is `DataSyncUtils` gating the *entire* body-data query
     /// (`05 33` — the record that carries both scores, as its `pressure` and `body` fields) on
     /// `IS_HAS_PRESSURE`. A ring with that bit clear is never even asked for the record, so it can no more
-    /// produce a fatigue score than a stress one. The two therefore arrive and depart together.
+    /// produce a fatigue score than a stress one. The two therefore arrive and depart together — as does
+    /// `.hrvDetail`, the HRV panel that lives in the same record's bytes @14–24.
     func testFatigueAndStressAreClaimedTogetherOrNotAtAll() {
         let tk5 = TK5Coordinator()
         var bodyDataRing = [UInt8](repeating: 0, count: 27)
         bodyDataRing[22] = 1 << 6                                        // IS_HAS_PRESSURE
 
         let claimed = YCBTSupportFunction.capabilities(from: bodyDataRing)
-        XCTAssertEqual(claimed, [.stress, .fatigue])
+        XCTAssertEqual(claimed, [.stress, .fatigue, .hrvDetail])
 
         let refined = tk5.refinedCapabilities(bitmapDerived: claimed)
-        XCTAssertEqual(refined, tk5.capabilities.union([.stress, .fatigue]))
+        XCTAssertEqual(refined, tk5.capabilities.union([.stress, .fatigue, .hrvDetail]))
         // Never one without the other, whichever way the bit falls.
         XCTAssertEqual(refined.contains(.stress), refined.contains(.fatigue))
         let silent = tk5.refinedCapabilities(bitmapDerived: [])

@@ -53,6 +53,16 @@ enum HealthKitTypeMappings {
             // HealthKit has both (`respiratoryRate`, `vo2Max`), but exporting them needs new share
             // types plus their own per-type toggles to keep the sync opt-in per metric. Follow-up.
             return nil
+        case .rmssd, .pnn50, .lfPower, .hfPower, .lfHfRatio:
+            // HealthKit models HRV as a single `heartRateVariabilitySDNN` type and has nothing for
+            // RMSSD, pNN50 or spectral power. There is no honest destination for these.
+            return nil
+        case .sdnn:
+            // The one that *could* map — `heartRateVariabilitySDNN` — is already occupied by the
+            // ring's `hrv` scalar. Whether that scalar simply *is* the ring's SDNN is unverified, so
+            // exporting both would either double-report the same measurement or silently disagree
+            // with itself. Left unmapped until a hardware session settles which is which.
+            return nil
         }
     }
 

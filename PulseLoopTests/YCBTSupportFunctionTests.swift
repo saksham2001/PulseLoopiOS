@@ -46,7 +46,9 @@ final class YCBTSupportFunctionTests: XCTestCase {
             (15, 2, [.manualBloodPressure]),// ISHASTESTBLOOD
             (15, 3, [.manualSpo2]),         // ISHASTESTSPO2
             (17, 3, [.bloodSugar]),         // ISHASBLOODSUGAR
-            (22, 6, [.stress, .fatigue]),   // IS_HAS_PRESSURE — the whole `05 33` record
+            // IS_HAS_PRESSURE gates the whole `05 33` record, so it yields every capability whose
+            // data lives in it: stress (@8–9), fatigue (@10–11) and the HRV panel (@14–24).
+            (22, 6, [.stress, .fatigue, .hrvDetail]),
             (23, 0, [.manualHrv]),          // IS_HAS_HRV_MEASUREMENT
         ]
         for entry in expected {
@@ -80,7 +82,7 @@ final class YCBTSupportFunctionTests: XCTestCase {
             YCBTSupportFunction.capabilities(from: allOnes),
             [
                 .steps, .sleep, .heartRate, .bloodPressure, .spo2, .hrv, .findDevice, .temperature,
-                .bloodSugar, .stress, .fatigue,
+                .bloodSugar, .stress, .fatigue, .hrvDetail,
                 .manualHeartRate, .manualBloodPressure, .manualSpo2, .manualHrv,
             ]
         )
@@ -154,7 +156,7 @@ final class YCBTSupportFunctionTests: XCTestCase {
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 22, set: [(22, 6)])), [])
         XCTAssertEqual(
             YCBTSupportFunction.capabilities(from: bitmap(length: 23, set: [(22, 6)])),
-            [.stress, .fatigue]
+            [.stress, .fatigue, .hrvDetail]
         )
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 23, set: [(23, 0)])), [])
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 24, set: [(23, 0)])), [.manualHrv])
@@ -249,7 +251,7 @@ final class YCBTSupportFunctionTests: XCTestCase {
         guard case let .supportFunctions(claimed) = events.first else {
             return XCTFail("expected .supportFunctions, got \(events)")
         }
-        XCTAssertEqual(claimed, [.heartRate, .spo2, .stress, .fatigue])
+        XCTAssertEqual(claimed, [.heartRate, .spo2, .stress, .fatigue, .hrvDetail])
     }
 
     /// The `02 1b` reply reaches the debug feed with its value (`InnerUtils.isJieLiChipScheme`: 3/4/5).

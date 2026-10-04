@@ -196,6 +196,9 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     let bitmapGatedCapabilities: Set<WearableCapability> = [
         .temperature, .bloodPressure, .stress, .bloodSugar, .manualBloodPressure,
         .hrv, .manualHrv,
+        // The HRV panel (SDNN/RMSSD/pNN50/LF/HF) rides `IS_HAS_PRESSURE` with stress — all of them
+        // are fields of the one `05 33` body-data record that bit gates.
+        .hrvDetail,
     ]
 
     let iconSystemName = "circle.circle.fill"

@@ -55,7 +55,10 @@ enum SeedData {
             state: .connected,
             capabilities: [
                 .heartRate, .spo2, .steps, .sleep, .battery, .remSleep,
-                .stress, .hrv, .temperature, .bloodPressure, .bloodSugar, .fatigue
+                .stress, .hrv, .temperature, .bloodPressure, .bloodSugar, .fatigue,
+                // The demo ring is a maximal one, so `.hrvDetail` is declared here too — otherwise
+                // the Autonomic screen would be unreachable without YCBT hardware to hand.
+                .hrvDetail
             ]
         ))
 
@@ -279,6 +282,22 @@ enum SeedData {
             if day == -6 { hrv = 26 }                       // sharp dip → below baseline
             if day == -18 { hrv = 92 }                      // spike → above baseline
             add(.hrv, hrv.rounded(), hrvTs)
+
+            // The HRV panel — same overnight instant as the HRV scalar, since on a real ring they come
+            // out of the same body-data record. RMSSD and pNN50 track HRV (they measure the same
+            // parasympathetic activity), so they move with it rather than independently; LF/HF is
+            // derived from the two powers exactly as the decoder derives it.
+            let rmssd = Swift.max(8, hrv * 0.85 + sin(phase * 0.7) * 6)
+            let sdnn = Swift.max(12, hrv * 1.25 + sin(phase * 0.35) * 9)
+            let pnn50 = Swift.max(1, Swift.min(60, rmssd * 0.4 + sin(phase * 0.9) * 4))
+            let lf = 900 + sin(phase * 0.4) * 320
+            let hf = Swift.max(120, rmssd * 14 + sin(phase * 0.8) * 140)
+            add(.rmssd, rmssd.rounded(), hrvTs)
+            add(.sdnn, sdnn.rounded(), hrvTs)
+            add(.pnn50, pnn50.rounded(), hrvTs)
+            add(.lfPower, lf.rounded(), hrvTs)
+            add(.hfPower, hf.rounded(), hrvTs)
+            add(.lfHfRatio, lf / hf, hrvTs)
 
             // Blood pressure — 1 pair/day (morning). Normal→Stage 2; a couple of high days show red.
             let bpTs = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: dayStart) ?? dayStart

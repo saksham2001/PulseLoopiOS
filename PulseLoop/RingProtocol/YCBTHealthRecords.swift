@@ -177,8 +177,22 @@ enum YCBTHealthRecords {
     /// The SDK's `pressure` is the **stress** score and `body` the **fatigue** score (that is how the
     /// SmartHealth UI labels `BodyData.getPressureValue()` / `getBodyStateValue()`). This record is the
     /// proof that the ring *stores* stress rather than the app deriving it — the old TK5 capability note
-    /// said the opposite. Load index, sympathetic tone, SDNN, pNN50, RMSSD and LF/HF have no
-    /// `MeasurementKind`; they are left on the floor rather than force-fitted into one.
+    /// said the opposite.
+    ///
+    /// **The HRV panel.** SDNN, pNN50, RMSSD and the LF/HF pair are now decoded — see
+    /// `WearableCapability.hrvDetail`, which rides `IS_HAS_PRESSURE` exactly as `.stress`/`.fatigue`
+    /// do, because that one bit gates this whole record's query.
+    ///
+    /// Two fields are still deliberately left on the floor: **load index (@4–5)** and **sympathetic
+    /// tone (@12–13)** are vendor-proprietary composites with no stated scale, no unit, and no
+    /// published definition. Unlike SDNN or RMSSD there is nothing to check them against, so
+    /// surfacing them would be inventing a metric rather than reporting one.
+    ///
+    /// **`lfHf` at @24 is read but not trusted.** It is a single byte standing in for a ratio whose
+    /// real range is roughly 0.5–3, so it must carry an implicit scale factor the SDK never states.
+    /// Rather than guess it, the ratio is recomputed here from the LF and HF powers — whatever common
+    /// scale those two share cancels, so the quotient is right even though the absolute powers'
+    /// unit is inferred.
     ///
     /// Those two scores go through `score` (digit-concatenated, the app's 1…100 scale) while HRV goes
     /// through `composite` (milliseconds) — see both doc comments for why the same byte pair is read two
@@ -204,6 +218,41 @@ enum YCBTHealthRecords {
             if r.count > 16, r[16] > 0 {
                 events.append(.historyMeasurement(kind: .vo2max, value: Double(r[16]), timestamp: ts))
             }
+            events.append(contentsOf: hrvPanel(r, timestamp: ts))
+        }
+        return events
+    }
+
+    /// The HRV panel from a body-data record, guarded field by field.
+    ///
+    /// Every field sits past byte 16, so each read repeats the same `r.count` gate the VO₂max read
+    /// uses — the SDK's `length >= cursor + 25` branch for the rumoured short-prefix firmware. A `0`
+    /// is the ring's "no sample" filler for all of these, so zero means absent, not measured-as-zero.
+    /// (`RingEventBridge` allows a genuine zero for LF/HF power, but a record that reports no HRV at
+    /// all reports it as zeros across the panel, which the `> 0` gates already drop.)
+    private static func hrvPanel(_ r: [UInt8], timestamp ts: Date) -> [RingDecodedEvent] {
+        var events: [RingDecodedEvent] = []
+
+        if r.count > 15 {
+            let sdnn = YCBTBytes.u16(r, 14)
+            if sdnn > 0 { events.append(.historyMeasurement(kind: .sdnn, value: Double(sdnn), timestamp: ts)) }
+        }
+        if r.count > 17, r[17] > 0 {
+            events.append(.historyMeasurement(kind: .pnn50, value: Double(r[17]), timestamp: ts))
+        }
+        if r.count > 19 {
+            let rmssd = YCBTBytes.u16(r, 18)
+            if rmssd > 0 { events.append(.historyMeasurement(kind: .rmssd, value: Double(rmssd), timestamp: ts)) }
+        }
+
+        guard r.count > 23 else { return events }
+        let lf = YCBTBytes.u16(r, 20)
+        let hf = YCBTBytes.u16(r, 22)
+        if lf > 0 { events.append(.historyMeasurement(kind: .lfPower, value: Double(lf), timestamp: ts)) }
+        if hf > 0 { events.append(.historyMeasurement(kind: .hfPower, value: Double(hf), timestamp: ts)) }
+        // Derived rather than read from @24 — see the note on `bodyData`. Needs both halves.
+        if lf > 0, hf > 0 {
+            events.append(.historyMeasurement(kind: .lfHfRatio, value: Double(lf) / Double(hf), timestamp: ts))
         }
         return events
     }

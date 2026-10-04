@@ -53,6 +53,15 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
     // `0xbc 0x2a`). Drives the workout vitals plan: a device with no `manualSpo2` but with this
     // capability shows the latest logged value instead of pretending it can spot-measure.
     case spo2History
+
+    /// The ring reports the **HRV panel** — SDNN, RMSSD, pNN50 and the LF/HF pair — and not just the
+    /// single `hrv` scalar every family gives. Today that means the YCBT body-data record (`05 33`),
+    /// so the jring, Colmi QRing and LuckRing families never declare it and the Autonomic screen is
+    /// simply absent for them.
+    ///
+    /// Separate from `.hrv` on purpose: those two answer different questions. Every supported ring
+    /// can produce an HRV number; only these can break it down.
+    case hrvDetail
 }
 
 extension Set where Element == WearableCapability {

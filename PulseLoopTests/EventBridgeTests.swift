@@ -88,6 +88,7 @@ final class EventBridgeTests: XCTestCase {
             .heartRate: 70, .spo2: 97, .stress: 40, .hrv: 55, .temperature: 36.6,
             .bloodPressureSystolic: 118, .bloodPressureDiastolic: 79, .fatigue: 20,
             .bloodSugar: 99, .respiratoryRate: 14, .vo2max: 42,
+            .sdnn: 48, .rmssd: 55, .pnn50: 12, .lfPower: 1200, .hfPower: 900, .lfHfRatio: 1.33,
         ]
         let now = Date()
         for kind in MeasurementKind.allCases {
@@ -101,6 +102,25 @@ final class EventBridgeTests: XCTestCase {
                     now: now
                 ).count,
                 1, "\(kind) has no path through the history gate"
+            )
+        }
+    }
+
+    /// The demo/debug value table is keyed rather than switched, so nothing makes it exhaustive at
+    /// compile time. This does it at test time: a new `MeasurementKind` without a range would
+    /// otherwise silently seed 0–100 for a metric measured in ms² or as a ratio.
+    func testEveryMeasurementKindHasAMockRange() {
+        for kind in MeasurementKind.allCases {
+            guard let spec = MetricsService.mockValueRanges[kind] else {
+                XCTFail("new MeasurementKind \(kind) — add a plausible demo range to mockValueRanges")
+                continue
+            }
+            XCTAssertTrue(
+                RingEventBridge.events(
+                    for: .historyMeasurement(kind: kind, value: spec.range.lowerBound, timestamp: Date()),
+                    now: Date()
+                ).count == 1,
+                "\(kind)'s demo floor is outside its own persistence gate"
             )
         }
     }

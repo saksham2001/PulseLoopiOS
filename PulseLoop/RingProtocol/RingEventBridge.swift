@@ -36,6 +36,20 @@ enum RingEventBridge {
     static let respiratoryRateRange: ClosedRange<Int> = 4...60
     /// Plausible VO₂max, in mL/kg/min (sedentary floor to elite-athlete ceiling).
     static let vo2maxRange: ClosedRange<Int> = 10...90
+    /// Plausible SDNN and RMSSD, in milliseconds — one gate, because they are the same quantity
+    /// measured two ways and share a range. Wider than `hrvRange` on purpose: that gate covers the
+    /// ring's single summary scalar, whereas a short-window SDNN over a restful night can
+    /// legitimately run higher. The ceiling is well past any physiological value and exists only to
+    /// drop a misframed u16.
+    static let beatIntervalMsRange: ClosedRange<Int> = 1...500
+    /// pNN50 is a percentage of successive beat intervals differing by more than 50 ms.
+    static let pnn50Range: ClosedRange<Double> = 0...100
+    /// LF and HF spectral power, in ms². Zero is a real reading (no power in the band), so the floor
+    /// is inclusive; the ceiling is a misframe guard, not a physiological claim.
+    static let spectralPowerRange: ClosedRange<Double> = 0...50_000
+    /// LF/HF ratio. Bounded away from zero because the ring reports it as a scaled integer and `0`
+    /// is its "no sample" filler rather than a real balance.
+    static let lfHfRatioRange: ClosedRange<Double> = 0.01...20
     /// Sanity ceilings for one intraday activity bucket (~15 min): well above any human cadence so
     /// only clearly-misframed packets are rejected.
     static let maxBucketSteps = 5000
@@ -175,6 +189,10 @@ enum RingEventBridge {
         case .bloodSugar: return bloodSugarRange.contains(value)
         case .respiratoryRate: return respiratoryRateRange.contains(Int(value))
         case .vo2max: return vo2maxRange.contains(Int(value))
+        case .sdnn, .rmssd: return beatIntervalMsRange.contains(Int(value))
+        case .pnn50: return pnn50Range.contains(value)
+        case .lfPower, .hfPower: return spectralPowerRange.contains(value)
+        case .lfHfRatio: return lfHfRatioRange.contains(value)
         }
     }
 

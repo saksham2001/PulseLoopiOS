@@ -217,6 +217,65 @@ final class YCBTHealthRecordsTests: XCTestCase {
         XCTAssertEqual(timestamps(in: events).first, YCBTBytes.date(836_694_044))
     }
 
+    /// The HRV panel out of the same captured record: `sdnn:u16@14` = 48 ms, `pnn50@17` = 12 %,
+    /// `rmssd:u16@18` = 55 ms, `lf:u16@20` = 1200, `hf:u16@22` = 900. All five land in ordinary adult
+    /// resting ranges, which is the corroboration that the offsets are right — a misread would put
+    /// them in the thousands or at zero.
+    func testBodyDataDecodesTheHrvPanel() {
+        let events = YCBTHealthRecords.bodyData(capturedBodyRecord)
+        XCTAssertEqual(values(.sdnn, in: events).first ?? 0, 48, accuracy: 0.001)
+        XCTAssertEqual(values(.pnn50, in: events).first ?? 0, 12, accuracy: 0.001)
+        XCTAssertEqual(values(.rmssd, in: events).first ?? 0, 55, accuracy: 0.001)
+        XCTAssertEqual(values(.lfPower, in: events).first ?? 0, 1200, accuracy: 0.001)
+        XCTAssertEqual(values(.hfPower, in: events).first ?? 0, 900, accuracy: 0.001)
+        XCTAssertEqual(MeasurementKind.rmssd.unit, "ms")
+        XCTAssertEqual(MeasurementKind.pnn50.unit, "%")
+        XCTAssertEqual(MeasurementKind.lfHfRatio.unit, "", "a ratio of two powers is dimensionless")
+    }
+
+    /// **The cross-check that settles byte 24.** The record carries its own `lfHf` at @24, a single
+    /// byte standing in for a ratio whose real range is ~0.5–3 — so it must be scaled, and the SDK
+    /// never says by how much. PulseLoop doesn't guess: it recomputes the ratio from the LF and HF
+    /// powers, whose shared (and also unstated) scale cancels in the quotient.
+    ///
+    /// Here the two agree — @24 is `0x0d` = 13, i.e. 1.3 at a ÷10 scale, against 1200 ÷ 900 = 1.33 —
+    /// which corroborates the whole panel's offsets from real captured bytes rather than inference.
+    /// The derived value is still the one published, because it stays right even on a firmware that
+    /// scales @24 differently.
+    func testLfHfRatioIsDerivedFromThePowersAndAgreesWithTheRecordsOwnByte() {
+        let events = YCBTHealthRecords.bodyData(capturedBodyRecord)
+        let derived = values(.lfHfRatio, in: events).first ?? 0
+        XCTAssertEqual(derived, 1200.0 / 900.0, accuracy: 0.0001)
+
+        let onWireTenths = Double(capturedBodyRecord[24]) / 10
+        XCTAssertEqual(derived, onWireTenths, accuracy: 0.05,
+                       "the derived ratio agrees with the record's own lfHf byte at a ÷10 scale")
+    }
+
+    /// A record reporting no HRV at all fills the whole panel with zeros, and zero is the ring's
+    /// "no sample" filler — not a measurement of zero variability.
+    func testAllZeroHrvPanelPublishesNothing() {
+        var record = capturedBodyRecord
+        for index in 14...24 { record[index] = 0 }
+        let events = YCBTHealthRecords.bodyData(record)
+
+        for kind in MeasurementKind.autonomicKinds {
+            XCTAssertTrue(values(kind, in: events).isEmpty, "\(kind) should be absent, not zero")
+        }
+        XCTAssertEqual(values(.hrv, in: events).count, 1, "the HRV scalar at @6 is unaffected")
+    }
+
+    /// LF present but HF missing can't produce a ratio — and must not divide by zero.
+    func testRatioNeedsBothPowers() {
+        var record = capturedBodyRecord
+        record[22] = 0; record[23] = 0                       // hf = 0
+        let events = YCBTHealthRecords.bodyData(record)
+
+        XCTAssertEqual(values(.lfPower, in: events).first ?? 0, 1200, accuracy: 0.001)
+        XCTAssertTrue(values(.hfPower, in: events).isEmpty)
+        XCTAssertTrue(values(.lfHfRatio, in: events).isEmpty)
+    }
+
     /// The scale, at the seam where it is easy to get wrong: a whole-number score has fraction 0, and
     /// `(7, 0)` is 70 — not 7, and not 7.0. `RingEventBridge.stressRange` (1…100) can't catch a 10×
     /// error, so this is the only place it is pinned.
@@ -336,8 +395,8 @@ final class YCBTHealthRecordsTests: XCTestCase {
         XCTAssertEqual(YCBTHealthRecords.decode(blood, type: .blood).count, 3)         // sys + dia + hr
         XCTAssertEqual(YCBTHealthRecords.decode(sport, type: .sport).count, 1)
         XCTAssertEqual(YCBTHealthRecords.decode(temperature, type: .temperature).count, 2)
-        // hrv + stress + fatigue + vo2max
-        XCTAssertEqual(YCBTHealthRecords.decode(capturedBodyRecord, type: .bodyData).count, 4)
+        // hrv + stress + fatigue + vo2max + the HRV panel (sdnn, pnn50, rmssd, lf, hf, lf/hf)
+        XCTAssertEqual(YCBTHealthRecords.decode(capturedBodyRecord, type: .bodyData).count, 10)
         // 8 records × (systolic + diastolic + spo2 + respiratory rate + hrv); temp and blood sugar are
         // the unmeasured fillers in this capture, and the cumulative step counter is not published.
         XCTAssertEqual(YCBTHealthRecords.decode(capturedAllRecords, type: .all).count, 8 * 5)

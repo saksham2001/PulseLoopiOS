@@ -251,6 +251,11 @@ final class YCBTDriver: WearableDriver {
         case .stress: return capabilities.contains(.stress)
         case .fatigue: return capabilities.contains(.fatigue)
         case .temperature: return capabilities.contains(.temperature)
+        // The HRV panel is gated on its own capability rather than `.hrv`: a ring can report the
+        // single HRV scalar (from `05 09` or the `06 03` live stream) without having the `05 33`
+        // body-data record these fields live in.
+        case .sdnn, .rmssd, .pnn50, .lfPower, .hfPower, .lfHfRatio:
+            return capabilities.contains(.hrvDetail)
         }
     }
 
