@@ -74,8 +74,16 @@ enum CoachNotificationGenerator {
                                      body: anomaly.facts,
                                      tip: "Go easy today and aim for an earlier wind-down.",
                                      followUp: "Want tips for a better night tonight?")
+        case .healthWatch:
+            return CoachNotification(title: "Worth taking it easy today",
+                                     body: anomaly.facts,
+                                     tip: "Nothing here names a cause — rest, fluids, and a lighter day cover most of them.",
+                                     followUp: "Want to look at what's been different this week?")
         case .restingHRDrift:
-            return CoachNotification(title: "A quick heads-up", body: anomaly.facts)
+            return CoachNotification(title: "Resting heart rate is up",
+                                     body: anomaly.facts,
+                                     tip: "Worth an easier day and some extra fluids; it usually settles in a night or two.",
+                                     followUp: "Want to look at what's been different this week?")
         }
     }
 

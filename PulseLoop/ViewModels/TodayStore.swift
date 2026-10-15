@@ -37,6 +37,10 @@ final class TodayStore {
     /// `body`, which meant a full pass over the samples on every re-render (including every frame of
     /// a card drag).
     private(set) var hrvBaseline: BaselineStats?
+    /// Last night's overnight signals against their own baselines. Rebuilt here rather than in
+    /// `body` because it walks 30 nights of sessions and their readings — far too heavy per render.
+    /// nil, or a `.clear` result, renders nothing at all.
+    private(set) var healthWatch: HealthWatch.Result?
     /// Bumped whenever `cards` and the sample series are rebuilt. The reorder grid keys cell equality
     /// on this so dragging a card doesn't re-render every Swift Charts tile — see `ReorderCell`.
     private(set) var revision: Int = 0
@@ -87,6 +91,7 @@ final class TodayStore {
         hero = TodayInsights.deriveHero(built)
         capabilities = MetricsService.deviceCapabilities(modelContext)
         visibleMetrics = Self.computeVisible(context: modelContext)
+        healthWatch = HealthWatchService.evaluate(context: modelContext)
         rebuildCards()
         signature = sig
     }
