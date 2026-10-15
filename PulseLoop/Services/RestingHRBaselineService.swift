@@ -43,7 +43,7 @@ enum RestingHRBaselineService {
         }
 
         let established = values.count >= minSamples && spanDays >= minSpanDays
-        let newBaseline = established ? percentile(values.sorted(), 0.10) : nil
+        let newBaseline = established ? percentile(values.sorted(), restingPercentile) : nil
 
         // Stamp the refresh time even when not established, so we don't rescan on every foreground.
         profile.hrRestingBaselineUpdatedAt = now
@@ -55,8 +55,13 @@ enum RestingHRBaselineService {
         try? context.save()
     }
 
+    /// The percentile this service treats as "resting" — the 10th. Shared so anything comparing a
+    /// single night against `hrRestingBaseline` measures that night the same way the baseline was
+    /// built, rather than inventing a second definition of resting HR.
+    static let restingPercentile = 0.10
+
     /// Interpolated percentile (same formula as `BaselineStats.compute`).
-    private static func percentile(_ sorted: [Double], _ fraction: Double) -> Double {
+    static func percentile(_ sorted: [Double], _ fraction: Double) -> Double {
         guard !sorted.isEmpty else { return 0 }
         guard sorted.count > 1 else { return sorted[0] }
         let rank = fraction * Double(sorted.count - 1)
