@@ -66,12 +66,14 @@ final class HealthSyncTests: XCTestCase {
         XCTAssertFalse(mapping.isPlausible(15), "far below body temperature")
     }
 
+    /// The kinds with no quantity mapping, and why — see `HealthSyncNewTypesTests` for the four that
+    /// gained one. Blood sugar left this list when `.bloodGlucose` was wired up; blood pressure
+    /// stayed, because it exports as an `HKCorrelation` rather than a quantity.
     func testUnsupportedKindsMapToNil() {
-        XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .stress), "no native HealthKit equivalent")
-        XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .fatigue), "no native HealthKit equivalent")
+        XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .stress), "HealthKit has no type for a wellness score")
+        XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .fatigue), "HealthKit has no type for a wellness score")
         XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .bloodPressureSystolic), "needs HKCorrelation pairing")
         XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .bloodPressureDiastolic), "needs HKCorrelation pairing")
-        XCTAssertNil(HealthKitTypeMappings.quantityMapping(for: .bloodSugar), "needs its own share type")
     }
 
     // MARK: - HealthKitTypeMappings: sleep-stage map
