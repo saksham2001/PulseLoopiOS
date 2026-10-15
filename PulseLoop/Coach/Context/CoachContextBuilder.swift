@@ -93,9 +93,10 @@ enum CoachContextBuilder {
                 deepMin: s.deepMinutes,
                 lightMin: s.lightMinutes,
                 awakeMin: s.awakeMinutes,
+                remMin: s.hasRemSignal ? s.remMinutes : nil,
                 score: s.session.score,
                 confidence: "medium",
-                decoderNote: DataQualityAnalyzer.sleepDecoderNote
+                decoderNote: DataQualityAnalyzer.sleepDecoderNote(hasREM: s.hasRemSignal)
             )
         }
 
@@ -104,6 +105,7 @@ enum CoachContextBuilder {
                 profileCompleteness: completeness,
                 daysAvailable: daysAvailable,
                 hasSleep: sleep != nil,
+                sleepHasREM: summary.sleep?.hasRemSignal ?? false,
                 lastSyncAt: device?.lastSyncAt,
                 isDemo: summary.isDemo
             ),

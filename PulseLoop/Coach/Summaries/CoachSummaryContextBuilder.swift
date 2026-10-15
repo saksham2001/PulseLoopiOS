@@ -57,22 +57,33 @@ enum CoachSummaryContextBuilder {
                          environment: CoachContextPacket.EnvironmentContext? = nil) -> Built? {
         let range = SleepService.sleepRange(.day, context: context, now: now)
         guard let night = SleepInsights.validSessions(range.sessions).last else { return nil }
-        let score = SleepScore.calculate(night)
+        let score = SleepScore.calculate(
+            night, bedtimeBaseline: SleepService.bedtimeBaseline(before: night.session.date, context: context)
+        )
         let activitySteps = MetricsRepository.latestActivity(context: context)?.steps
         let memories = CoachContextBuilder.build(context: context, now: now).memories
 
         struct Packet: Encodable {
-            let date: String, totalMin: Int, deepMin: Int, lightMin: Int, awakeMin: Int
-            let score: Int, scoreLabel: String, awakePct: Int?, deepPct: Int, activitySteps: Int?
+            let date: String, timeInBedMin: Int, asleepMin: Int
+            let deepMin: Int, lightMin: Int, awakeMin: Int
+            /// Absent when the ring reported no REM stage — see `SleepSummary.hasRemSignal`.
+            let remMin: Int?
+            let score: Int, scoreLabel: String, awakePct: Int?, deepPct: Int, remPct: Int?
+            /// What fraction of the 100-point score was actually measurable on this ring, so the
+            /// model can hedge a score built on a partial picture instead of stating it flatly.
+            let scoreCoverage: Double
+            let activitySteps: Int?
             let memories: [CoachContextPacket.MemoryContext]
             let environment: CoachContextPacket.EnvironmentContext?
         }
         let p = Packet(
             date: CoachDataAccess.localDateString(night.session.date),
-            totalMin: night.session.totalMinutes, deepMin: night.deepMinutes,
-            lightMin: night.lightMinutes, awakeMin: night.awakeMinutes,
+            timeInBedMin: night.session.totalMinutes, asleepMin: score.asleepMinutes,
+            deepMin: night.deepMinutes, lightMin: night.lightMinutes, awakeMin: night.awakeMinutes,
+            remMin: night.hasRemSignal ? night.remMinutes : nil,
             score: score.score, scoreLabel: score.label.rawValue, awakePct: score.awakePct,
-            deepPct: score.deepPct, activitySteps: activitySteps, memories: memories,
+            deepPct: score.deepPct, remPct: score.remPct, scoreCoverage: score.coverage,
+            activitySteps: activitySteps, memories: memories,
             environment: environment
         )
         let sig = signature([
@@ -103,13 +114,17 @@ enum CoachSummaryContextBuilder {
         struct Packet: Encodable {
             let range: String, nightsTracked: Int, expectedNights: Int
             let avgTotalMin: Int?, avgScore: Int?
-            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?, goalMin: Int?
+            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?
+            /// Absent when no night in the range reported REM — see `SleepInsights.AverageStages.rem`.
+            let avgRemMin: Int?
+            let goalMin: Int?
             let memories: [CoachContextPacket.MemoryContext]
         }
         let p = Packet(
             range: range.rawValue, nightsTracked: valid.count, expectedNights: summary.expectedNights,
             avgTotalMin: avgMin, avgScore: avgScore,
             avgDeepMin: stages?.deep, avgLightMin: stages?.light, avgAwakeMin: stages?.awake,
+            avgRemMin: stages?.rem,
             goalMin: goalMin, memories: memories
         )
         let sig = signature([
