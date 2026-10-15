@@ -53,6 +53,10 @@ enum MeasurementSource: String, Codable, CaseIterable {
     case manual
     case live
     case colmi
+    /// Read *in* from Apple Health — a CGM, a smart scale, another app. Distinct from every other
+    /// case so imported data can be told apart from the ring's own at a glance, and so an import can
+    /// never be re-exported back to Health as if PulseLoop had measured it.
+    case appleHealth = "apple_health"
 }
 
 enum SleepStage: String, Codable, CaseIterable {
