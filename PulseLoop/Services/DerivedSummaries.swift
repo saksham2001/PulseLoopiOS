@@ -135,7 +135,20 @@ struct SleepSummary {
     let lightMinutes: Int
     let deepMinutes: Int
     let awakeMinutes: Int
+    /// Minutes the ring tagged as REM. Zero on rings whose firmware has no REM stage (jring's
+    /// `0x11` timeline is light/deep/awake only), so a zero here is genuinely ambiguous between
+    /// "no REM slept" and "this ring can't see REM" — use `hasRemSignal` to tell them apart.
+    let remMinutes: Int
     let blocks: [SleepStageBlock]
+
+    /// Whether this night's own stage timeline carries REM at all.
+    ///
+    /// Deliberately derived from the night's blocks rather than the *connected* ring's
+    /// capabilities: stored nights outlive the ring that recorded them, so a user who switches
+    /// from a Colmi to a jring must not have last week's REM retro-actively disclaimed away.
+    var hasRemSignal: Bool {
+        remMinutes > 0 || blocks.contains { $0.stage == .rem }
+    }
 }
 
 struct SleepRangeSummary {

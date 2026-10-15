@@ -418,12 +418,27 @@ struct SleepStageSummaryCardsView: View {
     let deep: String
     let light: String
     let awake: String
+    /// REM, when the ring behind this night reported the stage at all. `nil` omits the card
+    /// entirely rather than showing a dash — a jring genuinely has no REM stage, and an empty
+    /// fourth card reads as missing data instead of an absent sensor.
+    var rem: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            stat("\(prefix)Deep", deep, SleepStageColors.deep)
-            stat("\(prefix)Light", light, SleepStageColors.light)
-            stat("\(prefix)Awake", awake, SleepStageColors.awake)
+        // Four cards across is too cramped on a small phone, so REM promotes the row to a 2×2
+        // grid; without it the original three-across row is unchanged.
+        if let rem {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                stat("\(prefix)Deep", deep, SleepStageColors.deep)
+                stat("\(prefix)REM", rem, SleepStageColors.rem)
+                stat("\(prefix)Light", light, SleepStageColors.light)
+                stat("\(prefix)Awake", awake, SleepStageColors.awake)
+            }
+        } else {
+            HStack(spacing: 12) {
+                stat("\(prefix)Deep", deep, SleepStageColors.deep)
+                stat("\(prefix)Light", light, SleepStageColors.light)
+                stat("\(prefix)Awake", awake, SleepStageColors.awake)
+            }
         }
     }
 
