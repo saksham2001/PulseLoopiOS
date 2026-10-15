@@ -154,7 +154,8 @@ struct SleepView: View {
         SleepStageSummaryCardsView(
             deep: SleepFormat.duration(s.deepMinutes),
             light: SleepFormat.duration(s.lightMinutes),
-            awake: SleepFormat.duration(s.awakeMinutes)
+            awake: SleepFormat.duration(s.awakeMinutes),
+            rem: s.hasRemSignal ? SleepFormat.duration(s.remMinutes) : nil
         )
     }
 
@@ -444,7 +445,8 @@ struct SleepView: View {
             prefix: "Avg ",
             deep: stageAvg.map { SleepFormat.duration($0.deep) } ?? "—",
             light: stageAvg.map { SleepFormat.duration($0.light) } ?? "—",
-            awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—"
+            awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—",
+            rem: stageAvg?.rem.map { SleepFormat.duration($0) }
         )
         summaryCard(rangeSummary(range), fallback: coach)
     }
