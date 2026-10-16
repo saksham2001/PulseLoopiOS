@@ -85,12 +85,16 @@ enum MetricsRepository {
     /// full-table scan. Feeds the Wearable screen's drainage chart.
     @MainActor
     static func batterySamples(start: Date, end: Date, limit: Int = 1000, context: ModelContext) -> [BatterySample] {
+        // Fetched newest-first and reversed, rather than fetched oldest-first: `limit` has to drop
+        // the *oldest* rows in an over-long window, not the newest. Sorting forward meant a busy
+        // window past the cap charted the start of the range and silently omitted the recent
+        // readings the drainage chart exists to show. The returned order is unchanged (oldest-first).
         var descriptor = FetchDescriptor<BatterySample>(
             predicate: #Predicate { $0.timestamp >= start && $0.timestamp <= end },
-            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         descriptor.fetchLimit = limit
-        return (try? context.fetch(descriptor)) ?? []
+        return ((try? context.fetch(descriptor)) ?? []).reversed()
     }
 
     /// All measurements of one kind, newest-first (demo mode keeps full history, no time window).
@@ -181,9 +185,11 @@ enum SleepRepository {
     }
     
     @MainActor
+    /// `fetchLimit: 1` — one row, not the whole table (matching `latestMeasurement` above).
     static func latestSession(context: ModelContext) -> SleepSession? {
-        let descriptor = FetchDescriptor<SleepSession>(sortBy: [SortDescriptor(\.startAt, order: .reverse)])
-        return (try? context.fetch(descriptor))?.first
+        var descriptor = FetchDescriptor<SleepSession>(sortBy: [SortDescriptor(\.startAt, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
     }
     
     @MainActor

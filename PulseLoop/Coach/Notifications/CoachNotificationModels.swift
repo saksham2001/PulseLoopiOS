@@ -67,11 +67,10 @@ final class CoachNotificationRecord {
 
     var slot: CoachNotificationSlot { CoachNotificationSlot(rawValue: slotRaw) ?? .morning }
 
+    /// The dedupe key for "has this slot already fired today". `calendar` decides *which* local day
+    /// a timestamp falls in; the rendering itself is pinned Gregorian so the key stays comparable to
+    /// the ones already stored (see `DateFormatter.stableKey`).
     static func dateKey(for date: Date, calendar: Calendar = .current) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        return f.string(from: date)
+        DateFormatter.stableKey("yyyy-MM-dd", timeZone: calendar.timeZone).string(from: date)
     }
 }

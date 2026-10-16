@@ -81,8 +81,7 @@ enum DataArchiveService {
     /// Exports to a shareable temp file (`pulseloop-export-<date>.json`) for the share sheet.
     static func exportFile(context: ModelContext) async throws -> URL {
         let data = try await exportArchive(context: context)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        let formatter = DateFormatter.stableKey("yyyy-MM-dd-HHmm")
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("pulseloop-export-\(formatter.string(from: Date())).json")
         try data.write(to: url, options: .atomic)

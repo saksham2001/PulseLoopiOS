@@ -182,9 +182,9 @@ struct ShareCardModel {
     // MARK: - Dates
 
     private static func dateHeadline(_ date: Date) -> String {
-        let dow = DateFormatter(); dow.dateFormat = "EEE"
-        let monthDay = DateFormatter(); monthDay.dateFormat = "MMM d"
-        let time = DateFormatter(); time.dateFormat = "h:mm a"
+        let dow = DateFormatter.localizedTemplate("EEE")
+        let monthDay = DateFormatter.localizedTemplate("MMMd")
+        let time = DateFormatter.localizedTemplate("jmm")
         return "\(dow.string(from: date).uppercased()) · \(monthDay.string(from: date).uppercased()) · \(time.string(from: date))"
     }
 

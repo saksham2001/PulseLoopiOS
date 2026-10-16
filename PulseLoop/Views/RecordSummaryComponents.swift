@@ -165,21 +165,21 @@ struct WorkoutMetricsSections: View {
         .padding(.top, 8)
     }
 
-    /// e.g. "Today · 7:32 – 8:05 AM" or "May 28 · 6:10 – 6:48 PM".
+    /// e.g. "Today · 7:32 – 8:05 AM", or "Today · 07:32 – 08:05" where the device is on 24-hour time.
+    ///
+    /// Locale-native intervals carry a shared day-period once, or both when crossing noon.
     private var dateRange: String {
-        let time = DateFormatter(); time.dateFormat = "h:mm"
-        let timeAmPm = DateFormatter(); timeAmPm.dateFormat = "h:mm a"
         let day: String
         if Calendar.current.isDateInToday(session.startedAt) {
             day = "Today"
         } else if Calendar.current.isDateInYesterday(session.startedAt) {
             day = "Yesterday"
         } else {
-            let d = DateFormatter(); d.dateFormat = "MMM d"
+            let d = DateFormatter.localizedTemplate("MMMd")
             day = d.string(from: session.startedAt)
         }
         guard let ended = session.endedAt else { return day }
-        return "\(day) · \(time.string(from: session.startedAt)) – \(timeAmPm.string(from: ended))"
+        return "\(day) · \(WorkoutTimeFormat.range(start: session.startedAt, end: ended))"
     }
 
     @ViewBuilder
