@@ -97,6 +97,32 @@ struct RingPacket {
     }
 }
 
+/// A vital the ring measures on demand by **streaming** values until it is stopped — QRing's manual
+/// HRV, stress and temperature screens (`HrvActivity`, `DayPressureFragment`, `TemperatureActivity`
+/// in decompiled-qring-official/). Distinct from the all-day history of the same kinds.
+///
+/// Everything protocol-side that varies per vital lives here: the measurement kind it is stored as and
+/// the capability that offers its control.
+enum SpotVital: CaseIterable, Sendable {
+    case hrv, stress, temperature
+
+    var kind: MeasurementKind {
+        switch self {
+        case .hrv: return .hrv
+        case .stress: return .stress
+        case .temperature: return .temperature
+        }
+    }
+
+    var capability: WearableCapability {
+        switch self {
+        case .hrv: return .manualHrv
+        case .stress: return .manualStress
+        case .temperature: return .manualTemperature
+        }
+    }
+}
+
 enum RingDecodedEvent: Sendable {
     case activityUpdate(timestamp: Date, steps: Int, distanceMeters: Double, calories: Double)
     /// One intraday activity bucket (e.g. a Colmi quarter-hour history sample). Unlike the cumulative
@@ -150,6 +176,15 @@ enum RingDecodedEvent: Sendable {
     /// the owner's R99 refuses HRV (mode `0x0a` → status `0x01`), and without this the app polls a ring
     /// that already said no for the full 45-second window before reporting a generic failure.
     case measurementRejected(mode: UInt8)
+    case rwfitMeasurementStatus(type: UInt8, status: UInt8)
+    /// One streamed value of an on-demand `SpotVital` run (Colmi `0x69 <type> 00 <value>`). Produces no
+    /// `PulseEvent`: the run's values converge on a reading, so storing each would leave a train of rows
+    /// that were never the user's reading. `RingSyncCoordinator` settles them off the raw-packet feed
+    /// and publishes the one reading.
+    case spotVitalSample(vital: SpotVital, value: Double, timestamp: Date)
+    /// The ring ended an on-demand `SpotVital` run with an error (not worn / no contact). A verdict on
+    /// the measurement, not data, so — like `.measurementRejected` — it produces no `PulseEvent`.
+    case spotVitalNoReading(vital: SpotVital, timestamp: Date)
     /// One frame of a CRP all-day "timing" vital timeline just landed. The ring returns a day in
     /// fixed-size frames and only sends the next one when asked, so `CRPSyncEngine.handle` uses this
     /// as a cursor: request `frameIndex + 1` until the vital's terminal frame (the vendor's sequential
@@ -191,6 +226,9 @@ enum RingDecodedEvent: Sendable {
         case .chipScheme: return "chip_scheme"
         case .wearingStatus: return "wearing_status"
         case .measurementRejected: return "measurement_rejected"
+        case .rwfitMeasurementStatus: return "rwfit_measurement_status"
+        case .spotVitalSample: return "spot_vital_sample"
+        case .spotVitalNoReading: return "spot_vital_no_reading"
         case .timingHistoryFrame: return "timing_history_frame"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"

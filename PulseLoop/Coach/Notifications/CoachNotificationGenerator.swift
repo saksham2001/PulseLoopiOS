@@ -23,7 +23,7 @@ enum CoachNotificationGenerator {
             let body = try OpenAIRequestBuilder.data(
                 model: flags.model, input: input, tools: [],
                 textFormat: CoachNotificationSchema.textFormat,
-                previousResponseId: nil, reasoningEffort: flags.settings.reasoningEffort
+                previousResponseId: nil, reasoningEffort: flags.settings.resolvedReasoningEffort
             )
             let response = try await client.send(requestBody: body)
             return CoachNotification.decode(fromJSON: response.outputText) ?? scripted(slot: slot, packet: packet)
@@ -50,7 +50,7 @@ enum CoachNotificationGenerator {
             let body = try OpenAIRequestBuilder.data(
                 model: flags.model, input: input, tools: [],
                 textFormat: CoachNotificationSchema.textFormat,
-                previousResponseId: nil, reasoningEffort: flags.settings.reasoningEffort
+                previousResponseId: nil, reasoningEffort: flags.settings.resolvedReasoningEffort
             )
             let response = try await client.send(requestBody: body)
             // An anomaly alert always sends — ignore a stray skip from the model.

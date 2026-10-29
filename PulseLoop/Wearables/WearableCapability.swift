@@ -53,6 +53,12 @@ enum WearableCapability: String, CaseIterable, Codable, Sendable {
     // `0xbc 0x2a`). Drives the workout vitals plan: a device with no `manualSpo2` but with this
     // capability shows the latest logged value instead of pretending it can spot-measure.
     case spo2History
+
+    // On-demand stress and temperature, streamed until stopped like on-demand HRV on the Colmi Ring 2
+    // Pro (`0x69` types `08`/`0b`, QRing's manual measure screens). Granted per model, never per family
+    // (`WearableModel.extraCapabilities`): nothing on the wire says which Colmi rings support them.
+    case manualStress
+    case manualTemperature
 }
 
 extension Set where Element == WearableCapability {

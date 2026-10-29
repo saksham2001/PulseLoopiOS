@@ -251,7 +251,20 @@ struct ActivityDetailView: View {
                 }
             }
         } else {
-            EmptyStateView(title: "Workout not found", body: "This session is no longer in local storage.")
+            // Stale route (e.g. a demo-data reseed wiped the session a pushed id points at):
+            // fill the screen with a clear fallback plus an explicit way back, so a missing
+            // workout is never a blank, dead-end page.
+            ContentUnavailableView {
+                Label("Workout not found", systemImage: "figure.run.circle")
+            } description: {
+                Text("This workout is no longer in local storage. It may have been deleted or replaced.")
+            } actions: {
+                Button("Back to Dashboard") { dismiss() }
+                    .font(PulseFont.callout)
+                    .foregroundStyle(PulseColors.accent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PulseColors.background)
         }
     }
 

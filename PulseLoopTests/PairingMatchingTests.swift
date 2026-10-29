@@ -339,6 +339,7 @@ final class PairingMatchingTests: XCTestCase {
             "COLMI R10_xyz": "colmi-r10",
             "R11C_BEEF": "colmi-r11",
             "COLMI R12_x": "colmi-r12",
+            "COLMI Ring 2 Pro": "colmi-ring-2-pro",
             "R99 54DC": "colmi-r99",
             "R05_1A2B": "yawell-r05",
             "R10_DEAD": "yawell-r10",
@@ -348,6 +349,20 @@ final class PairingMatchingTests: XCTestCase {
         for (name, modelID) in expected {
             XCTAssertEqual(WearableModel.model(advertisedName: name)?.id, modelID, name)
         }
+    }
+
+    /// The Ring 2 Pro's on-demand HRV / stress / temperature are a per-model grant on top of the Colmi
+    /// family's baseline, and the family itself offers none of the three.
+    func testRing2ProCarriesItsOnDemandVitals() {
+        XCTAssertEqual(WearableModel.colmiRing2Pro.family, .colmiR02)
+        XCTAssertEqual(WearableModel.colmiRing2Pro.extraCapabilities, [.manualHrv, .manualStress, .manualTemperature])
+        XCTAssertTrue(ColmiCoordinator().capabilities.isDisjoint(with: [.manualHrv, .manualStress, .manualTemperature]))
+        // Only hardware-validated models carry extras.
+        for model in WearableModel.catalog where model.id != WearableModel.colmiRing2Pro.id {
+            XCTAssertTrue(model.extraCapabilities.isEmpty, "\(model.id) has unvalidated extras")
+        }
+        // A serial-suffixed name is some other product, not this one.
+        XCTAssertNotEqual(WearableModel.model(advertisedName: "COLMI Ring 2 Pro_AB12")?.id, "colmi-ring-2-pro")
     }
 
     func testDetectedModelOverridesCarouselSelection() {

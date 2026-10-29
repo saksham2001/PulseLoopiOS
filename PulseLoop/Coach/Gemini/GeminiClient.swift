@@ -35,7 +35,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
     // message so the schema turn can fill the response `sources` array.
     private var pendingSourcesNote: String?
 
-    init(apiKey: String, model: String = "gemini-2.5-flash", session: URLSession = .shared) {
+    init(apiKey: String, model: String = GeminiModel.default.rawValue, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.model = model
         self.session = session
@@ -58,6 +58,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         let tools = req["tools"] as? [[String: Any]] ?? []
         let textFormat = (req["text"] as? [String: Any])?["format"] as? [String: Any]
         let previousResponseId = req["previous_response_id"] as? String
+        let thinkingLevel = ((req["reasoning"] as? [String: Any])?["effort"] as? String)?.uppercased()
 
         if previousResponseId == nil {
             setupConversation(from: input)
@@ -65,7 +66,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
             appendContinuation(previousId: previousResponseId!, input: input)
         }
 
-        let geminiBody = buildGeminiBody(tools: convertTools(tools), textFormat: textFormat)
+        let geminiBody = buildGeminiBody(tools: convertTools(tools), textFormat: textFormat, thinkingLevel: thinkingLevel)
         let geminiData = try JSONSerialization.data(withJSONObject: geminiBody)
 
         let urlStr = "\(baseURL)/\(model):generateContent?key=\(apiKey)"
@@ -266,7 +267,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
 
     // MARK: - Build Gemini request body
 
-    private func buildGeminiBody(tools: [[String: Any]], textFormat: [String: Any]?) -> [String: Any] {
+    private func buildGeminiBody(tools: [[String: Any]], textFormat: [String: Any]?, thinkingLevel: String?) -> [String: Any] {
         var body: [String: Any] = ["contents": contents]
 
         if !systemText.isEmpty {
@@ -307,12 +308,24 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
                 }
             }
         }
+        // Gemini 3+ thinking depth. Only sent when the user picked a level —
+        // `CoachSettings.resolvedReasoningEffort` never passes one to a 2.5 model,
+        // which rejects `thinkingLevel`.
+        if let thinkingLevel { genConfig["thinkingConfig"] = ["thinkingLevel": thinkingLevel] }
         if !genConfig.isEmpty { body["generationConfig"] = genConfig }
 
         return body
     }
 
     // MARK: - Parse Gemini response → OpenAIResponse
+
+    /// A model part with its `thoughtSignature` (when Gemini sent one) re-attached.
+    private static func signed(_ part: [String: Any], _ signature: String?) -> [String: Any] {
+        guard let signature else { return part }
+        var part = part
+        part["thoughtSignature"] = signature
+        return part
+    }
 
     private func parseGeminiResponse(_ data: Data) throws -> OpenAIResponse {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -332,9 +345,13 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         var modelParts: [[String: Any]] = []
 
         for part in parts {
+            // Gemini 3+ attaches a `thoughtSignature` to function-call (and some
+            // text) parts and rejects the next turn with HTTP 400 unless it's echoed
+            // back exactly, so stored parts keep it alongside the content.
+            let signature = part["thoughtSignature"] as? String
             if let text = part["text"] as? String {
                 outputItems.append(.message(text: text))
-                modelParts.append(["text": text])
+                modelParts.append(Self.signed(["text": text], signature))
             } else if let fc = part["functionCall"] as? [String: Any],
                       let name = fc["name"] as? String {
                 let args = fc["args"] as? [String: Any] ?? [:]
@@ -343,7 +360,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
                 let callId = "gemini_call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
                 callIdToName[callId] = name
                 outputItems.append(.functionCall(ResponseFunctionCall(name: name, callID: callId, arguments: argsStr)))
-                modelParts.append(["functionCall": ["name": name, "args": args]])
+                modelParts.append(Self.signed(["functionCall": ["name": name, "args": args]], signature))
             }
         }
 

@@ -225,7 +225,7 @@ struct CoachOrchestrator {
     ) async throws -> OpenAIResponse {
         let body = try OpenAIRequestBuilder.data(
             model: flags.model, input: input, tools: tools, textFormat: textFormat,
-            previousResponseId: previousResponseId, reasoningEffort: flags.settings.reasoningEffort)
+            previousResponseId: previousResponseId, reasoningEffort: flags.settings.resolvedReasoningEffort)
         let response = try await client.send(requestBody: body)
         tally.add(response.usage)
         return response

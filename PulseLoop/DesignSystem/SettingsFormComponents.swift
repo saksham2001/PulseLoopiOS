@@ -40,7 +40,7 @@ struct SettingsToggleRow: View {
 /// Settings row with a menu selector that owns a compact, single-line value label.
 /// SwiftUI's `.menu` Picker renders its selected label with its own layout and ignores
 /// ancestor font/lineLimit, so long option names (e.g. "On-device (Apple)",
-/// "gemini-2.5-flash") wrap into the chevron and the variable height makes the row jump.
+/// "gemini-3.5-flash-lite") wrap into the chevron and the variable height makes the row jump.
 /// This renders the current `value` itself and truncates it, keeping every row one line.
 /// `menuContent` supplies the options (typically a tagged `Picker`, shown inline with a
 /// checkmark inside the menu).

@@ -10,6 +10,8 @@ struct RootAppView: View {
     @Query private var profiles: [UserProfile]
     @State private var path = NavigationPath()
     @State private var didFinishForcedOnboarding = false
+    /// Prevent repeated reseeding and navigation when root content changes.
+    @State private var didRunLaunchArgs = false
 
     private var forceOnboardingForTesting: Bool {
         #if DEBUG
@@ -38,74 +40,78 @@ struct RootAppView: View {
             // Demo data is opt-in: load it from Settings → "Reseed demo data", or via the
             // `-seedDemo YES` launch arg (test tooling only). Normal launches start empty.
             .task {
-                if UserDefaults.standard.bool(forKey: "seedDemo") {
-                    SeedData.clearAll(modelContext)
-                    SeedData.seedDemo(modelContext, completeOnboarding: true)
-                }
-                // Test tooling: `-demoEstimatedCalories YES` reshapes the seeded recent days into
-                // what a phone-away ring-history sync produces (source `ring_history`, no device
-                // calories) so the on-device estimated-total path is visible in the UI.
-                if UserDefaults.standard.bool(forKey: "demoEstimatedCalories") {
-                    for offset in 0...2 {
-                        guard let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date()),
-                              let row = MetricsRepository.activity(on: day, context: modelContext) else { continue }
-                        row.source = ActivityService.ringHistorySource
-                        DailyCalorieEstimator.recompute(day: day, context: modelContext)
+                if !didRunLaunchArgs {
+                    didRunLaunchArgs = true
+                    if UserDefaults.standard.bool(forKey: "seedDemo") {
+                        SeedData.clearAll(modelContext)
+                        SeedData.seedDemo(modelContext, completeOnboarding: true)
                     }
-                    try? modelContext.save()
-                    PulseDataChange.shared.notify()
-                }
-                // Test tooling: fake a connected Strava account. Must run before anything touches
-                // StravaAuthService.shared (it reads the token store at init).
-                if UserDefaults.standard.bool(forKey: "demoStravaConnected") {
-                    StravaDemoState.apply()
-                }
-                #if DEBUG
-                // Test tooling: headless full-archive export/import against
-                // Documents/pulseloop-export.json, so the simulator smoke test can drive the
-                // feature without the share sheet / file picker.
-                let archiveLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "DataArchive")
-                if UserDefaults.standard.bool(forKey: "exportDataToDocuments"),
-                   let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                    let url = docs.appendingPathComponent("pulseloop-export.json")
-                    do {
-                        let data = try await DataArchiveService.exportArchive(context: modelContext)
-                        try data.write(to: url, options: .atomic)
-                        archiveLog.info("exported \(data.count) bytes to \(url.path)")
-                    } catch {
-                        archiveLog.error("export failed — \(error)")
+                    // Test tooling: `-demoEstimatedCalories YES` reshapes the seeded recent days into
+                    // what a phone-away ring-history sync produces (source `ring_history`, no device
+                    // calories) so the on-device estimated-total path is visible in the UI.
+                    if UserDefaults.standard.bool(forKey: "demoEstimatedCalories") {
+                        for offset in 0...2 {
+                            guard let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date()),
+                                  let row = MetricsRepository.activity(on: day, context: modelContext) else { continue }
+                            row.source = ActivityService.ringHistorySource
+                            DailyCalorieEstimator.recompute(day: day, context: modelContext)
+                        }
+                        try? modelContext.save()
+                        PulseDataChange.shared.notify()
                     }
-                }
-                if UserDefaults.standard.bool(forKey: "importDataFromDocuments"),
-                   let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                    let url = docs.appendingPathComponent("pulseloop-export.json")
-                    do {
-                        let data = try Data(contentsOf: url)
-                        try await DataArchiveService.importArchive(data, context: modelContext)
-                        archiveLog.info("import from \(url.path) succeeded")
-                    } catch {
-                        archiveLog.error("import failed — \(error)")
+                    // Test tooling: fake a connected Strava account. Must run before anything touches
+                    // StravaAuthService.shared (it reads the token store at init).
+                    if UserDefaults.standard.bool(forKey: "demoStravaConnected") {
+                        StravaDemoState.apply()
                     }
-                }
-                #endif
-                // Test tooling: flip the (off-by-default) nutrition feature on via launch arg.
-                if UserDefaults.standard.bool(forKey: "enableNutrition") {
-                    NutritionPrefsStore.shared.prefs.masterEnabled = true
-                    PulseDataChange.shared.notify()
-                }
-                if UserDefaults.standard.bool(forKey: "openNutrition") {
-                    path.append(AppRoute.nutrition)
-                }
-                if UserDefaults.standard.bool(forKey: "openNutritionSettings") {
-                    path.append(AppRoute.settingsNutrition)
-                }
-                // Test tooling: deep-link straight to a seeded workout's detail (route map).
-                if UserDefaults.standard.bool(forKey: "openWorkout"),
-                   let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
-                    path.append(AppRoute.activityDetail(session.id))
-                }
-                if UserDefaults.standard.bool(forKey: "openRecord") {
-                    path.append(AppRoute.recordSelect)
+                    #if DEBUG
+                    // Test tooling: headless full-archive export/import against
+                    // Documents/pulseloop-export.json, so the simulator smoke test can drive the
+                    // feature without the share sheet / file picker.
+                    let archiveLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "DataArchive")
+                    if UserDefaults.standard.bool(forKey: "exportDataToDocuments"),
+                       let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                        let url = docs.appendingPathComponent("pulseloop-export.json")
+                        do {
+                            let data = try await DataArchiveService.exportArchive(context: modelContext)
+                            try data.write(to: url, options: .atomic)
+                            archiveLog.info("exported \(data.count) bytes to \(url.path)")
+                        } catch {
+                            archiveLog.error("export failed — \(error)")
+                        }
+                    }
+                    if UserDefaults.standard.bool(forKey: "importDataFromDocuments"),
+                       let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                        let url = docs.appendingPathComponent("pulseloop-export.json")
+                        do {
+                            let data = try Data(contentsOf: url)
+                            try await DataArchiveService.importArchive(data, context: modelContext)
+                            archiveLog.info("import from \(url.path) succeeded")
+                        } catch {
+                            archiveLog.error("import failed — \(error)")
+                        }
+                    }
+                    #endif
+                    // Test tooling: flip the (off-by-default) nutrition feature on via launch arg.
+                    if UserDefaults.standard.bool(forKey: "enableNutrition") {
+                        NutritionPrefsStore.shared.prefs.masterEnabled = true
+                        PulseDataChange.shared.notify()
+                    }
+                    if UserDefaults.standard.bool(forKey: "openNutrition") {
+                        path.append(AppRoute.nutrition)
+                    }
+                    if UserDefaults.standard.bool(forKey: "openNutritionSettings") {
+                        path.append(AppRoute.settingsNutrition)
+                    }
+                    // Test tooling: deep-link straight to a seeded workout's detail (route map).
+                    if UserDefaults.standard.bool(forKey: "openWorkout"),
+                       let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
+                        path = NavigationPath()
+                        path.append(AppRoute.activityDetail(session.id))
+                    }
+                    if UserDefaults.standard.bool(forKey: "openRecord") {
+                        path.append(AppRoute.recordSelect)
+                    }
                 }
                 // Re-attach to an in-progress workout left running across launches.
                 liveWorkout.recover()
@@ -274,6 +280,16 @@ struct MainTabView: View {
                 }
             }
             .pulseGlassContainer(spacing: 8)
+            if let error = coordinator.syncError {
+                HStack {
+                    Text(error).font(.caption)
+                    Spacer()
+                    Button("Retry") { coordinator.runStartupSequence() }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .contain)
+            }
             if #available(iOS 26, *) {
                 // iOS 26+: native TabView renders Apple's stock Liquid Glass tab bar —
                 // real lensing, morphing selection, and content diffusing under the bar.

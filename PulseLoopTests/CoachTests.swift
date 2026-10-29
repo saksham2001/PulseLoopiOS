@@ -514,6 +514,102 @@ final class GeminiClientTests: XCTestCase {
         XCTAssertTrue(sent.contains("example.com") && sent.contains("Source A") && sent.contains("Source B"),
                       "grounding sources must be carried into the follow-up turn")
     }
+
+    /// Gemini 3+ rejects a tool-result turn (HTTP 400) unless the function-call
+    /// part's `thoughtSignature` is echoed back exactly.
+    func testEchoesThoughtSignatureOnContinuation() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"candidates":[{"content":{"parts":[
+          {"functionCall":{"name":"get_daily_summary","args":{}},"thoughtSignature":"sig-abc"}
+        ]}}]}
+        """.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let first = try await client.send(requestBody: OpenAIRequestBuilder.data(
+            model: "gemini-3.8-flash", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil))
+        let callID = try XCTUnwrap(first.functionCalls.first?.callID)
+
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+        _ = try await client.send(requestBody: OpenAIRequestBuilder.data(
+            model: "gemini-3.8-flash", input: [OpenAIRequestBuilder.functionCallOutput(callID: callID, output: "{}")],
+            tools: [], textFormat: nil, previousResponseId: first.id, reasoningEffort: nil))
+
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(StubURLProtocol.lastRequestBody)) as? [String: Any])
+        let contents = try XCTUnwrap(json["contents"] as? [[String: Any]])
+        let modelTurn = try XCTUnwrap(contents.first { $0["role"] as? String == "model" })
+        let part = try XCTUnwrap((modelTurn["parts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(part["thoughtSignature"] as? String, "sig-abc")
+        XCTAssertNotNil(part["functionCall"])
+    }
+
+    /// The reasoning effort maps to Gemini's `thinkingConfig.thinkingLevel`, and is
+    /// omitted entirely when unset.
+    func testReasoningEffortSendsThinkingLevel() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        _ = try await client.send(requestBody: OpenAIRequestBuilder.data(
+            model: "gemini-4-argon", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: "high"))
+        var json = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(StubURLProtocol.lastRequestBody)) as? [String: Any])
+        let thinking = (json["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        XCTAssertEqual(thinking?["thinkingLevel"] as? String, "HIGH")
+
+        _ = try await client.send(requestBody: OpenAIRequestBuilder.data(
+            model: "gemini-4-argon", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil))
+        json = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(StubURLProtocol.lastRequestBody)) as? [String: Any])
+        XCTAssertNil(json["generationConfig"])
+    }
+}
+
+// MARK: - Reasoning effort per model
+
+final class ReasoningEffortTests: XCTestCase {
+    private func settings(_ provider: CoachProviderMode, _ model: String, _ effort: String?) -> CoachSettings {
+        var s = CoachSettings()
+        s.providerMode = provider
+        s.model = model
+        s.reasoningEffort = effort
+        return s
+    }
+
+    /// GPT-6.1 Sol rejects `none` with HTTP 400, so a level left over from Luna is
+    /// dropped back to the model default rather than sent.
+    func testUnsupportedEffortIsDropped() {
+        XCTAssertEqual(settings(.userOpenAIKey, CoachModel.luna.rawValue, "none").resolvedReasoningEffort, "none")
+        XCTAssertNil(settings(.userOpenAIKey, CoachModel.sol.rawValue, "none").resolvedReasoningEffort)
+        XCTAssertEqual(settings(.userOpenAIKey, CoachModel.sol.rawValue, "max").resolvedReasoningEffort, "max")
+        XCTAssertNil(settings(.userOpenRouterKey, OpenRouterModel.deepseek.rawValue, "medium").resolvedReasoningEffort)
+    }
+
+    /// A Custom OpenRouter slug isn't known, so the hint passes through and the
+    /// picker offers only the common levels; a non-preset Gemini model (a 2.5
+    /// model rejects `thinkingLevel`) gets no hint at all.
+    func testUnknownModels() {
+        let custom = settings(.userOpenRouterKey, "acme/some-model", "xhigh")
+        XCTAssertEqual(custom.resolvedReasoningEffort, "xhigh")
+        XCTAssertEqual(custom.reasoningEffortOptions, ReasoningEffort.common)
+
+        let legacyGemini = settings(.userGeminiKey, "gemini-2.5-flash", "high")
+        XCTAssertNil(legacyGemini.resolvedReasoningEffort)
+        XCTAssertTrue(legacyGemini.reasoningEffortOptions.isEmpty)
+
+        XCTAssertTrue(settings(.userMiniMaxKey, MiniMaxModel.m3.rawValue, nil).reasoningEffortOptions.isEmpty)
+    }
+
+    /// Every curated preset has a price, so the usage view never shows
+    /// "cost unavailable" for a model the picker offers.
+    func testEveryPresetIsPriced() {
+        let presets = CoachModel.allCases.map(\.rawValue) + GeminiModel.allCases.map(\.rawValue)
+            + OpenRouterModel.allCases.map(\.rawValue) + MiniMaxModel.allCases.map(\.rawValue)
+        for model in presets {
+            XCTAssertNotNil(CoachPricingCatalog.price(for: model), "\(model) has no price")
+        }
+    }
 }
 
 // MARK: - OpenRouterClient

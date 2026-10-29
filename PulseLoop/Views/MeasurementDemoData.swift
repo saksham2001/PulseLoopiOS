@@ -13,6 +13,8 @@ import Foundation
 enum MeasurementDemoData {
     struct Reading {
         var value: Int?
+        /// A reading with a decimal (temperature, °C), shown in place of `value`.
+        var decimal: Double?
         /// Diastolic, for blood pressure.
         var secondary: Int?
         /// Populated for the combined sweep.
@@ -29,10 +31,20 @@ enum MeasurementDemoData {
         }
 
         switch kind {
-        case .hr, .spo2, .hrv:
-            let metric: MeasurementKind = kind == .hr ? .heartRate : (kind == .spo2 ? .spo2 : .hrv)
+        case .hr, .spo2, .hrv, .stress:
+            let metric: MeasurementKind = switch kind {
+            case .hr: .heartRate
+            case .spo2: .spo2
+            case .stress: .stress
+            default: .hrv
+            }
             MetricsService.insertMockMeasurement(kind: metric, context: context)
             return Reading(value: latest(metric))
+
+        case .temperature:
+            MetricsService.insertMockMeasurement(kind: .temperature, context: context)
+            let celsius = MetricsService.fetchMeasurements(context).first { $0.kind == .temperature }?.value
+            return Reading(value: nil, decimal: celsius)
 
         case .bloodPressure:
             // BP is stored as two rows so each trends independently — mock both.

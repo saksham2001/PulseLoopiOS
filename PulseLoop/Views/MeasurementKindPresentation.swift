@@ -11,6 +11,8 @@ extension MeasurementSheet.Kind {
         case .hr: return "Heart Rate"
         case .spo2: return "Blood Oxygen"
         case .hrv: return "Heart Rate Variability"
+        case .stress: return "Stress"
+        case .temperature: return "Temperature"
         case .bloodPressure: return "Blood Pressure"
         case .vitals: return "Vitals"
         }
@@ -21,6 +23,9 @@ extension MeasurementSheet.Kind {
         case .hr, .vitals: return "bpm"
         case .spo2: return "%"
         case .hrv: return "ms"
+        case .stress: return "/ 100"
+        // The sheet shows the user's unit (`UnitsFormatter.temperatureUnit`); this is the stored one.
+        case .temperature: return "°C"
         case .bloodPressure: return "mmHg"
         }
     }
@@ -30,6 +35,8 @@ extension MeasurementSheet.Kind {
         case .hr, .vitals: return PulseColors.heartRate
         case .spo2: return PulseColors.spo2
         case .hrv: return PulseColors.hrv
+        case .stress: return PulseColors.stress
+        case .temperature: return PulseColors.temperature
         case .bloodPressure: return PulseColors.bloodPressure
         }
     }
@@ -39,6 +46,8 @@ extension MeasurementSheet.Kind {
         case .hr, .vitals: return "heart.fill"
         case .spo2: return "lungs.fill"
         case .hrv: return "waveform.path.ecg"
+        case .stress: return "brain.head.profile"
+        case .temperature: return "thermometer.medium"
         case .bloodPressure: return "heart.text.square"
         }
     }
@@ -49,6 +58,8 @@ extension MeasurementSheet.Kind {
         case .hr: return "Rest your wrist on a flat surface and keep still."
         case .spo2: return "Keep the ring pressed firmly to your skin and breathe normally."
         case .hrv: return "Sit still and breathe normally — HRV needs a steady stretch of beats."
+        case .stress: return "Sit still and breathe normally — stress is read from a steady stretch of beats."
+        case .temperature: return "Keep the ring snug and your hand still."
         case .bloodPressure: return "Sit upright, rest your hand at heart height, and stay still."
         case .vitals: return "Sit upright, rest your hand at heart height, and stay still. This takes about a minute."
         }
@@ -60,6 +71,8 @@ extension MeasurementSheet.Kind {
         case .hr: return "Finding your pulse…"
         case .spo2: return "Reading blood oxygen…"
         case .hrv: return "Reading heart rate variability…"
+        case .stress: return "Measuring stress…"
+        case .temperature: return "Measuring temperature…"
         case .bloodPressure: return "Measuring blood pressure…"
         case .vitals: return "Measuring your vitals…"
         }
@@ -76,6 +89,10 @@ extension MeasurementSheet.Kind {
             return "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again."
         case .hrv:
             return "Couldn't get an HRV reading. Wear the ring snugly, keep still, and try again."
+        case .stress:
+            return "Couldn't get a stress reading. Wear the ring snugly, keep still, and try again."
+        case .temperature:
+            return "Couldn't get a temperature reading. Wear the ring snugly, keep still, and try again."
         case .bloodPressure:
             return "Couldn't get a blood-pressure reading. Wear the ring snugly, rest your hand at heart height, and try again."
         case .vitals:

@@ -43,6 +43,9 @@ enum ColmiCommandID {
     static let syncActivity: UInt8 = 0x43
     static let findDevice: UInt8 = 0x50
     static let manualHeartRate: UInt8 = 0x69
+    /// `CMD_STOP_REAL_TIME`: stops whatever `0x69` started — and with it the ring's whole realtime
+    /// engine (QRing `StopHeartRateReq`, opcode 106).
+    static let realtimeStop: UInt8 = 0x6a
     static let notification: UInt8 = 0x73
     static let bigDataV2: UInt8 = 0xbc
     static let factoryReset: UInt8 = 0xff
@@ -62,6 +65,23 @@ enum ColmiCommandID {
     static let bigDataTemperature: UInt8 = 0x25
     static let bigDataSleep: UInt8 = 0x27
     static let bigDataSpo2: UInt8 = 0x2a
+
+    // `0x69`/`0x6A` reading types for on-demand `SpotVital`s (QRing `StartHeartRateReq.getSimpleReq`).
+    static let readingTypeStress: UInt8 = 0x08
+    static let readingTypeHRV: UInt8 = 0x0a
+    static let readingTypeTemperature: UInt8 = 0x0b
+
+    static func readingType(_ vital: SpotVital) -> UInt8 {
+        switch vital {
+        case .hrv: return readingTypeHRV
+        case .stress: return readingTypeStress
+        case .temperature: return readingTypeTemperature
+        }
+    }
+
+    static func spotVital(readingType: UInt8) -> SpotVital? {
+        SpotVital.allCases.first { self.readingType($0) == readingType }
+    }
 
     // sleep stage types
     static let sleepLight: UInt8 = 0x02

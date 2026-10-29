@@ -142,7 +142,13 @@ final class RingBLEClient: NSObject {
 
     // MARK: Write serialization
     /// Each queued write carries its already-framed bytes and which characteristic to send it to.
-    private var writeQueue: [(data: Data, useCommandChannel: Bool)] = []
+    private struct PendingWrite {
+        let data: Data
+        let useCommandChannel: Bool
+        var completion: (@MainActor (Result<Void, Error>) -> Void)?
+    }
+    private var writeQueue: [PendingWrite] = []
+    private var inFlightCompletion: (@MainActor (Result<Void, Error>) -> Void)?
     private var writeInFlight = false
     /// Monotonic id for the in-flight write, so a timeout task only unblocks *its* write (not a newer
     /// one that has since started). Mirrors the Android write-ACK timeout guard.
@@ -325,10 +331,10 @@ final class RingBLEClient: NSObject {
     /// Queue a logical command for writing. The active driver's framing (padding/checksum) is applied
     /// here, so callers/engines deal in unframed commands. The driver also decides whether the frame
     /// goes to the normal write char or the big-data command char. Writes are serialized.
-    func enqueueWrite(_ data: Data) {
+    func enqueueWrite(_ data: Data, completion: (@MainActor (Result<Void, Error>) -> Void)? = nil) {
         let framed = activeDriver?.frame(data) ?? data
         let useCommand = activeDriver?.usesCommandChannel(for: framed) ?? false
-        writeQueue.append((data: framed, useCommandChannel: useCommand))
+        writeQueue.append(PendingWrite(data: framed, useCommandChannel: useCommand, completion: completion))
         pumpWrites()
     }
 
@@ -338,9 +344,9 @@ final class RingBLEClient: NSObject {
     /// queue is what makes writes serial and ordered, and a caller jumping it would reorder a protocol
     /// that depends on its own sequence.
     private func prependWrites(_ commands: [Data]) {
-        let framed = commands.map { command -> (data: Data, useCommandChannel: Bool) in
+        let framed = commands.map { command -> PendingWrite in
             let framed = activeDriver?.frame(command) ?? command
-            return (data: framed, useCommandChannel: activeDriver?.usesCommandChannel(for: framed) ?? false)
+            return PendingWrite(data: framed, useCommandChannel: activeDriver?.usesCommandChannel(for: framed) ?? false)
         }
         writeQueue.insert(contentsOf: framed, at: 0)
     }
@@ -407,7 +413,7 @@ final class RingBLEClient: NSObject {
         }
         writeChar = nil; commandChar = nil; notifyChars = [:]; batteryCharacteristic = nil
         subscribedNotifyUUIDs = []
-        writeInFlight = false; writeQueue = []
+        cancelPendingWrites()
         peripheral = target
         target.delegate = self
         // Select the coordinator/driver for this connection: the user's declared family if they made
@@ -441,6 +447,21 @@ final class RingBLEClient: NSObject {
         activeSyncEngine = driver.makeSyncEngine()
         activeDeviceType = coordinatorType.deviceType
         activeCapabilities = coordinator.refinedCapabilities(bitmapDerived: lastKnownCapabilities)
+            .union(modelExtraCapabilities)
+    }
+
+    /// The connected model's own capabilities beyond its family's (`WearableModel.extraCapabilities`).
+    ///
+    /// Granted only when the ring's advertised name identifies that model. `WearableModel.resolve`
+    /// falls back to the carousel choice (and state restoration to the remembered model), which is fine
+    /// for the name and art but not for features: a ring matched some other way while the carousel sits
+    /// on the Ring 2 Pro would otherwise get HRV / stress / temperature controls it was never shown to
+    /// support, each running its 75 s ceiling before failing.
+    private var modelExtraCapabilities: Set<WearableCapability> {
+        guard let model = WearableModel.model(advertisedName: activeAdvertisedName),
+              model.id == activeWearableModelID,
+              model.family == activeDeviceType else { return [] }
+        return model.extraCapabilities
     }
 
     /// Re-adopt the remembered ring's identity: its family **and** the exact catalog model.
@@ -453,8 +474,11 @@ final class RingBLEClient: NSObject {
     func adoptRememberedIdentity() {
         // The remembered family already *is* the user's choice — `beginConnect` persisted whichever
         // coordinator it selected — so a restored session re-adopts the right driver for free.
-        installDriver(Self.coordinatorType(preferredFamily: nil, autoMatched: lastKnownDeviceType))
+        // Name and model go first: `installDriver` grants per-model extras only when the ring's own
+        // (here: cached GAP) name identifies the remembered model (`modelExtraCapabilities`).
+        activeAdvertisedName = peripheral?.name
         activeWearableModelID = lastKnownWearableModelID
+        installDriver(Self.coordinatorType(preferredFamily: nil, autoMatched: lastKnownDeviceType))
     }
 
     /// Fold the ring's self-reported capability bitmap into the active capability set.
@@ -470,7 +494,7 @@ final class RingBLEClient: NSObject {
     /// churn the bus and the store for nothing.
     private func applySupportFunctions(_ derived: Set<WearableCapability>) {
         guard let coordinator = activeCoordinator, let type = activeDeviceType else { return }
-        let refined = coordinator.refinedCapabilities(bitmapDerived: derived)
+        let refined = coordinator.refinedCapabilities(bitmapDerived: derived).union(modelExtraCapabilities)
         // Remember the answer even when it changes nothing right now: this is what seeds the *next*
         // connect, before that connect's own bitmap has arrived (see `lastKnownCapabilities`).
         UserDefaults.standard.set(refined.csv, forKey: Self.lastCapabilitiesKey)
@@ -510,12 +534,14 @@ final class RingBLEClient: NSObject {
             // Deliberately no `noteActivity()`: an unacknowledged write proves nothing about the link,
             // and crediting it would blind the watchdog to a zombie connection during a silent sync.
             peripheral.writeValue(item.data, for: target, type: .withoutResponse)
+            item.completion?(.success(()))
             pumpWrites()
             return
         }
 
         let item = writeQueue.removeFirst()
         writeInFlight = true
+        inFlightCompletion = item.completion
         writeSeq &+= 1
         let seq = writeSeq
         publishRawPacket(direction: .outgoing, data: item.data)
@@ -525,10 +551,23 @@ final class RingBLEClient: NSObject {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: writeAckTimeout)
             if writeInFlight, seq == writeSeq {
-                writeInFlight = false
-                pumpWrites()
+                // ATT callbacks have no request identifier. Retire the link so a late ACK cannot
+                // accidentally complete the next write after this deadline.
+                cancelPendingWrites(error: RingWriteError.timedOut)
+                central.cancelPeripheralConnection(peripheral)
             }
         }
+    }
+
+    private func cancelPendingWrites(error: Error = CancellationError()) {
+        let callbacks = [inFlightCompletion].compactMap { $0 } + writeQueue.compactMap(\.completion)
+        inFlightCompletion = nil
+        writeChar = nil
+        commandChar = nil
+        writeQueue.removeAll()
+        writeInFlight = false
+        writeSeq &+= 1
+        for callback in callbacks { callback(.failure(error)) }
     }
 
     // MARK: - Connection reliability
@@ -666,10 +705,46 @@ final class RingBLEClient: NSObject {
 // MARK: - RingCommandWriter
 
 extension RingBLEClient: RingCommandWriter {
+    var deviceIdentifier: String? { peripheral?.identifier.uuidString }
     /// Drivers / sync engines enqueue logical commands through this seam; framing is applied in
     /// `enqueueWrite`.
     func enqueue(_ command: Data) {
         enqueueWrite(command)
+    }
+
+    func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+        guard peripheral?.state == .connected, writeChar != nil else {
+            completion(.failure(RingWriteError.disconnected))
+            return
+        }
+        let tracked = RingTrackedWrite(timeoutError: RingWriteError.timedOut, onTimeout: { [weak self] in
+            guard let self else { return }
+            self.cancelPendingWrites(error: RingWriteError.timedOut)
+            if let peripheral = self.peripheral { self.central.cancelPeripheralConnection(peripheral) }
+        }, completion: completion)
+        enqueueWrite(command, completion: { tracked.finish($0) })
+    }
+
+    func emit(_ event: RingDecodedEvent) {
+        deliverDecoded(event)
+    }
+
+    private func deliverDecoded(_ decoded: RingDecodedEvent) {
+        for event in RingNotificationDelivery.events(for: decoded) { publish(event) }
+        if case let .supportFunctions(derived) = decoded { applySupportFunctions(derived) }
+        activeSyncEngine?.handle(decoded)
+    }
+}
+
+private enum RingWriteError: LocalizedError {
+    case disconnected
+    case timedOut
+
+    var errorDescription: String? {
+        switch self {
+        case .disconnected: return "The ring disconnected before the command was sent."
+        case .timedOut: return "The ring did not acknowledge the Bluetooth write."
+        }
     }
 }
 
@@ -709,6 +784,9 @@ extension RingBLEClient: CBCentralManagerDelegate {
                     connectLastKnown()
                 }
             case .poweredOff, .unauthorized, .unsupported:
+                cancelPendingWrites()
+                activeDriver?.connectionDidEnd()
+                activeSyncEngine?.connectionDidEnd()
                 state = .idle
                 lastError = "Bluetooth unavailable (\(central.state.rawValue))."
             default:
@@ -795,6 +873,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
         error: Error?
     ) {
         MainActor.assumeIsolated {
+            guard self.peripheral?.identifier == peripheral.identifier else { return }
             stopReliabilityTimers()
             lastActivityAt = nil
             writeChar = nil
@@ -802,8 +881,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
             notifyChars = [:]
             subscribedNotifyUUIDs = []
             batteryCharacteristic = nil
-            writeInFlight = false
-            writeQueue = []
+            cancelPendingWrites()
             // Stop the driver's own state machines *now*, not on the next connect: a self-driving one
             // (the YCBT history transfer's stall watchdog) would otherwise keep stepping through the
             // reconnect gap and refill the queue we just cleared, and those stale queries would be the
@@ -908,7 +986,6 @@ extension RingBLEClient: CBPeripheralDelegate {
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.lastWearableModelKey)
             }
-            publish(.deviceStateChanged(state: .connected, address: nil))
             if let type = activeDeviceType {
                 publish(.deviceIdentified(
                     deviceType: type,
@@ -917,6 +994,7 @@ extension RingBLEClient: CBPeripheralDelegate {
                     capabilities: activeCapabilities
                 ))
             }
+            publish(.deviceStateChanged(state: .connected, address: nil))
             noteActivity()
             startKeepalive()
             startWatchdog()
@@ -954,17 +1032,11 @@ extension RingBLEClient: CBPeripheralDelegate {
                 return
             }
             guard let driver = activeDriver, driver.notifyUUIDs.contains(characteristic.uuid) else { return }
-            for decoded in driver.ingest(value, from: characteristic.uuid) {
-                publish(.rawPacket(direction: .incoming, data: value, decoded: decoded))
-                for event in RingEventBridge.events(for: decoded) {
-                    publish(event)
-                }
-                if case let .supportFunctions(derived) = decoded {
-                    applySupportFunctions(derived)
-                }
-                // Advance any response-driven sync machine (no-op for jring).
-                activeSyncEngine?.handle(decoded)
-            }
+            // Capture before decoding: fragmented, malformed and multi-frame notifications each
+            // occupy exactly one trace row. Decoded consumers use their own event channel.
+            RingNotificationDelivery.receive(value,
+                decode: { driver.ingest(value, from: characteristic.uuid) },
+                publish: { publish($0) }, deliver: { deliverDecoded($0) })
         }
     }
 
@@ -974,8 +1046,12 @@ extension RingBLEClient: CBPeripheralDelegate {
         error: Error?
     ) {
         MainActor.assumeIsolated {
-            noteActivity()
+            guard self.peripheral?.identifier == peripheral.identifier, writeInFlight else { return }
+            if error == nil { noteActivity() }
+            let completion = inFlightCompletion
+            inFlightCompletion = nil
             writeInFlight = false
+            completion?(error.map { .failure($0) } ?? .success(()))
             pumpWrites()
         }
     }

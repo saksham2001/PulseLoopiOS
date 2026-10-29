@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import Combine
 #if canImport(UIKit)
 import UIKit
@@ -22,7 +23,7 @@ import UIKit
 struct MeasurementSheet: View {
     /// `.vitals` is one sweep that returns every metric the ring computes (jring's `0x24` packet);
     /// the rest are single-metric spot readings on devices that measure one thing at a time.
-    enum Kind: Hashable { case hr, spo2, hrv, bloodPressure, vitals }
+    enum Kind: Hashable { case hr, spo2, hrv, bloodPressure, vitals, stress, temperature }
 
     /// The measurement lifecycle. `searching` is the working state — counting down (HR) or up (rest).
     enum Stage { case preparing, searching, locking, result, error }
@@ -35,10 +36,13 @@ struct MeasurementSheet: View {
     @Environment(RingBLEClient.self) private var ble
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// For the user's temperature unit — the one reading shown in something other than its stored unit.
+    @Query private var profiles: [UserProfile]
 
     // MARK: State
     @State private var stage: Stage = .preparing
-    @State private var value: Int?
+    /// A `Double` because temperature has a decimal; every other kind holds a whole number.
+    @State private var value: Double?
     /// Diastolic, for blood pressure — the only single reading that is a pair.
     @State private var secondaryValue: Int?
     /// Populated for `.vitals`: every metric the sweep returned.
@@ -77,22 +81,27 @@ struct MeasurementSheet: View {
 
     private var color: Color { kind.tint }
     private var name: String { kind.title }
-    private var unit: String { kind.unit }
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
+    private var unit: String { kind == .temperature ? UnitsFormatter.temperatureUnit(units) : kind.unit }
     private var instruction: String { kind.instruction }
 
     /// The one measurement with a fixed, known duration — so the only one we can honestly count down.
     /// Sourced from the coordinator: copying the literal is how the ring and the measurement desync.
     /// Nil in demo mode too — no 30s window is running there, so a countdown would be pure theatre.
     private var countdownWindow: Double? {
-        guard kind == .hr, ble.state == .connected else { return nil }
+        // RwFit first waits for a history page boundary and command acceptance, so total
+        // wall-clock duration is variable even though the sampling window remains fixed.
+        guard kind == .hr, ble.state == .connected, ble.activeDeviceType != .rwfit else { return nil }
         return Double(coordinator.hrMeasureSeconds)
     }
 
     /// The big number in the ring. Blood pressure shows the systolic/diastolic pair.
     private var readingText: String? {
         guard let value else { return nil }
-        if kind == .bloodPressure, let secondaryValue { return "\(value)/\(secondaryValue)" }
-        return "\(value)"
+        if kind == .temperature { return UnitsFormatter.temperature(celsius: value, units: units).value }
+        let whole = Int(value.rounded())
+        if kind == .bloodPressure, let secondaryValue { return "\(whole)/\(secondaryValue)" }
+        return "\(whole)"
     }
 
     /// Explicit Done (vs auto-dismiss) is required under VoiceOver or Switch Control — and for the
@@ -467,15 +476,17 @@ struct MeasurementSheet: View {
             return
         }
 
-        let result: Int?
+        let result: Double?
         switch kind {
-        case .hr: result = await coordinator.measureHR()
-        case .spo2: result = await coordinator.measureSpO2()
-        case .hrv: result = await coordinator.measureHRV()
+        case .hr: result = await coordinator.measureHR().map(Double.init)
+        case .spo2: result = await coordinator.measureSpO2().map(Double.init)
+        case .hrv: result = await coordinator.measureHRV().map(Double.init)
+        case .stress: result = await coordinator.measureSpotVital(.stress)
+        case .temperature: result = await coordinator.measureSpotVital(.temperature)
         case .bloodPressure:
             let reading = await coordinator.measureBloodPressure()
             secondaryValue = reading?.diastolic
-            result = reading?.systolic
+            result = (reading?.systolic).map(Double.init)
         case .vitals: return   // handled above
         }
         if Task.isCancelled { return }
@@ -505,7 +516,7 @@ struct MeasurementSheet: View {
         if kind == .vitals {
             await revealVitals()
         } else {
-            await reveal(demo.value)
+            await reveal(demo.decimal ?? demo.value.map(Double.init))
         }
     }
 
@@ -524,7 +535,7 @@ struct MeasurementSheet: View {
     /// Land a finished single-metric reading: fill the ring, show the number, and (unless the user is
     /// on VoiceOver) close the sheet behind them.
     @MainActor
-    private func reveal(_ result: Int?) async {
+    private func reveal(_ result: Double?) async {
         if Task.isCancelled { return }
         guard let result else { enterError(); return }
         // A BP reading without its diastolic half is not a usable reading.

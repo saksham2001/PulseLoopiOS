@@ -20,21 +20,39 @@ struct CoachModelPrice: Equatable {
 /// `nil` so the UI can show "cost unavailable" rather than a wrong number.
 enum CoachPricingCatalog {
     /// Normalized-key → published list price, standard (non-batch) tier, as of
-    /// July 2026. Sources: platform OpenAI/Google/DeepSeek/MiniMax pricing pages,
+    /// October 2026. Sources: platform OpenAI/Google/DeepSeek/MiniMax pricing pages,
     /// platform.claude.com pricing docs, and openrouter.ai model pages. Estimates
-    /// only — OpenRouter's API-reported exact cost always takes precedence.
+    /// only — OpenRouter's API-reported exact cost always takes precedence. Models
+    /// that dropped out of the pickers keep their entry so a stored or Custom
+    /// choice still prices.
     private static let table: [String: CoachModelPrice] = [
-        // OpenAI (native) — CoachModel enum
+        // OpenAI (native) — CoachModel enum. GPT-6 bills the whole request at 2x
+        // input / 1.5x output above 272k input tokens.
+        "gpt-6-luna": CoachModelPrice(inputPer1M: 0.10, cachedInputPer1M: 0.01, outputPer1M: 0.50),
+        "gpt-6.1-sol": CoachModelPrice(inputPer1M: 2.00, cachedInputPer1M: 0.10, outputPer1M: 10.00),
+        "gpt-6-astra": CoachModelPrice(inputPer1M: 10.00, cachedInputPer1M: 1.00, outputPer1M: 50.00),
         "gpt-5.4-mini": CoachModelPrice(inputPer1M: 0.75, cachedInputPer1M: 0.075, outputPer1M: 4.50),
         "gpt-5.4": CoachModelPrice(inputPer1M: 2.50, cachedInputPer1M: 0.25, outputPer1M: 15.00),
         "gpt-5.5": CoachModelPrice(inputPer1M: 5.00, cachedInputPer1M: 0.50, outputPer1M: 30.00),
         // Gemini (native) — GeminiModel enum. gemini-2.0-flash was shut down
         // June 1 2026 and has no published price; it intentionally has no entry
-        // so the UI reports "cost unavailable".
+        // so the UI reports "cost unavailable". 4 Argon's rates double Dec 1 2026
+        // and 3.8 Flash's on Jan 1 2027.
+        "gemini-3.8-flash": CoachModelPrice(inputPer1M: 0.75, cachedInputPer1M: 0.075, outputPer1M: 3.75),
+        "gemini-3.5-flash-lite": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 2.50),
+        "gemini-4-argon": CoachModelPrice(inputPer1M: 2.00, cachedInputPer1M: 0.10, outputPer1M: 10.00),
         "gemini-2.5-flash": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 2.50),
         "gemini-2.5-pro": CoachModelPrice(inputPer1M: 1.25, cachedInputPer1M: 0.125, outputPer1M: 10.00), // ≤200k-token tier; >200k bills 2x
         // OpenRouter — OpenRouterModel enum (vendor/model slugs). List prices
         // match the vendors'; cached rates use the vendor cache-read price.
+        "anthropic/claude-sonnet-5.5": CoachModelPrice(inputPer1M: 2.00, cachedInputPer1M: 0.10, outputPer1M: 10.00),
+        "anthropic/claude-opus-5.5": CoachModelPrice(inputPer1M: 4.00, cachedInputPer1M: 0.20, outputPer1M: 20.00),
+        "anthropic/claude-haiku-5.5": CoachModelPrice(inputPer1M: 0.10, cachedInputPer1M: 0.01, outputPer1M: 0.50), // ≤100k-token tier
+        "openai/gpt-6.1-sol": CoachModelPrice(inputPer1M: 2.00, cachedInputPer1M: 0.10, outputPer1M: 10.00),
+        "openai/gpt-6-luna": CoachModelPrice(inputPer1M: 0.10, cachedInputPer1M: 0.01, outputPer1M: 0.50),
+        "google/gemini-4-argon": CoachModelPrice(inputPer1M: 2.00, cachedInputPer1M: 0.10, outputPer1M: 10.00),
+        "google/gemini-3.8-flash": CoachModelPrice(inputPer1M: 0.75, cachedInputPer1M: 0.075, outputPer1M: 3.75),
+        "deepseek/deepseek-v4.1-flash": CoachModelPrice(inputPer1M: 0.016, cachedInputPer1M: 0.005, outputPer1M: 0.891), // cheapest OpenRouter endpoint
         "anthropic/claude-sonnet-4.6": CoachModelPrice(inputPer1M: 3.00, cachedInputPer1M: 0.30, outputPer1M: 15.00),
         "anthropic/claude-opus-4.7": CoachModelPrice(inputPer1M: 5.00, cachedInputPer1M: 0.50, outputPer1M: 25.00),
         "openai/gpt-5.5": CoachModelPrice(inputPer1M: 5.00, cachedInputPer1M: 0.50, outputPer1M: 30.00),
@@ -42,16 +60,16 @@ enum CoachPricingCatalog {
         "google/gemini-2.5-flash": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 2.50),
         "google/gemini-2.5-pro": CoachModelPrice(inputPer1M: 1.25, cachedInputPer1M: 0.125, outputPer1M: 10.00),
         "deepseek/deepseek-v4-flash": CoachModelPrice(inputPer1M: 0.09, cachedInputPer1M: nil, outputPer1M: 0.18), // OpenRouter routes below DeepSeek's direct $0.14/$0.28
-        // MiniMax — MiniMaxModel enum. No published cache-read rate; -highspeed
-        // variants bill 2x the standard rate.
-        "minimax-m3": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: nil, outputPer1M: 1.20), // ≤512k-token tier; >512k bills 2x
-        "minimax-m2.7": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: nil, outputPer1M: 1.20),
-        "minimax-m2.7-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: nil, outputPer1M: 2.40),
-        "minimax-m2.5": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: nil, outputPer1M: 1.20),
-        "minimax-m2.5-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: nil, outputPer1M: 2.40),
-        "minimax-m2.1": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: nil, outputPer1M: 1.20),
-        "minimax-m2.1-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: nil, outputPer1M: 2.40),
-        "minimax-m2": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: nil, outputPer1M: 1.20),
+        // MiniMax — MiniMaxModel enum. -highspeed variants bill 2x the standard
+        // input/output rate; M2.5/M2.7 retire Nov 18 2026.
+        "minimax-m3": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.06, outputPer1M: 1.20), // ≤512k-token tier; >512k bills 2x
+        "minimax-m2.7": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.06, outputPer1M: 1.20),
+        "minimax-m2.7-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: 0.06, outputPer1M: 2.40),
+        "minimax-m2.5": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 1.20),
+        "minimax-m2.5-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: 0.03, outputPer1M: 2.40),
+        "minimax-m2.1": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 1.20),
+        "minimax-m2.1-highspeed": CoachModelPrice(inputPer1M: 0.60, cachedInputPer1M: 0.03, outputPer1M: 2.40),
+        "minimax-m2": CoachModelPrice(inputPer1M: 0.30, cachedInputPer1M: 0.03, outputPer1M: 1.20),
     ]
 
     /// The `effectiveModel` strings that always cost $0 (local / scripted).

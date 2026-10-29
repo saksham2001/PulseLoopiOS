@@ -75,6 +75,7 @@ A SmartHealth-flavoured unit speaks none of this — see
 | **R09** | Realtek RTL8762 | BLE 5.0 | Varies | Unknown | No | Unknown | |
 | **R10** | RTL8762 ESF | BLE 5.0 | 17 mAh | 5ATM | No | Vcare VC30F + STK8321 | Charging case: 200 mAh |
 | **R12** | Realtek RTL8762 | BLE 5.0 | 15/18 mAh | IP68 + 1ATM | Yes | Vcare VC30F + ST LIS2DOC | Newest (2025), 4g weight |
+| **Ring 2 Pro** | Realtek Bee (firmware `RY10HCR_*`) | BLE | Unknown | Unknown | No | LIS3DH + PPG | Advertises `COLMI Ring 2 Pro` (no serial suffix). On-demand HRV / stress / temperature — see [below](#colmi-ring-2-pro) |
 
 ### Yawell-branded QRing models
 
@@ -100,6 +101,25 @@ but speaks the same Nordic-UART QRing protocol. It pairs with both the **Da Ring
 
 PulseLoop matches R11 rings via the `R11C?_[0-9A-F]{4}$` pattern in the Colmi QRing driver.
 Capabilities should match the R10 (same VC30F + STK8321 sensor pair).
+
+## Colmi Ring 2 Pro
+
+Same QRing UART + big-data protocol as the R02 family, so it rides the Colmi driver; QRing does not
+OS-bond it. Verified on hardware in the Android port (PulseLoopAndroid #100); the iOS port is
+unit-tested against the same captures but has not been run against the ring.
+
+- **On-demand HRV, stress and temperature** (`WearableModel.extraCapabilities`, granted only when the
+  advertised name matches). QRing's manual measures: start `69 <type> 25` with type `0a` HRV, `08`
+  stress, `0b` temperature; the ring streams `69 <type> <err> <value>` (value 0 = warm-up, ~25 s),
+  then goes quiet. The reading is the last value, settled one second after the stream stops
+  (`SpotVitalWindow`, 75 s ceiling). Stop is `6a <type> <value> 00` for HRV and stress, and a fixed
+  `6a 0b 00 00` for temperature (`StopHeartRateReq.stopTemperatureCheck`). Temperature is
+  `raw / 10 + 20` °C.
+- **Sleep.** A session of 180 minutes or less is filed under the nap action (`bc 3e`) with main sleep
+  (`bc 27`) left empty; longer sessions land on `bc 27`, which iOS decodes (pinned by
+  `testRing2ProCapturedNightDecodes`). **iOS does not request or decode `bc 3e`**, so short sleeps on
+  this ring are not imported on iOS yet. Firmware analysis shows light/deep/REM are generated with
+  `rand()`; only the asleep/awake boundaries come from the sensors.
 
 ## Sensors
 

@@ -186,7 +186,12 @@ final class RingSyncCoordinator {
 
     private(set) var hrState: MeasureState = .idle
     private(set) var spo2State: MeasureState = .idle
-    private(set) var hrvState: MeasureState = .idle
+    /// One state per `SpotVital`. HRV's is also `hrvState`, which the first-value HRV leg drives.
+    private(set) var spotVitalStates: [SpotVital: MeasureState] = [:]
+    private(set) var hrvState: MeasureState {
+        get { vitalState(.hrv) }
+        set { spotVitalStates[.hrv] = newValue }
+    }
     /// `.done` carries the systolic value; read `latestBloodPressureValue` for the full pair.
     private(set) var bpState: MeasureState = .idle
     /// Combined sweep (all vitals at once). `.done` carries HR; the caller keeps the full reading.
@@ -197,6 +202,7 @@ final class RingSyncCoordinator {
     /// Driven by `.syncProgress` events; cleared on the `"done"` stage, on disconnect, or by a
     /// safety timeout so a dropped completion signal can't leave the progress bar stuck on.
     private(set) var syncStage: String?
+    private(set) var syncError: String?
     /// Whether a ring data sync is in flight — drives the thin progress bar under the header.
     /// Stored and mutated only on start/end transitions (not derived from `syncStage`): a computed
     /// `syncStage != nil` would register observers on `syncStage` itself, invalidating the whole
@@ -237,6 +243,10 @@ final class RingSyncCoordinator {
     /// The samples of the HR measurement in flight, and the rule for whether they settled — see
     /// `HRSampleWindow`, which owns the warm-up echo and the consistency gate.
     private var hrWindow = HRSampleWindow()
+    /// The streamed values of an on-demand HRV / stress / temperature run — see `SpotVitalWindow`.
+    private var spotVitalWindow = SpotVitalWindow()
+    /// The ring ended the `SpotVital` run in flight with an error before any value arrived.
+    private var spotVitalNoReading: SpotVital?
     /// True once the current measurement has produced a real (post-warm-up) bpm. Drives the live value
     /// in the measurement sheet, and keeps a stale `latestHRValue` from passing for a fresh reading.
     var measurementReceivedReading: Bool { hrWindow.receivedReading }
@@ -280,6 +290,9 @@ final class RingSyncCoordinator {
     /// HRV needs a stretch of beats to stabilize, so give it a longer on-finger window. (A ring without
     /// an HRV sensor no longer waits it out — it now refuses the `03 2f` start and we fail immediately.)
     private let hrvMeasureSeconds: UInt64 = 45
+    /// Ceiling for a streamed HRV / stress / temperature run — QRing's `CountDownTimer(75000L, …)`. A
+    /// run normally ends ~30 s in, once the ring goes quiet (`SpotVitalWindow`).
+    private let spotVitalMeasureSeconds: UInt64 = 75
     /// BP rides the same PPG warm-up as SpO2 and the ring's estimator settles slowly (observed: ~12 s).
     private let bpMeasureSeconds: UInt64 = 45
     /// The combined sweep computes every metric, so give it the longest window (observed: the ring
@@ -341,12 +354,13 @@ final class RingSyncCoordinator {
         if cal.hasBPReference {
             engine?.setBloodPressureCalibration(systolic: cal.bpReferenceSystolic, diastolic: cal.bpReferenceDiastolic)
         }
+        syncError = nil
         engine?.runStartup()
         // Refresh the jring GATT battery on every manual sync (jring only pushes battery on connect);
         // Colmi's battery re-request is part of its `runStartup` handshake. No-op when the GATT
         // characteristic is absent.
         client.readBattery()
-        lastSyncAt = Date()
+        if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
         // Show the progress bar immediately; the engine's own `.syncProgress` stages refine the
         // label and the `"done"` stage (or the stall timeout) clears it.
         updateSync(stage: "Syncing…")
@@ -491,6 +505,8 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureHR() async -> Int? {
         guard hrState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { hrState = .failed; return nil }
         hrState = .measuring
         // NOTE: do *not* clear `latestHRValue` — it's the live value the workout UI shows, so a new
@@ -502,6 +518,14 @@ final class RingSyncCoordinator {
         // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
         let token = spot.begin(mode: YCBTMeasurementMode.heartRate)
         engine?.measureHeartRateSpot()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.heartRate)) {
+            engine?.stopHeartRate()
+            spot.end(token)
+            hrState = .failed
+            return nil
+        }
+        if client.activeDeviceType == .rwfit { hrWindow.begin() }
 
         // Sample the full window in 0.5s steps: `handle(_:)` discards everything inside the warm-up and
         // collects the rest into `hrSamples`. We break out early only where continuing is pointless —
@@ -546,6 +570,8 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureSpO2() async -> Int? {
         guard spo2State != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
@@ -553,6 +579,13 @@ final class RingSyncCoordinator {
         spo2NotWornReported = false
         let token = spot.begin(mode: YCBTMeasurementMode.spo2)
         engine?.startSpO2()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.spo2)) {
+            engine?.stopSpO2()
+            spot.end(token)
+            spo2State = .failed
+            return nil
+        }
         let result = await pollForValue(
             window: spo2MeasureSeconds,
             value: { self.latestSpO2Value },
@@ -575,12 +608,24 @@ final class RingSyncCoordinator {
     /// the abort below: the `03 2f` refusal ends the measurement in the time one reply takes to arrive.
     @discardableResult
     func measureHRV() async -> Int? {
+        if engine?.streamsSpotVitals == true {
+            return await measureSpotVital(.hrv).map { Int($0.rounded()) }
+        }
         guard hrvState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { hrvState = .failed; return nil }
         hrvState = .measuring
         latestHRVValue = nil
         let token = spot.begin(mode: YCBTMeasurementMode.hrv)
         engine?.startHRV()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.hrv)) {
+            engine?.stopHRV()
+            spot.end(token)
+            hrvState = .failed
+            return nil
+        }
         let result = await pollForValue(
             window: hrvMeasureSeconds,
             value: { self.latestHRVValue },
@@ -594,17 +639,84 @@ final class RingSyncCoordinator {
         return result
     }
 
+    func vitalState(_ vital: SpotVital) -> MeasureState { spotVitalStates[vital] ?? .idle }
+
+    /// An on-demand HRV / stress / temperature run on a family that streams them (Colmi `0x69` types
+    /// 0a/08/0b — QRing's manual measure screens). Ends on `SpotVitalWindow`'s rule — the ring has gone
+    /// quiet after streaming — or at the ceiling, taking whatever last value arrived; fails on the
+    /// ring's not-worn error or a dropped link. The streamed values are never stored (they reach us only
+    /// as `.spotVitalSample` on the raw-packet feed); the one settled reading is published once at the
+    /// end, so it is stored as one row.
+    @discardableResult
+    func measureSpotVital(_ vital: SpotVital) async -> Double? {
+        guard vitalState(vital) != .measuring else { return nil }
+        spotVitalStates[vital] = .idle   // no stale verdict on a refusal below
+        guard client.state == .connected, let engine, engine.streamsSpotVitals else {
+            spotVitalStates[vital] = .failed
+            return nil
+        }
+        // Refused during a workout: `0x69 <type>` takes over the ring's single realtime engine, so the
+        // workout would lose its live bpm for the whole run.
+        guard !workoutHRActive else { return nil }
+        // Refused while another spot measurement holds the sensor (Android's `measureVitalOnly`): each
+        // run's `0x6A` stop tears down the ring's one realtime engine, ending the other run with it.
+        guard ![hrState, spo2State, bpState].contains(.measuring),
+              !spotVitalStates.values.contains(.measuring) else { return nil }
+        spotVitalStates[vital] = .measuring
+        measureNotWorn = false
+        spotVitalNoReading = nil
+        spotVitalWindow.begin(vital)
+        engine.startSpotVital(vital)
+
+        var aborted = false
+        for _ in 0..<(Int(spotVitalMeasureSeconds) * 2) {   // 0.5 s granularity
+            if Task.isCancelled || spotVitalNoReading == vital { aborted = true; break }
+            if client.state != .connected { aborted = true; break }
+            // A workout started inside the run and now wants the realtime engine back.
+            if workoutHRActive { aborted = true; break }
+            if spotVitalWindow.isSettled(at: Date()) { break }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        let result = aborted ? nil : spotVitalWindow.settled
+
+        // The stop hands the ring back the reading, as QRing's does, and also tears down the workout's
+        // realtime stream; bring that straight back.
+        self.engine?.stopSpotVital(vital, settled: result)
+        restartWorkoutHeartRateIfActive()
+        spotVitalStates[vital] = result.map { .done(Int($0.rounded())) } ?? .failed
+        if let result {
+            let now = Date()
+            let event: PulseEvent
+            switch vital {
+            case .hrv: event = .hrvSample(value: Int(result.rounded()), timestamp: now)
+            case .stress: event = .stressSample(value: Int(result.rounded()), timestamp: now)
+            case .temperature: event = .temperatureSample(celsius: result, timestamp: now)
+            }
+            await PulseEventBus.shared.publish(event)
+        }
+        return result
+    }
+
     /// Spot blood-pressure reading. The engine starts the ring's BP mode (jring: `0x23 01`); the
     /// systolic/diastolic pair arrives together in the ring's combined-sensor packet, so we poll on
     /// the systolic value and read the pair. Capability-gated to `.manualBloodPressure`.
     @discardableResult
     func measureBloodPressure() async -> BloodPressureReading? {
         guard bpState != .measuring else { return nil }
+        if client.activeDeviceType == .rwfit,
+           [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { bpState = .failed; return nil }
         bpState = .measuring
         latestBloodPressureValue = nil
         let token = spot.begin(mode: YCBTMeasurementMode.bloodPressure)
         engine?.startBloodPressure()
+        if let rwfit = engine as? RWfitSyncEngine,
+           !(await rwfit.awaitMeasurementStart(type: RWfitJLDataType.bloodPressure)) {
+            engine?.stopBloodPressure()
+            spot.end(token)
+            bpState = .failed
+            return nil
+        }
         _ = await pollForValue(
             window: bpMeasureSeconds,
             value: { self.latestBloodPressureValue?.systolic },
@@ -669,6 +781,7 @@ final class RingSyncCoordinator {
     // MARK: - Event handling
 
     private func handle(_ event: PulseEvent) {
+        if handleRWfit(event) { return }
         switch event {
         case let .heartRateSample(bpm, _):
             latestHRValue = bpm
@@ -702,7 +815,7 @@ final class RingSyncCoordinator {
                 if flagged { measureNotWorn = true }
             }
         case .deviceStateChanged(.connected, _):
-            lastSyncAt = Date()
+            if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was
             // running, so re-issue the live HR command.
             restartWorkoutHeartRateIfActive()
@@ -715,15 +828,64 @@ final class RingSyncCoordinator {
             }
         case let .syncProgress(stage):
             updateSync(stage: stage)
-        case let .rawPacket(direction, _, decoded):
+        case let .decodedPacket(decoded):
             // `.measurementRejected` has no `PulseEvent` of its own — it is a verdict on a command, not
             // data — so the raw-packet feed (which carries every decoded frame) is where a measurement
             // hears the ring say no.
-            guard direction == .incoming, case let .measurementRejected(mode) = decoded else { break }
-            spot.noteRejected(mode: mode)
+            switch decoded {
+            case let .measurementRejected(mode):
+                spot.noteRejected(mode: mode)
+            case let .spotVitalSample(vital, value, timestamp):
+                if vitalState(vital) == .measuring { spotVitalWindow.collect(vital, value: value, at: timestamp) }
+            case let .spotVitalNoReading(vital, _):
+                // Only before any value: a late error must not turn a reading into a failure.
+                if vitalState(vital) == .measuring, !spotVitalWindow.receivedReading {
+                    spotVitalNoReading = vital
+                    measureNotWorn = true
+                }
+            default:
+                break
+            }
         default:
             mirrorLiveValue(event)
         }
+    }
+
+    private func handleRWfit(_ event: PulseEvent) -> Bool {
+        switch event {
+        case let .rwfitInitialization(state):
+            switch state {
+            case .initializing:
+                syncError = nil
+                updateSync(stage: "Connecting to your ring…")
+            case .ready: break
+            case let .failed(reason):
+                endSync()
+                syncError = reason
+            }
+        case let .rwfitSyncOutcome(outcome):
+            endSync()
+            switch outcome {
+            case .success:
+                lastSyncAt = Date()
+                syncError = nil
+            case let .partial(_, reason), let .failed(reason): syncError = reason
+            case .cancelled: break
+            }
+        case let .rwfitMeasurementOutcome(outcome):
+            guard case let .failed(type, _) = outcome else { return true }
+            let mode: UInt8?
+            switch type {
+            case RWfitJLDataType.heartRate: mode = YCBTMeasurementMode.heartRate
+            case RWfitJLDataType.spo2: mode = YCBTMeasurementMode.spo2
+            case RWfitJLDataType.hrv: mode = YCBTMeasurementMode.hrv
+            case RWfitJLDataType.bloodPressure: mode = YCBTMeasurementMode.bloodPressure
+            default: mode = nil
+            }
+            if let mode { spot.noteRejected(mode: mode) }
+        default: return false
+        }
+        return true
     }
 
     // MARK: - Sync progress
@@ -736,7 +898,7 @@ final class RingSyncCoordinator {
     /// `syncHistory()` is a no-op on jring/Colmi) keeps the label honest for the families whose history
     /// only comes down with the connect handshake.
     private func updateSync(stage: String) {
-        lastSyncAt = Date()
+        if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
         guard stage != "done" else { endSync(); return }
         syncStage = stage
         // Transition-guarded: Observation notifies on every set (no equality check), so an

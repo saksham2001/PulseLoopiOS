@@ -30,7 +30,7 @@ final class RWfitDriverTests: XCTestCase {
         let driver = RWfitDriver(writer: FakeWriter())
         XCTAssertEqual(driver.framing, .legacy)
         driver.servicesDiscovered([dataService])
-        XCTAssertEqual(driver.framing, .legacy, "A00A alone means the legacy firmware")
+        XCTAssertEqual(driver.framing, .legacy, "A00A alone is only a legacy starting hint")
     }
 
     func testJieliServiceSelectsJieliFraming() {
@@ -92,123 +92,136 @@ final class RWfitDriverTests: XCTestCase {
 
     // MARK: - JieLi ingest
 
-    func testJieliFrameIsAckedAndCapabilitiesAnnouncedOnce() {
-        let writer = FakeWriter()
-        let driver = RWfitDriver(writer: writer)
-        driver.servicesDiscovered([dataService, CBUUID(string: RWfitUUIDs.jieli)])
-
-        let codec = RWfitJLCodec()
-        let events = driver.ingest(codec.encode(payload: [0x02, 0x03, 0x10, 76, 0, 0]), from: notify)
-
-        // ACK first: flag 0x11 + echoed triple.
-        XCTAssertEqual(writer.sent.count, 1)
-        let ack = [UInt8](writer.sent[0])
-        XCTAssertEqual(ack[1], 0x11)
-        XCTAssertEqual(Array(ack[6...]), [0x02, 0x03, 0x10])
-
-        // Battery decoded, and the JieLi link's realtime capability grant rides the first ingest.
-        guard case .battery? = events.first else { return XCTFail("got \(events)") }
-        guard case let .supportFunctions(caps)? = events.last else {
-            return XCTFail("expected the framing capability grant, got \(events)")
+    func testReplyBodySurvivesBothResponseFlagsWithoutInferredCapabilities() {
+        for isAck in [false, true] {
+            let writer = FakeWriter()
+            let driver = RWfitDriver(writer: writer)
+            let events = driver.ingest(RWfitJLCodec().encode(payload: [2, 3, 0x10, 76, 0, 0], isAck: isAck), from: notify)
+            XCTAssertEqual(writer.sent.count, isAck ? 0 : 1)
+            XCTAssertTrue(driver.framingValidated)
+            XCTAssertEqual(driver.framing, .jieli)
+            XCTAssertTrue(events.contains { if case .battery(percent: 76) = $0 { true } else { false } })
+            XCTAssertFalse(events.contains { if case .supportFunctions = $0 { true } else { false } })
         }
-        XCTAssertTrue(caps.isSuperset(of: RWfitDriver.jieliRealtimeCapabilities))
-
-        // Second frame: no repeat announcement.
-        let more = driver.ingest(codec.encode(payload: [0x02, 0x03, 0x10, 75, 0, 0]), from: notify)
-        XCTAssertFalse(more.contains { if case .supportFunctions = $0 { true } else { false } })
     }
 
-    func testCapabilityGrantsAccumulateAcrossSources() {
+    func testMalformedModernFrameCannotValidateFramingOrGrantCapabilities() {
         let writer = FakeWriter()
         let driver = RWfitDriver(writer: writer)
-        driver.servicesDiscovered([dataService, CBUUID(string: RWfitUUIDs.jieli)])
-        let codec = RWfitJLCodec()
-
-        _ = driver.ingest(codec.encode(payload: [0x02, 0x03, 0x10, 76, 0, 0]), from: notify)
-        // Bind reply grants BP via TLV; the announcement must still include the framing grant —
-        // `applySupportFunctions` recomputes from the latest set, so partial sets would drop it.
-        let bind: [UInt8] = [0x03, 0x01, 0x00, 1, 0, 0, 0, 0, 0x05, 0x04, 0x00]
-        let events = driver.ingest(codec.encode(payload: bind), from: notify)
-        guard case let .supportFunctions(caps)? = events.last else { return XCTFail("got \(events)") }
-        XCTAssertTrue(caps.isSuperset(of: RWfitDriver.jieliRealtimeCapabilities))
-        XCTAssertTrue(caps.isSuperset(of: [.bloodPressure, .manualBloodPressure]))
+        var frame = RWfitJLCodec().encode(payload: [2, 3, 0x10, 76, 0, 0])
+        frame[6] ^= 0xff
+        XCTAssertTrue(driver.ingest(frame, from: notify).isEmpty)
+        XCTAssertFalse(driver.framingValidated)
+        XCTAssertTrue(writer.sent.isEmpty)
     }
 
-    func testRealtimeAckUsesFourByteQuirk() {
+    func testPushIsDecodedWithoutAcknowledgement() {
         let writer = FakeWriter()
         let driver = RWfitDriver(writer: writer)
-        driver.servicesDiscovered([dataService, CBUUID(string: RWfitUUIDs.jieli)])
-
-        let codec = RWfitJLCodec()
-        _ = driver.ingest(codec.encode(payload: [0x06, 0x09, 0x00, 0x03, 0x05, 62]), from: notify)
-        let ack = [UInt8](writer.sent[0])
-        XCTAssertEqual(Array(ack[6...]), [0x06, 0x09, 0x00, 0x00])
+        var frame = RWfitJLCodec().encode(payload: [2, 3, 0x10, 76, 0, 0])
+        frame[1] = 0x21
+        let events = driver.ingest(frame, from: notify)
+        XCTAssertTrue(writer.sent.isEmpty)
+        XCTAssertTrue(events.contains { if case .battery(percent: 76) = $0 { true } else { false } })
     }
 
-    // MARK: - Command gate
-
-    func testGateHoldsSecondCommandUntilDeviceAck() async {
-        let writer = FakeWriter()
-        let legacy = RWfitLegacyCodec()
-        let gate = RWfitCommandGate(writer: writer, legacyCodec: legacy, jlCodec: RWfitJLCodec())
-
-        gate.submit(.legacy(cmd: 0x01, payload: []))
-        gate.submit(.legacy(cmd: 0x02, payload: []))
-        XCTAssertEqual(writer.sent.count, 1, "strict single-outstanding")
-        XCTAssertEqual([UInt8](writer.sent[0])[2], 0x01)
-
-        gate.noteLegacyAck(cmd: 0x01, serial: 1)
-        try? await Task.sleep(nanoseconds: 250_000_000)   // spacing (100 ms) + margin
-        XCTAssertEqual(writer.sent.count, 2, "device ACK releases the next command")
-        XCTAssertEqual([UInt8](writer.sent[1])[2], 0x02)
+    private final class TrackedWriter: RingCommandWriter {
+        nonisolated deinit {}
+        var sent: [Data] = []
+        var confirmations: [@MainActor (Result<Void, Error>) -> Void] = []
+        func enqueue(_ command: Data) { sent.append(command) }
+        func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+            sent.append(command)
+            confirmations.append(completion)
+        }
     }
 
-    func testGateIgnoresMismatchedAck() async {
-        let writer = FakeWriter()
-        let gate = RWfitCommandGate(
-            writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec()
-        )
-        gate.submit(.legacy(cmd: 0x01, payload: []))
-        gate.submit(.legacy(cmd: 0x02, payload: []))
-
-        gate.noteLegacyAck(cmd: 0x99, serial: 1)   // wrong cmd
-        gate.noteLegacyAck(cmd: 0x01, serial: 42)  // wrong serial
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertEqual(writer.sent.count, 1, "a mismatched ACK must not release the queue")
-        gate.cancel()
+    private func waitForWrites(_ count: Int, writer: TrackedWriter) async {
+        for _ in 0..<100 {
+            if writer.sent.count >= count { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Expected \(count) writes, got \(writer.sent.count)")
     }
 
-    func testGateRetriesOnceThenDropsOnTimeout() async {
-        let writer = FakeWriter()
-        let gate = RWfitCommandGate(
-            writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec(),
-            responseTimeout: 0.05
-        )
-        gate.submit(.legacy(cmd: 0x01, payload: []))
-        gate.submit(.legacy(cmd: 0x02, payload: []))
-
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        let cmds = writer.sent.map { [UInt8]($0)[2] }
-        // 0x02 begins its own attempt/retry cycle once 0x01 is dropped — only the order matters.
-        XCTAssertEqual(Array(cmds.prefix(3)), [0x01, 0x01, 0x02],
-                       "one retry of 0x01, then the queue moves on")
-        gate.cancel()
-    }
-
-    func testGateJieliAckMatchesTriple() async {
-        let writer = FakeWriter()
-        let gate = RWfitCommandGate(
-            writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec()
-        )
+    func testGateRetainsEarlyResponseUntilActualWriteConfirmation() async throws {
+        let writer = TrackedWriter()
+        let gate = RWfitCommandGate(writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec(), responseTimeout: 0.01)
         gate.framing = .jieli
-        gate.submit(.jieli(payload: [0x02, 0x03, 0x10]))
-        gate.submit(.jieli(payload: [0x02, 0x04, 0x10]))
-        XCTAssertEqual(writer.sent.count, 1)
-
-        gate.noteJieliAck(triple: RWfitJLTriple(cmd: 0x02, key: 0x03, keyFlag: 0x10))
-        try? await Task.sleep(nanoseconds: 400_000_000)   // spacing (230 ms) + margin
-        XCTAssertEqual(writer.sent.count, 2)
-        XCTAssertEqual(Array([UInt8](writer.sent[1])[6...]), [0x02, 0x04, 0x10])
+        var completed = false
+        let task = Task { @MainActor in
+            let value = try await gate.execute(.jieli(payload: [2, 3, 0x10]))
+            completed = true
+            return value
+        }
+        await waitForWrites(1, writer: writer)
+        gate.noteJieliFrame(flag: 0x11, triple: .init(cmd: 2, key: 3, keyFlag: 0), payload: [2, 3, 0, 76])
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertFalse(completed)
+        XCTAssertEqual(writer.sent.count, 1, "Response timer must not run while queued for transmission")
+        writer.confirmations[0](.success(()))
+        let value = try await task.value
+        XCTAssertEqual(value, [2, 3, 0, 76])
         gate.cancel()
     }
+
+    func testGateIgnoresPushAndWrongCommandThenReturnsWriteFailure() async {
+        let writer = TrackedWriter()
+        let gate = RWfitCommandGate(writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec())
+        let task = Task { try await gate.execute(.jieli(payload: [2, 3, 0x10])) }
+        await waitForWrites(1, writer: writer)
+        gate.noteJieliFrame(flag: 0x21, triple: .init(cmd: 2, key: 3, keyFlag: 0), payload: [2, 3, 0, 76])
+        gate.noteJieliFrame(flag: 0x11, triple: .init(cmd: 2, key: 4, keyFlag: 0), payload: [2, 4, 0])
+        writer.confirmations[0](.failure(RWfitSessionError.unavailable))
+        do { _ = try await task.value; XCTFail("Write failure must propagate") }
+        catch { XCTAssertEqual(error.localizedDescription, RWfitSessionError.unavailable.localizedDescription) }
+        gate.cancel()
+    }
+
+    func testGateRetriesModernRequestTwiceThenFails() async {
+        let writer = TrackedWriter()
+        let gate = RWfitCommandGate(writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec(), responseTimeout: 0.01)
+        gate.framing = .jieli
+        let task = Task { try await gate.execute(.jieli(payload: [2, 3, 0x10])) }
+        for attempt in 0..<3 {
+            await waitForWrites(attempt + 1, writer: writer)
+            guard writer.confirmations.count > attempt else { gate.cancel(); return }
+            writer.confirmations[attempt](.success(()))
+        }
+        do { _ = try await task.value; XCTFail("Silence must fail") }
+        catch { XCTAssertEqual(error.localizedDescription, RWfitSessionError.timeout.localizedDescription) }
+        XCTAssertEqual(writer.sent.count, 3)
+        gate.cancel()
+    }
+
+    func testLegacyAckDoesNotCompletePayloadReadAndCancellationReleasesWaiter() async {
+        let writer = TrackedWriter()
+        let gate = RWfitCommandGate(writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec())
+        var completed = false
+        let task = Task { @MainActor in
+            _ = try await gate.execute(.legacy(cmd: 1, payload: []))
+            completed = true
+        }
+        await waitForWrites(1, writer: writer)
+        writer.confirmations[0](.success(()))
+        gate.noteLegacyAck(cmd: 1, serial: 1)
+        await Task.yield()
+        XCTAssertFalse(completed)
+        gate.cancel()
+        do { try await task.value; XCTFail("Cancellation must throw") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
+    func testDestructiveDeleteIsNeverAutomaticallyRetried() async {
+        let writer = TrackedWriter()
+        let gate = RWfitCommandGate(writer: writer, legacyCodec: RWfitLegacyCodec(), jlCodec: RWfitJLCodec(), responseTimeout: 0.01)
+        gate.framing = .jieli
+        let task = Task { try await gate.execute(.jieli(payload: [5, 5, 0x30]), needsPayload: false) }
+        await waitForWrites(1, writer: writer)
+        writer.confirmations[0](.success(()))
+        do { _ = try await task.value; XCTFail("Lost delete acknowledgement must fail") }
+        catch { XCTAssertEqual(error.localizedDescription, RWfitSessionError.timeout.localizedDescription) }
+        XCTAssertEqual(writer.sent.count, 1, "Retry could consume a page that was never journaled")
+        gate.cancel()
+    }
+
 }

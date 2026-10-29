@@ -33,6 +33,13 @@ struct WearableModel: Identifiable {
     /// indistinguishable from jring until GATT discovery, so its explicit card accepts only the two
     /// classifications that can legitimately describe that hardware (`.jring` and `.crp`).
     var forcedFamilyScanMatches: Set<RingDeviceType> = []
+    /// Capabilities this model has beyond its family coordinator's, added to the connected ring's set
+    /// when this model is resolved — for features the family's protocol carries but nothing on the wire
+    /// says a given ring supports (QRing decides those from a server-side per-model feature list, not
+    /// from the `0x3C` reply). Granted only when the ring's advertised name identifies this model,
+    /// never from the carousel fallback (`RingBLEClient.modelExtraCapabilities`). Add a model only once
+    /// it is shown to work on real hardware.
+    var extraCapabilities: Set<WearableCapability> = []
 
     /// Maturity of this model's driver, mirrored from its `family` (the real source of truth).
     var supportLevel: WearableSupportLevel { family.supportLevel }
@@ -159,6 +166,14 @@ extension WearableModel {
         "colmi-r11", "Colmi R11", brand: "Colmi", pattern: "^R11C_[0-9A-F]{4}$", imageName: "yawell-r11"
     )
     static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi", pattern: "^COLMI R12_.*")
+    /// Advertises its full marketing name with no `_<hex>` serial (hardware capture, 2026-10-03) and
+    /// reports hardware `RY10H…`. QRing drives it over the same UART/big-data pair as the rest of this
+    /// family and does not OS-bond it. On-demand HRV / stress / temperature (`0x69` types 0a/08/0b)
+    /// were captured from QRing on it and verified on hardware in the Android port (PulseLoopAndroid #100).
+    static let colmiRing2Pro = colmiFamily(
+        "colmi-ring-2-pro", "Colmi Ring 2 Pro", brand: "Colmi", pattern: "^COLMI Ring 2 Pro$",
+        extraCapabilities: [.manualHrv, .manualStress, .manualTemperature]
+    )
 
     /// The R99 — the one SmartHealth-Colmi we have actually looked at (the owner's, captured with nRF
     /// Connect as `R99 54DC`). It stays under the **Colmi** brand tab because that is where its owner
@@ -275,14 +290,16 @@ extension WearableModel {
         _ name: String,
         brand: String,
         pattern: String,
-        imageName: String? = nil
+        imageName: String? = nil,
+        extraCapabilities: Set<WearableCapability> = []
     ) -> WearableModel {
         // Asset-catalog image name matches the model id (see PulseLoop/Assets.xcassets).
         WearableModel(
             id: id, displayName: name, brand: brand, family: .colmiR02,
             tint: PulseColors.hrv, blurb: qringBlurb,
             advertisedNamePatterns: [pattern], imageName: imageName ?? id,
-            appVariants: colmiAppVariants
+            appVariants: colmiAppVariants,
+            extraCapabilities: extraCapabilities
         )
     }
 
@@ -378,7 +395,7 @@ extension WearableModel {
     /// alphabetically, so this array's order is not user-visible.
     static let catalog: [WearableModel] = [
         jring,
-        colmiR02, colmiR03, colmiR06, colmiR07, colmiR08, colmiR09, colmiR10, colmiR11, colmiR12,
+        colmiR02, colmiR03, colmiR06, colmiR07, colmiR08, colmiR09, colmiR10, colmiR11, colmiR12, colmiRing2Pro,
         colmiR99,
         yawellR05, yawellR10, yawellR11, h59,
         // Ahead of the YCBT siblings: `model(advertisedName:)` takes the first pattern that matches, and

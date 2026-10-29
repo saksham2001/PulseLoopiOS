@@ -162,7 +162,10 @@ enum RingEventBridge {
     /// This matters more for history than for live data: a ring replays its *entire* log on every sync
     /// and history rows upsert on (kind, timestamp), so one misdecoded record doesn't just flicker —
     /// it re-persists on every future sync until the ring forgets it.
-    private static func isPlausible(kind: MeasurementKind, value: Double) -> Bool {
+    ///
+    /// Also the band an on-demand spot reading settles within (`SpotVitalWindow`), so a streamed value
+    /// and a stored one can never be judged by two copies of the same ranges.
+    static func isPlausible(kind: MeasurementKind, value: Double) -> Bool {
         switch kind {
         case .heartRate: return hrRange.contains(Int(value))
         case .spo2: return spo2Range.contains(Int(value))
@@ -180,6 +183,10 @@ enum RingEventBridge {
 
     private static func extraMetricEvents(for decoded: RingDecodedEvent) -> [PulseEvent] {
         switch decoded {
+        case let .rwfitMeasurementStatus(type, status):
+            return [.rwfitMeasurement(type: type, status: status)]
+
+
         case let .bloodPressureSample(systolic, diastolic, timestamp):
             guard systolicRange.contains(systolic), diastolicRange.contains(diastolic) else { return [] }
             return [.bloodPressureSample(systolic: systolic, diastolic: diastolic, timestamp: timestamp)]

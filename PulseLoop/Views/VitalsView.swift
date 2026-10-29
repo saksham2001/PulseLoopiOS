@@ -96,10 +96,13 @@ struct VitalsView: View {
                 (.manualHeartRate, "Measure HR", .hr),
                 (.manualSpo2, "Measure SpO₂", .spo2),
                 (.manualHrv, "Measure HRV", .hrv),
+                (.manualStress, "Measure Stress", .stress),
+                (.manualTemperature, "Measure Temp", .temperature),
             ]
             let available = spots.filter { caps.contains($0.0) }
             if !available.isEmpty {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: available.count), spacing: 8) {
+                // At most three to a row: a Ring 2 Pro offers five, which would not fit on one line.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: min(available.count, 3)), spacing: 8) {
                     ForEach(available, id: \.2) { _, label, kind in
                         QuickActionButton(label: label, accent: kind == .hr) { measuring = kind }
                     }

@@ -24,7 +24,7 @@ enum CoachSummaryGenerator {
             let body = try OpenAIRequestBuilder.data(
                 model: flags.model, input: input, tools: [],
                 textFormat: CoachSummarySchema.textFormat,
-                previousResponseId: nil, reasoningEffort: flags.settings.reasoningEffort
+                previousResponseId: nil, reasoningEffort: flags.settings.resolvedReasoningEffort
             )
             let response = try await client.send(requestBody: body)
             return CoachSummaryContent.decode(fromJSON: response.outputText) ?? fallback

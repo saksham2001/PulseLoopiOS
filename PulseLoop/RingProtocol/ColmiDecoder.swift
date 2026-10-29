@@ -28,6 +28,11 @@ struct ColmiDecoder {
             return [.battery(percent: Int(v[1]))]
 
         case ColmiCommandID.manualHeartRate:
+            // An on-demand HRV / stress / temperature run streams on the same opcode, told apart by
+            // its reading type in byte 1. Every other type keeps the heart-rate decode below.
+            if let vital = ColmiCommandID.spotVital(readingType: v[1]) {
+                return Self.decodeSpotVital(vital, errorCode: v[2], raw: Int(v[3]), now: now)
+            }
             // 69 <?> <errorCode> <bpm>. errorCode: 0=ok, else worn-incorrectly/temporary.
             // The manual measurement is a *continuous stream* that warms up emitting bpm 0 for ~25s
             // before real readings — so a 0 with no error is warm-up, NOT a terminal "no reading".
@@ -338,6 +343,23 @@ struct ColmiDecoder {
             }
         }
         return events
+    }
+
+    /// `69 <type> <errorCode> <value>`: a value of 0 with no error is warm-up (the ring streams zeros
+    /// for ~25 s before real values), not a reading.
+    private static func decodeSpotVital(_ vital: SpotVital, errorCode: UInt8, raw: Int, now: Date) -> [RingDecodedEvent] {
+        if errorCode != 0 { return [.spotVitalNoReading(vital: vital, timestamp: now)] }
+        guard raw > 0 else { return [] }
+        return [.spotVitalSample(vital: vital, value: spotVitalValue(vital, raw: raw), timestamp: now)]
+    }
+
+    /// A streamed on-demand value in its unit. Temperature is `raw / 10 + 20` °C, as QRing shows it
+    /// (`TemperatureActivity`: `value * 1.0f / 10 + 20`).
+    static func spotVitalValue(_ vital: SpotVital, raw: Int) -> Double {
+        switch vital {
+        case .temperature: return Double(raw) / 10 + 20
+        case .hrv, .stress: return Double(raw)
+        }
     }
 
     static func sleepStage(_ type: UInt8) -> SleepStage {

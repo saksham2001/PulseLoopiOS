@@ -389,6 +389,21 @@ final class ColmiSyncEngine: RingSyncEngine {
         writer?.enqueue(Data(encoder.manualHeartRate(enable: true)))
     }
 
+    // On-demand HRV / stress / temperature (`0x69` types 0a/08/0b) — QRing's manual measure screens.
+    var streamsSpotVitals: Bool { true }
+
+    func startSpotVital(_ vital: SpotVital) {
+        writer?.enqueue(Data(encoder.spotVital(vital, enable: true)))
+    }
+
+    /// `0x6A` stops the ring's whole realtime engine, the manual HR stream included, so drop that
+    /// bookkeeping with it; the coordinator restarts a running workout's stream right after.
+    func stopSpotVital(_ vital: SpotVital, settled: Double?) {
+        manualHRActive = false
+        let lastRaw = settled.map { Int($0.rounded()) } ?? 0   // ignored for temperature
+        writer?.enqueue(Data(encoder.spotVital(vital, enable: false, lastRaw: lastRaw)))
+    }
+
     func syncVitalsHistory() {
         startVitalsBackfill()
     }

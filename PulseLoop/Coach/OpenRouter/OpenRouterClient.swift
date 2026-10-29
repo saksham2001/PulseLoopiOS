@@ -2,7 +2,7 @@ import Foundation
 
 /// Adapts the app's `ResponsesClient` protocol to OpenRouter's OpenAI-compatible
 /// **Chat Completions** API (`POST /api/v1/chat/completions`). OpenRouter is an
-/// aggregator: `model` is a `vendor/model` slug (e.g. `anthropic/claude-sonnet-4.6`)
+/// aggregator: `model` is a `vendor/model` slug (e.g. `anthropic/claude-sonnet-5.5`)
 /// that it routes to the underlying provider. Translates the app's Responses-API
 /// request bodies into Chat Completions requests and maps responses back, so no
 /// other component needs to know which provider is active.
@@ -57,7 +57,7 @@ final class OpenRouterClient: ResponsesClient, @unchecked Sendable {
         let tools = req["tools"] as? [[String: Any]] ?? []
         let previousResponseId = req["previous_response_id"] as? String
         // OpenRouter accepts the same unified `reasoning` object the app already
-        // builds (`{ "effort": "low|medium|high" }`); it's ignored for models that
+        // builds (`{ "effort": "low|medium|high|…" }`); it's ignored for models that
         // don't reason, so forward it as-is when present.
         let reasoning = req["reasoning"]
         // The Responses-API `text.format` carries the strict coach_response JSON

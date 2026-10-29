@@ -43,20 +43,13 @@ final class RWfitCoordinator: WearableCoordinator {
         }
     }
 
-    /// The baseline: what **every** RWfit ring's firmware serves regardless of framing — the
-    /// history streams both wire protocols define unconditionally, plus in-band battery. REM is in:
-    /// both sleep formats carry a REM stage (legacy type 3, JieLi model 4).
-    let capabilities: Set<WearableCapability> = [
-        .heartRate, .spo2, .steps, .sleep, .remSleep, .battery,
-    ]
+    /// Until initialization verifies the per-unit feature menu, only battery is advertised.
+    let capabilities: Set<WearableCapability> = [.battery]
 
-    /// Everything per-unit, granted only when the connected ring claims it:
-    /// - sensor streams from the legacy `0x03` feature bitmap / the JieLi bind-reply TLV
-    ///   (temperature, BP, HRV, stress, blood sugar);
-    /// - the manual/realtime measurement set, granted by the driver on JieLi links — the vendor app
-    ///   has no legacy on-demand measurement command at all, so a legacy link must not render
-    ///   measure buttons that could only ever time out.
+    /// Sensor and manual capabilities are granted from the validated feature menu. Legacy rings
+    /// can expose supported history sensors but never the modern on-demand commands.
     let bitmapGatedCapabilities: Set<WearableCapability> = [
+        .heartRate, .spo2, .steps, .sleep, .remSleep,
         .temperature, .bloodPressure, .manualBloodPressure,
         .hrv, .manualHrv, .stress, .bloodSugar,
         .realtimeHeartRate, .manualHeartRate, .manualSpo2,

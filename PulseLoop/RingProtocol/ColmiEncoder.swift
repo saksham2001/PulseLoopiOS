@@ -79,6 +79,19 @@ struct ColmiEncoder {
         [ColmiCommandID.manualHeartRate, enable ? 0x01 : 0x02]
     }
 
+    /// On-demand HRV / stress / temperature. Start is QRing's `StartHeartRateReq.getSimpleReq(type)` =
+    /// `[0x69, type, 0x25]`. The HRV and stress stops carry the last raw value the ring streamed
+    /// (`StopHeartRateReq.stopHrv(b)` / `stopPressure(b)`), so the ring's own log records it; the ring
+    /// echoes its final value back in its `0x6A` acknowledgement. Temperature does not: QRing's
+    /// `stopTemperatureCheck()` is a fixed `[0x6A, 0x0B, 0, 0]` at every call site in
+    /// `TemperatureActivity`, so `lastRaw` is ignored for it.
+    func spotVital(_ vital: SpotVital, enable: Bool, lastRaw: Int = 0) -> [UInt8] {
+        let type = ColmiCommandID.readingType(vital)
+        guard !enable else { return [ColmiCommandID.manualHeartRate, type, 0x25] }
+        let value: UInt8 = vital == .temperature ? 0 : UInt8(clamping: lastRaw)
+        return [ColmiCommandID.realtimeStop, type, value, 0x00]
+    }
+
     func realtimeHeartRate(enable: Bool) -> [UInt8] {
         [ColmiCommandID.realtimeHeartRate, enable ? 0x01 : 0x02]
     }

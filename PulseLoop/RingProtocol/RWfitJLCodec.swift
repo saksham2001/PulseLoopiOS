@@ -2,19 +2,15 @@ import Foundation
 
 /// One deframed JieLi (`0xAB`) event, as surfaced to `RWfitDriver.ingest`.
 enum RWfitJLInbound: Equatable {
-    /// A complete device-initiated frame (flag `0x01`), CRC-verified. `payload` **includes** the
-    /// 3-byte `{CMD, Key, KeyFlag}` triple at [0..2] — kept that way so decoder offsets match the
-    /// vendor parsers (`x5/b.java`, which all start reading items at offset 3).
-    case frame(triple: RWfitJLTriple, payload: [UInt8])
-    /// The device ACKed one of our commands (flag `0x11`, triple echoed). Releases the command gate.
-    case deviceAck(triple: RWfitJLTriple)
+    /// CRC-verified response or push. Payload retains the addressing triple and response body.
+    case frame(flag: UInt8, triple: RWfitJLTriple, payload: [UInt8])
     /// A completed frame failed its CRC. The vendor drops these without a NACK (`r5/b.java`).
     case crcFailed
 }
 
 /// JieLi (`0xAB`) wire codec: framing, CRC-16/ARC, ACKs, and inbound continuation reassembly.
-/// Byte-for-byte port of the encoder in `x5/c.java g()` and the inline decoder in
-/// `r5/b.java onCharacteristicChanged`.
+/// Matches the official open-source SDK framing and ACK contract (commit pinned below).
+/// https://github.com/RWFitSDK/RW_weixi_miniprogram_sdk/blob/8613daec2c08a41fa6c0bf5476af4f125e1532e5/RW_SDK_DEMO/sdk/rw-ble-sdk.min.js
 ///
 /// Header (6 bytes): `AB flag lenHi lenLo crcHi crcLo`, followed by the payload — whose first three
 /// bytes are the `{CMD, Key, KeyFlag}` triple and count toward both `len` and the CRC. A payload
@@ -24,20 +20,10 @@ enum RWfitJLInbound: Equatable {
 final class RWfitJLCodec {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
-    /// In-flight reassembly of one logical frame (the protocol interleaves nothing — continuations
-    /// immediately follow their header packet, `r5/b.java`'s single `x5.a` state struct).
-    private var pendingFlag: UInt8 = 0
-    private var pendingCRC: UInt16 = 0
-    private var pendingLength = 0
+    static let maximumPayloadLength = 8 * 1024
     private var buffer: [UInt8] = []
-    private var reassembling = false
 
-    /// Discard any half-assembled frame. Call on connect/disconnect.
-    func reset() {
-        reassembling = false
-        buffer.removeAll()
-        pendingLength = 0
-    }
+    func reset() { buffer.removeAll() }
 
     // MARK: - Encode
 
@@ -53,47 +39,43 @@ final class RWfitJLCodec {
         return Data(frame)
     }
 
-    /// Build the app→device ACK for an inbound frame: flag `0x11`, payload = the echoed triple —
-    /// with one quirk: the realtime-measure reply (`CMD 06, Key 09`) is ACKed with a fourth `0x00`
-    /// byte (`r5/b.java`'s `if (b3 == 6 && b10 == 9)` special case).
+    /// The SDK acknowledges flag-01 frames with flag 11 and exactly the echoed three-byte triple,
+    /// including measurement status 0609. Pushes and flag-11 responses are never acknowledged.
     func ack(triple: RWfitJLTriple) -> Data {
-        var payload = triple.bytes
-        if triple.cmd == 0x06, triple.key == 0x09 {
-            payload.append(0x00)
-        }
-        return encode(payload: payload, isAck: true)
+        encode(payload: triple.bytes, isAck: true)
     }
 
     // MARK: - Decode
 
     /// Feed one notification. Returns the events completed by it (usually none mid-reassembly).
     func decode(_ data: Data) -> [RWfitJLInbound] {
-        let bytes = [UInt8](data)
-        guard !bytes.isEmpty else { return [] }
-
-        if !reassembling {
-            // Expecting a header packet. Anything without the magic is noise (e.g. a legacy frame on
-            // a mis-detected link) — the vendor logs and drops it; so do we.
-            guard bytes.count >= 6, bytes[0] == 0xab else { return [] }
-            pendingFlag = bytes[1]
-            pendingLength = RWfitBytes.u16BE(bytes, 2)
-            pendingCRC = UInt16(bytes[4]) << 8 | UInt16(bytes[5])
-            buffer = Array(bytes.dropFirst(6))
-            reassembling = true
-        } else {
-            // Headerless continuation: raw payload bytes (`r5/b.java`'s multi-packet branch).
-            buffer.append(contentsOf: bytes)
+        buffer.append(contentsOf: data)
+        var events: [RWfitJLInbound] = []
+        while !buffer.isEmpty {
+            guard let magic = buffer.firstIndex(of: 0xab) else {
+                buffer.removeAll()
+                break
+            }
+            if magic > 0 { buffer.removeFirst(magic) }
+            guard buffer.count >= 6 else { break }
+            let flag = buffer[1]
+            let length = RWfitBytes.u16BE(buffer, 2)
+            guard [0x01, 0x11, 0x21].contains(flag), (3...Self.maximumPayloadLength).contains(length) else {
+                buffer.removeFirst()
+                continue
+            }
+            guard buffer.count >= length + 6 else { break }
+            let payload = Array(buffer[6..<(length + 6)])
+            let expectedCRC = UInt16(buffer[4]) << 8 | UInt16(buffer[5])
+            guard RWfitBytes.crc16ARC(payload) == expectedCRC else {
+                events.append(.crcFailed)
+                buffer.removeFirst()
+                continue
+            }
+            buffer.removeFirst(length + 6)
+            let triple = RWfitJLTriple(cmd: payload[0], key: payload[1], keyFlag: payload[2])
+            events.append(.frame(flag: flag, triple: triple, payload: payload))
         }
-
-        guard buffer.count >= pendingLength else { return [] }
-        let payload = Array(buffer.prefix(pendingLength))
-        let flag = pendingFlag
-        let expectedCRC = pendingCRC
-        reset()
-
-        guard payload.count >= 3 else { return [] }
-        guard RWfitBytes.crc16ARC(payload) == expectedCRC else { return [.crcFailed] }
-        let triple = RWfitJLTriple(cmd: payload[0], key: payload[1], keyFlag: payload[2])
-        return flag == 0x11 ? [.deviceAck(triple: triple)] : [.frame(triple: triple, payload: payload)]
+        return events
     }
 }

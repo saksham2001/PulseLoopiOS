@@ -59,7 +59,7 @@ final class CapabilityGatingTests: XCTestCase {
     func testRWfitBaselineIsNarrowAndRealtimeIsGated() {
         let coordinator = RWfitCoordinator()
         XCTAssertEqual(coordinator.capabilities,
-                       [.heartRate, .spo2, .steps, .sleep, .remSleep, .battery])
+                       [.battery])
         for cap: WearableCapability in [.realtimeHeartRate, .manualHeartRate, .manualSpo2,
                                         .bloodPressure, .temperature, .hrv, .stress, .bloodSugar] {
             XCTAssertFalse(coordinator.capabilities.contains(cap), cap.rawValue)
@@ -71,7 +71,8 @@ final class CapabilityGatingTests: XCTestCase {
     /// and refuses anything the family didn't pre-approve.
     func testRWfitRefinementAddsOnlyPreApprovedCapabilities() {
         let coordinator = RWfitCoordinator()
-        let granted = RWfitDriver.jieliRealtimeCapabilities.union([.bloodPressure, .findDevice, .powerOff])
+        let granted: Set<WearableCapability> = [.heartRate, .realtimeHeartRate, .manualHeartRate,
+                                                   .manualSpo2, .bloodPressure, .findDevice, .powerOff]
         let refined = coordinator.refinedCapabilities(bitmapDerived: granted)
         XCTAssertTrue(refined.isSuperset(of: [.heartRate, .realtimeHeartRate, .manualHeartRate,
                                               .manualSpo2, .bloodPressure]))

@@ -270,6 +270,27 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertEqual(stages.filter { $0 == .rem }.count, 30)
     }
 
+    /// A Ring 2 Pro full night, captured 2026-10-07 09:33 (HCI snoop, PulseLoop Android sync). A session
+    /// over 180 minutes lands on the main-sleep action (`0x27`); Android and QRing both showed it as
+    /// 2:30 AM to 9:14 AM, 6h 44m, with this exact stage split.
+    func testRing2ProCapturedNightDecodes() {
+        let payload: [UInt8] = [
+            0x01, 0x00, 0x22, 0x96, 0x00, 0x2a, 0x02,
+            0x02, 0x24, 0x03, 0x1e, 0x02, 0x0f, 0x04, 0x11, 0x02, 0x21, 0x03, 0x10, 0x02, 0x17,
+            0x04, 0x13, 0x02, 0x33, 0x03, 0x0b, 0x02, 0x38, 0x04, 0x11, 0x02, 0x20, 0x03, 0x18,
+            0x02, 0x18,
+        ]
+        let events = decoder.decodeBigData(bigData(type: ColmiCommandID.bigDataSleep, payload: payload), calendar: calendar)
+        guard events.count == 1, case let .sleepTimeline(start, stages) = events[0] else {
+            return XCTFail("expected one sleepTimeline, got \(events.map(\.kind))")
+        }
+        XCTAssertEqual(start, calendar.date(byAdding: .minute, value: 150, to: calendar.startOfDay(for: Date())))
+        XCTAssertEqual(stages.count, 404)
+        XCTAssertEqual(stages.filter { $0 == .light }.count, 270)
+        XCTAssertEqual(stages.filter { $0 == .deep }.count, 81)
+        XCTAssertEqual(stages.filter { $0 == .rem }.count, 53)
+    }
+
     // MARK: Reassembly across split notifications (via the driver)
 
     @MainActor
@@ -403,6 +424,55 @@ final class ColmiDecoderTests: XCTestCase {
         let events = decoder.decodeNormal(frame)
         // No heart-rate sample; a completion (no-reading) signal is fine.
         XCTAssertFalse(events.contains { if case .heartRateSample = $0 { return true }; return false })
+    }
+
+    // MARK: On-demand HRV / stress / temperature (Ring 2 Pro, QRing capture)
+
+    func testSpotVitalFramesDecodeToTheirVitalInItsUnit() throws {
+        func sample(_ hex: String) throws -> (SpotVital, Double) {
+            let events = decoder.decodeNormal(try Data(hexString: hex))
+            guard case let .spotVitalSample(vital, value, _) = events.first, events.count == 1 else {
+                throw NSError(domain: "ColmiDecoderTests", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "expected one spotVitalSample, got \(events.map(\.kind))",
+                ])
+            }
+            return (vital, value)
+        }
+        // Frames as the Ring 2 Pro streamed them to QRing: 69 <type> 00 <raw>.
+        let hrv = try sample(ColmiPacket.frame([0x69, 0x0a, 0x00, 0x2b]).hexString)
+        XCTAssertEqual(hrv.0, .hrv); XCTAssertEqual(hrv.1, 43)
+        let stress = try sample(ColmiPacket.frame([0x69, 0x08, 0x00, 0x1e]).hexString)
+        XCTAssertEqual(stress.0, .stress); XCTAssertEqual(stress.1, 30)
+        // raw 0xa8 = 168 → 168 / 10 + 20, as QRing's TemperatureActivity shows it.
+        let temp = try sample("690b00a800000000000000000000001c")
+        XCTAssertEqual(temp.0, .temperature); XCTAssertEqual(temp.1, 36.8, accuracy: 1e-9)
+    }
+
+    func testSpotVitalWarmUpDecodesToNothingAndAnErrorToNoReading() throws {
+        XCTAssertTrue(decoder.decodeNormal(try Data(hexString: "690a0000000000000000000000000073")).isEmpty)
+        XCTAssertTrue(decoder.decodeNormal(try Data(hexString: "690b0000000000000000000000000074")).isEmpty)
+        let error = decoder.decodeNormal(ColmiPacket.frame([0x69, 0x08, 0x01]))
+        guard case let .spotVitalNoReading(vital, _) = error.first else { return XCTFail("\(error.map(\.kind))") }
+        XCTAssertEqual(vital, .stress)
+    }
+
+    func testHeartRateStreamFrameStillDecodesAsHeartRate() throws {
+        let events = decoder.decodeNormal(try Data(hexString: "690100590000000000000000000000c3"))
+        guard case let .heartRateSample(bpm, _) = events.first else { return XCTFail("\(events.map(\.kind))") }
+        XCTAssertEqual(bpm, 89)
+    }
+
+    func testSpotVitalStartAndStopFramesMatchQRing() {
+        let encoder = ColmiEncoder()
+        // Start = StartHeartRateReq.getSimpleReq(type) as captured: 69 0a 25 / 69 08 25 / 69 0b 25.
+        XCTAssertEqual(encoder.spotVital(.hrv, enable: true), [0x69, 0x0a, 0x25])
+        XCTAssertEqual(encoder.spotVital(.stress, enable: true), [0x69, 0x08, 0x25])
+        XCTAssertEqual(encoder.spotVital(.temperature, enable: true), [0x69, 0x0b, 0x25])
+        // HRV and stress stops hand the ring back its reading: captured `6a0a2b…` after an HRV of 43.
+        XCTAssertEqual(encoder.spotVital(.hrv, enable: false, lastRaw: 43), [0x6a, 0x0a, 0x2b, 0x00])
+        XCTAssertEqual(encoder.spotVital(.stress, enable: false, lastRaw: 50), [0x6a, 0x08, 0x32, 0x00])
+        // Temperature's never does: QRing's stopTemperatureCheck() = 6a 0b 00 00.
+        XCTAssertEqual(encoder.spotVital(.temperature, enable: false, lastRaw: 168), [0x6a, 0x0b, 0x00, 0x00])
     }
 
     func testManualHeartRateOkAndError() {

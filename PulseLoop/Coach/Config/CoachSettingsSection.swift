@@ -187,6 +187,22 @@ struct CoachSettingsSection: View {
                 if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
                     customModelField
                 }
+
+                // Reasoning effort / Gemini thinking level. The levels differ per model
+                // (GPT-6 Sol rejects None, DeepSeek has no Medium), so the picker lists
+                // only what the selected model accepts.
+                if !store.settings.reasoningEffortOptions.isEmpty {
+                    FormValueRow(title: "Reasoning") {
+                        Picker("Reasoning", selection: reasoningEffortBinding) {
+                            Text("Default").tag("")
+                            ForEach(store.settings.reasoningEffortOptions) { effort in
+                                Text(effort.label).tag(effort.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(PulseColors.accent)
+                    }
+                }
             }
 
             // The key field tracks the *effective* provider — the active cloud
@@ -254,22 +270,10 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            // OpenRouter-only routing controls. OpenRouter exposes a unified
-            // reasoning-effort hint plus provider-level privacy and sort options
-            // the native OpenAI/Gemini clients don't, so they only appear here.
+            // OpenRouter-only routing controls: provider-level privacy and sort
+            // options the native OpenAI/Gemini clients don't have.
             if store.settings.providerMode == .userOpenRouterKey {
                 SettingsGroup(header: "Routing") {
-                    FormValueRow(title: "Reasoning") {
-                        Picker("Reasoning", selection: reasoningEffortBinding) {
-                            Text("Default").tag("")
-                            Text("Low").tag("low")
-                            Text("Medium").tag("medium")
-                            Text("High").tag("high")
-                        }
-                        .pickerStyle(.menu)
-                        .tint(PulseColors.accent)
-                    }
-
                     FormToggleRow(title: "Privacy routing", isOn: privacyRoutingBinding)
 
                     FormValueRow(title: "Provider sort") {
@@ -465,7 +469,7 @@ struct CoachSettingsSection: View {
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .pulseGlass(Capsule())
 
-                Text("Any model slug from openrouter.ai/models — e.g. anthropic/claude-sonnet-4.6.")
+                Text("Any model slug from openrouter.ai/models — e.g. anthropic/claude-sonnet-5.5.")
                     .font(.caption).foregroundStyle(PulseColors.textMuted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -510,7 +514,7 @@ struct CoachSettingsSection: View {
                 // Reset model to the default for the selected provider.
                 switch newProvider {
                 case .userGeminiKey:
-                    store.settings.model = GeminiModel.flash25.rawValue
+                    store.settings.model = GeminiModel.default.rawValue
                 case .userOpenRouterKey:
                     store.settings.model = OpenRouterModel.default.rawValue
                 case .userMiniMaxKey:
@@ -519,7 +523,7 @@ struct CoachSettingsSection: View {
                     // (now hidden) toggle can't linger enabled.
                     store.settings.enableWebSearch = false
                 default:
-                    store.settings.model = CoachModel.gpt54.rawValue
+                    store.settings.model = CoachModel.default.rawValue
                 }
             }
         )
@@ -563,7 +567,9 @@ struct CoachSettingsSection: View {
     /// `reasoningEffort` is optional; the picker uses "" for the "Default" (nil) tag.
     private var reasoningEffortBinding: Binding<String> {
         Binding(
-            get: { store.settings.reasoningEffort ?? "" },
+            // Shows "Default" when the stored level isn't one this model accepts —
+            // matching `resolvedReasoningEffort`, which won't send it.
+            get: { store.settings.resolvedReasoningEffort ?? "" },
             set: { store.settings.reasoningEffort = $0.isEmpty ? nil : $0 }
         )
     }
