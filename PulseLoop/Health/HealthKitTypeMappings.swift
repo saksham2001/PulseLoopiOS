@@ -20,11 +20,14 @@ enum HealthKitTypeMappings {
         let isPlausible: (Double) -> Bool
     }
 
-    /// Ported from PR #16. Stress / fatigue / blood-pressure / blood-sugar map to `nil`:
-    /// - stress & fatigue have no native HealthKit equivalent.
-    /// - blood pressure needs `HKCorrelation` pairing (an unpaired systolic/diastolic sample never
-    ///   surfaces as a reading in Health) plus new share-authorization types — a documented follow-up.
-    /// - blood sugar likewise needs its own share type. Follow-up.
+    /// Ported from PR #16. Two kinds still map to `nil`, for two different reasons:
+    ///
+    /// - **Stress and fatigue have no HealthKit type at all.** Not a follow-up — there is nothing to
+    ///   map them onto. `HKStateOfMind` (iOS 17) is a self-reported mood log, not a device-derived
+    ///   score, and writing a ring's 0–100 wellness number into it would misrepresent both.
+    /// - **Blood pressure is a correlation, not a quantity.** An unpaired systolic or diastolic
+    ///   sample never surfaces as a reading in Health, so it needs `HKCorrelation` pairing and gets
+    ///   its own export pass in `HealthSyncService` rather than a `QuantityMapping`.
     static func quantityMapping(for kind: MeasurementKind) -> QuantityMapping? {
         switch kind {
         case .heartRate:
@@ -45,15 +48,41 @@ enum HealthKitTypeMappings {
             guard let type = HKQuantityType.quantityType(forIdentifier: .bodyTemperature) else { return nil }
             return QuantityMapping(type: type, unit: .degreeCelsius(),
                                    convert: { $0 }, isPlausible: { $0 > 25 && $0 < 45 })
+        case .respiratoryRate:
+            guard let type = HKQuantityType.quantityType(forIdentifier: .respiratoryRate) else { return nil }
+            return QuantityMapping(type: type, unit: HKUnit.count().unitDivided(by: .minute()),
+                                   convert: { $0 }, isPlausible: { $0 >= 4 && $0 <= 60 })
+        case .vo2max:
+            guard let type = HKQuantityType.quantityType(forIdentifier: .vo2Max) else { return nil }
+            // mL/(kg·min) — HealthKit spells the same unit as a compound.
+            let unit = HKUnit.literUnit(with: .milli)
+                .unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute()))
+            return QuantityMapping(type: type, unit: unit,
+                                   convert: { $0 }, isPlausible: { $0 >= 10 && $0 <= 90 })
+        case .bloodSugar:
+            guard let type = HKQuantityType.quantityType(forIdentifier: .bloodGlucose) else { return nil }
+            // Stored canonically in mg/dL; HealthKit's mass/volume unit spells that as mg/dL too.
+            let unit = HKUnit.gramUnit(with: .milli).unitDivided(by: .literUnit(with: .deci))
+            return QuantityMapping(type: type, unit: unit,
+                                   convert: { $0 }, isPlausible: { $0 >= 40 && $0 <= 600 })
         case .stress, .fatigue:
-            return nil   // No native HealthKit equivalent.
-        case .bloodPressureSystolic, .bloodPressureDiastolic, .bloodSugar:
-            return nil   // BP needs HKCorrelation pairing + new share types; blood sugar needs its own. Follow-up.
-        case .respiratoryRate, .vo2max:
-            // HealthKit has both (`respiratoryRate`, `vo2Max`), but exporting them needs new share
-            // types plus their own per-type toggles to keep the sync opt-in per metric. Follow-up.
-            return nil
+            return nil   // No HealthKit type exists for either — see the note above.
+        case .bloodPressureSystolic, .bloodPressureDiastolic:
+            return nil   // Exported as an HKCorrelation instead; see `bloodPressureSyncID`.
         }
+    }
+
+    /// A paired blood-pressure reading, keyed by the instant both halves share so a re-export
+    /// upserts rather than duplicating.
+    static func bloodPressureSyncID(timestamp: Date) -> String {
+        "pl-bp-\(Int(timestamp.timeIntervalSince1970 * 1000))"
+    }
+
+    /// Plausibility guards for the two halves of a blood-pressure reading, mirroring
+    /// `RingEventBridge`'s persistence gates so a value that reached the store can still be rejected
+    /// here if it is nonsense as a *pair* (systolic at or below diastolic).
+    static func isPlausibleBloodPressure(systolic: Double, diastolic: Double) -> Bool {
+        (60...250).contains(systolic) && (30...160).contains(diastolic) && systolic > diastolic
     }
 
     // MARK: - Workouts
