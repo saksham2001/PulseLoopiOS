@@ -71,7 +71,7 @@ struct PrivacyDataSettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 SettingsGroup(
                     header: "Backup",
-                    footer: "Export everything — metrics, sleep, workouts, coach history, settings — to a JSON file "
+                    footer: "Export everything — metrics, sleep, workouts, cycle logs, coach history, settings — to a JSON file "
                         + "you can save, AirDrop, or analyze. Importing a backup replaces all data in the app. "
                         + "API keys are never included."
                 ) {
