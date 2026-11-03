@@ -64,6 +64,7 @@ enum CoachSummaryContextBuilder {
         struct Packet: Encodable {
             let date: String, totalMin: Int, deepMin: Int, lightMin: Int, awakeMin: Int
             let score: Int, scoreLabel: String, awakePct: Int?, deepPct: Int, activitySteps: Int?
+            let remMin: Int?, remPct: Int?
             let memories: [CoachContextPacket.MemoryContext]
             let environment: CoachContextPacket.EnvironmentContext?
         }
@@ -72,12 +73,14 @@ enum CoachSummaryContextBuilder {
             totalMin: night.session.totalMinutes, deepMin: night.deepMinutes,
             lightMin: night.lightMinutes, awakeMin: night.awakeMinutes,
             score: score.score, scoreLabel: score.label.rawValue, awakePct: score.awakePct,
-            deepPct: score.deepPct, activitySteps: activitySteps, memories: memories,
+            deepPct: score.deepPct, activitySteps: activitySteps,
+            remMin: night.hasRemSignal ? night.remMinutes : nil, remPct: score.remPct, memories: memories,
             environment: environment
         )
         let sig = signature([
             String(night.session.totalMinutes), String(night.deepMinutes),
             String(night.lightMinutes), String(night.awakeMinutes), String(score.score),
+            night.hasRemSignal ? String(night.remMinutes) : nil,
         ])
         let coach = SleepInsights.dayCoach(night, score: score.score, awakePct: score.awakePct,
                                            deepPct: score.deepPct, activitySteps: activitySteps)
@@ -103,18 +106,22 @@ enum CoachSummaryContextBuilder {
         struct Packet: Encodable {
             let range: String, nightsTracked: Int, expectedNights: Int
             let avgTotalMin: Int?, avgScore: Int?
-            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?, goalMin: Int?
+            let avgDeepMin: Int?, avgLightMin: Int?, avgAwakeMin: Int?
+            /// Absent when no night in the range reported REM — see `SleepInsights.AverageStages.rem`.
+            let avgRemMin: Int?
+            let goalMin: Int?
             let memories: [CoachContextPacket.MemoryContext]
         }
         let p = Packet(
             range: range.rawValue, nightsTracked: valid.count, expectedNights: summary.expectedNights,
             avgTotalMin: avgMin, avgScore: avgScore,
             avgDeepMin: stages?.deep, avgLightMin: stages?.light, avgAwakeMin: stages?.awake,
+            avgRemMin: stages?.rem,
             goalMin: goalMin, memories: memories
         )
         let sig = signature([
             range.rawValue, String(valid.count), avgMin.map(String.init), avgScore.map(String.init),
-            stages.map { "\($0.deep)/\($0.light)/\($0.awake)" },
+            stages.map { "\($0.deep)/\($0.light)/\($0.awake)/\($0.rem.map(String.init) ?? "absent")" },
             CoachDataAccess.localDateString(summary.end),
         ])
         let coach = SleepInsights.aggregateCoach(range: range, sessions: summary.sessions,

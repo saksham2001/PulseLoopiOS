@@ -95,6 +95,9 @@ struct CoachContextPacket: Encodable {
         var deepMin: Int
         var lightMin: Int
         var awakeMin: Int
+        /// Omitted entirely when the ring that recorded this night reported no REM stage, so the
+        /// model sees "this field is absent" rather than "REM was zero minutes".
+        var remMin: Int?
         var score: Int?
         var confidence: String
         var decoderNote: String
