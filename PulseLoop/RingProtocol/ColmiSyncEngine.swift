@@ -224,8 +224,7 @@ final class ColmiSyncEngine: RingSyncEngine {
 
     private func requestHeartRate() {
         syncDay = dayStart(daysAgo)
-        let unix = Int(syncDay.timeIntervalSince1970)
-        writer?.enqueue(Data(encoder.syncHeartRate(fromUnix: unix)))
+        writer?.enqueue(Data(encoder.syncHeartRate(dayStart: syncDay)))
     }
 
     private func requestStress() {
