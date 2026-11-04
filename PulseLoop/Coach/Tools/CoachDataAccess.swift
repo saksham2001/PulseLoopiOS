@@ -17,27 +17,18 @@ enum CoachDataAccess {
 
     static func parseLocalDate(_ value: String) -> Date? {
         let trimmed = String(value.prefix(10))
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = .current
-        if let d = f.date(from: trimmed) { return d }
+        if let d = DateFormatter.stableKey("yyyy-MM-dd").date(from: trimmed) { return d }
         // Fall back to ISO datetime.
         let iso = ISO8601DateFormatter()
         return iso.date(from: value)
     }
 
     static func localDateString(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = .current
-        return f.string(from: date)
+        DateFormatter.stableKey("yyyy-MM-dd").string(from: date)
     }
 
     static func localTimeString(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        f.timeZone = .current
-        return f.string(from: date)
+        DateFormatter.stableKey("HH:mm").string(from: date)
     }
 
     static func isoString(_ date: Date) -> String {
@@ -177,9 +168,6 @@ enum CoachDataAccess {
     }
 
     private static func hourLabel(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:00"
-        f.timeZone = .current
-        return f.string(from: date)
+        DateFormatter.stableKey("yyyy-MM-dd HH:00").string(from: date)
     }
 }

@@ -224,10 +224,7 @@ enum CoachContextBuilder {
     private static func iso(_ date: Date) -> String { isoFormatter.string(from: date) }
 
     private static func localDate(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = .current
-        return f.string(from: date)
+        DateFormatter.stableKey("yyyy-MM-dd").string(from: date)
     }
 }
 
