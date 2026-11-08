@@ -203,6 +203,43 @@ final class YCBTEncoderTests: XCTestCase {
         XCTAssertEqual(encoder.historyBlockAck(status: 0x04), [0x05, 0x80, 0x04])
     }
 
+    // MARK: Health-Delete (erase after a durable sync)
+
+    /// Every delete frame, pinned on the wire. The keys are `Constants.DATATYPE.Health_Delete*` and the
+    /// payload is the `{2}` `YCBTClient.deleteHealthHistoryData` sends; length 7 and CRC16 CCITT-FALSE as
+    /// every other YCBT frame. These bytes erase the ring's only copy, so each one is written out in full.
+    func testHealthDeleteFramesMatchTheVendorOpcodes() {
+        let expected: [(YCBTHistoryType, String)] = [
+            (.sport, "054007000215f9"),
+            (.sleep, "0541070002a18f"),
+            (.heart, "05420700027d14"),
+            (.blood, "0543070002c962"),
+            (.all, "0544070002e433"),
+            (.spo2, "05450700025045"),
+            (.temperature, "054707000238a8"),
+            (.comprehensive, "054c07000227b6"),
+            (.bodyData, "054e0700024f5b"),
+        ]
+        XCTAssertEqual(expected.map(\.0), YCBTHistoryType.catalog, "every fetched type has exactly one pinned delete")
+        for (type, wire) in expected {
+            let logical = encoder.healthHistoryDelete(type)
+            XCTAssertEqual(logical.map { YCBTFrame.frame($0).hexString }, wire, "delete for \(type.label)")
+        }
+    }
+
+    /// The trap next door: `0x46` is Health_DeleteTempAndHumidity (the `05 1c` log we never fetch). Plain
+    /// temperature (`05 1e`) is `0x47`.
+    func testTemperatureDeleteIsNotTheTempAndHumidityOpcode() {
+        XCTAssertEqual(encoder.healthHistoryDelete(.temperature), [0x05, 0x47, 0x02])
+        XCTAssertFalse(YCBTHistoryType.catalog.contains { $0.deleteKey == 0x46 })
+    }
+
+    /// A type without a delete opcode can never produce one.
+    func testATypeWithoutADeleteKeyBuildsNoDelete() {
+        let custom = YCBTHistoryType(queryKey: 0x2d, ackKey: 0x2e, recordStride: nil, label: "sport mode")
+        XCTAssertNil(encoder.healthHistoryDelete(custom))
+    }
+
     // MARK: Live measurement
 
     func testLiveMeasurementModesUseDistinctSensors() {

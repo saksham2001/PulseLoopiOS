@@ -78,6 +78,24 @@ final class RWfitHistoryPersistenceTests: XCTestCase {
         XCTAssertEqual(days.first?.steps, 3000)
     }
 
+    /// RWfit saves each ring page in its own transaction; a day split across pages must sum once,
+    /// even when a page whose delete reply was lost is re-sent and saved again.
+    func testActivityDaySplitAcrossPageSavesSumsOnce() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        let start = Calendar.current.startOfDay(for: Date()).addingTimeInterval(-24 * 3600)
+        let first: [RingDecodedEvent] = [.activityBucket(timestamp: start, steps: 1000, distanceMeters: 700)]
+        let second: [RingDecodedEvent] = [.activityBucket(timestamp: start.addingTimeInterval(3600), steps: 2000, distanceMeters: 1400)]
+        try subscriber.saveRWfitHistory(first)
+        try subscriber.saveRWfitHistory(second)
+        try subscriber.saveRWfitHistory(second)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<ActivityBucketSample>()).count, 2)
+        let days = try context.fetch(FetchDescriptor<ActivityDaily>())
+        XCTAssertEqual(days.count, 1)
+        XCTAssertEqual(days.first?.steps, 3000)
+        XCTAssertEqual(days.first?.distanceMeters, 2100)
+    }
+
     func testActivityBucketsPreserveTodaysLargerCumulativeReading() throws {
         let context = try TestSupport.makeContext()
         let subscriber = EventPersistenceSubscriber(context: context)

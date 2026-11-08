@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let transferLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "YCBTHistoryTransfer")
 
 /// The YCBT history state machine — protocol-driven, not timer-driven.
 ///
@@ -17,6 +20,31 @@ import Foundation
 /// only*: it never ACKs (an ACK without a verified terminal block claims data we don't hold) and is
 /// never a completion signal — it just abandons a type the ring has gone silent on.
 ///
+/// **Erase phase.** Like SmartHealth (`DataSyncUtils.setDBListener$lambda$4`, `DataSyncUtils.java:251-276`),
+/// a type whose log was read successfully is then erased from the ring with `05 <deleteKey> {02}`, so the
+/// next sync is small instead of a replay of the whole log. The vendor deletes once its database insert
+/// succeeds; our equivalent is `RingCommandWriter.commitDeliveredHistory`, a throwing save of everything
+/// delivered so far. The rules, each of which exists because the delete is irreversible:
+///
+///   • A type is *eligible* only when its transfer ended in a CRC-accepted terminal block **and** carried
+///     at least one record. A no-data header, a rejection, a CRC failure or a watchdog skip earns nothing
+///     — the same cases the vendor's `code == 0 && result != null` check excludes.
+///   • Deletes go out only **after the last query** — where the vendor's land too: `syncData` queues every
+///     query up front (`DataSyncUtils.java:99-143`) and each delete is issued later, from that type's
+///     insert callback, onto the tail of the SDK's serial queue (`deleteWatchesHistoryData`, :356-372) —
+///     and only after the commit completed `true`. `false` (a failed save, a missing persistence
+///     subscriber, the barrier timeout) sends none.
+///   • One at a time, in completion order: write, wait for the reply on that key (or a 1-byte error, or
+///     the watchdog), move on. No retry — the vendor ignores the result too, and a type left undeleted
+///     simply replays next sync, which every history sink already upserts.
+///   • Nothing is erased before the ring's `02 01` capability bitmap has arrived on this connection. The
+///     driver drops samples for sensors it doesn't yet believe the ring has, so a type decoded on the
+///     baseline set may have been saved with fields missing; the bitmap re-queues those types (see
+///     `YCBTSyncEngine.applySupportFunctions`), and a re-queued type loses its eligibility until the
+///     re-run completes. The vendor never syncs without the bitmap at all.
+///   • `.historySyncFinished` waits for the erase phase, so a `start` can't interleave a query with it,
+///     and `cancel()` (disconnect) abandons it — a commit verdict from a dead link is ignored.
+///
 /// Full spec, with a byte-level example: `docs/YCBT-Protocol.md` §4.
 @MainActor
 final class YCBTHistoryTransfer {
@@ -28,10 +56,16 @@ final class YCBTHistoryTransfer {
         case requestSent(YCBTHistoryType)
         /// Header seen; accumulating data frames until the terminal block.
         case receiving(YCBTHistoryType)
+        /// Every query is done; waiting for `commitDeliveredHistory` to prove the walk is on disk.
+        case awaitingCommit
+        /// `05 <deleteKey> {02}` written for this type; waiting for the ring's reply.
+        case deleting(YCBTHistoryType)
 
+        /// The type being *fetched*. `nil` while committing or erasing, so no query-phase frame can be
+        /// charged to anything then.
         var type: YCBTHistoryType? {
             switch self {
-            case .idle: return nil
+            case .idle, .awaitingCommit, .deleting: return nil
             case let .requestSent(type), let .receiving(type): return type
             }
         }
@@ -49,6 +83,15 @@ final class YCBTHistoryTransfer {
     private var expectedBytes = 0
     /// Types the firmware answered `0xFB`/`0xFC` for — never asked again this session.
     private var unsupported: Set<UInt8> = []
+
+    /// Types eligible for the erase phase, in completion order: CRC-accepted, ≥1 record, not re-queued
+    /// since. See the type doc.
+    private var pendingDeletes: [YCBTHistoryType] = []
+    /// Whether the ring's `02 01` bitmap has arrived on this connection — the precondition for any erase.
+    private var capabilityBitmapReceived = false
+    /// Bumped by `cancel()`. The commit verdict is asynchronous; one captured on a link that has since
+    /// dropped must not authorize an erase on the next.
+    private var generation = 0
 
     /// Ceiling on the reassembled buffer. Sized from the header when we have one so a desynced stream
     /// (data frames with no header, or a type that never terminates) can't grow it without bound.
@@ -68,7 +111,8 @@ final class YCBTHistoryTransfer {
 
     // MARK: - Driving the queue
 
-    /// True while a type is being requested or received.
+    /// True while a type is being requested or received, or the erase phase that follows the last one is
+    /// running — the walk isn't over until its deletes are.
     var isActive: Bool { state != .idle }
 
     /// Seed the queue and request the first type. Types the ring already rejected this session are
@@ -78,7 +122,9 @@ final class YCBTHistoryTransfer {
     /// post-workout vitals backfill, the 30-minute periodic pass), and a second `start` would abandon the
     /// in-flight type mid-dump: the ring keeps streaming its data frames regardless, so they would land in
     /// the *new* type's buffer and fail its terminal CRC. Deferring costs nothing — the watchdog
-    /// guarantees an in-flight transfer always completes or is abandoned.
+    /// guarantees an in-flight transfer always completes or is abandoned, and the erase phase is bounded
+    /// by the commit timeout plus one watchdog per delete. The erase phase counts as in flight: a query
+    /// interleaved with a delete could be answered out of order against either.
     func start(types: [YCBTHistoryType]) {
         guard !isActive else { return }
         queue = types.filter { !unsupported.contains($0.queryKey) }
@@ -96,6 +142,10 @@ final class YCBTHistoryTransfer {
     /// Duplicates are dropped rather than re-queued: asking twice would re-dump a log we already hold and
     /// re-upsert every record in it. Idle is handled too, so a late bitmap after a finished walk still
     /// pulls its types.
+    ///
+    /// A re-queued type loses any pending erase: it is re-fetched *because* the first read is suspect
+    /// (decoded before the bitmap unlocked some of its fields), so only the re-run can earn it back. While
+    /// the erase phase is running the additions simply wait; the phase hands over to them when it ends.
     func append(types: [YCBTHistoryType]) {
         let additions = types.filter { type in
             !unsupported.contains(type.queryKey)
@@ -103,20 +153,31 @@ final class YCBTHistoryTransfer {
                 && state.type != type
         }
         guard !additions.isEmpty else { return }
+        pendingDeletes.removeAll { additions.contains($0) }
         queue.append(contentsOf: additions)
         guard !isActive else { return }
         publishOutOfBand(advance())
     }
 
-    /// Abandon any in-flight transfer (disconnect / teardown).
+    /// Abandon any in-flight transfer (disconnect / teardown). Also forgets the erase phase and the
+    /// bitmap: both belong to one link, and a commit verdict still in flight is orphaned by `generation`.
     func cancel() {
         cancelWatchdog()
         state = .idle
         queue.removeAll()
         buffer.removeAll()
+        pendingDeletes.removeAll()
+        capabilityBitmapReceived = false
+        generation &+= 1
     }
 
-    /// Request the next type, or report completion when the queue drains. Returns the events the
+    /// The driver saw this connection's `02 01` reply, so the capability set its sample filter uses is
+    /// final. Until then nothing is erased (see the type doc).
+    func noteCapabilityBitmapReceived() {
+        capabilityBitmapReceived = true
+    }
+
+    /// Request the next type, or move to the erase phase when the queue drains. Returns the events the
     /// caller should surface (only ever the completion signal — progress comes from the header).
     @discardableResult
     private func advance() -> [RingDecodedEvent] {
@@ -126,10 +187,7 @@ final class YCBTHistoryTransfer {
         retriedCurrentType = false
         expectedPackets = 0
         expectedBytes = 0
-        guard !queue.isEmpty else {
-            state = .idle
-            return [.historySyncFinished]
-        }
+        guard !queue.isEmpty else { return beginErasePhase() }
         sendQuery(queue.removeFirst())
         return []
     }
@@ -148,7 +206,13 @@ final class YCBTHistoryTransfer {
     /// Feed every validated Health-group (`type == 0x05`) frame here. Frames arriving while idle are
     /// ignored — the ring occasionally trails a stray block after we've moved on.
     func handle(cmd: UInt8, payload: [UInt8]) -> [RingDecodedEvent] {
+        if case let .deleting(type) = state { return handleDeleteReply(type, cmd: cmd, payload: payload) }
         guard let type = state.type else { return [] }
+
+        // Only a frame on one of *this* type's keys can speak for it. The error check below used to run
+        // on any Health frame, so a stray rejection — a late reply to a delete the watchdog gave up on —
+        // would have advanced past a type mid-dump.
+        guard cmd == type.queryKey || cmd == type.ackKey || cmd == YCBTHealth.terminalBlock else { return [] }
 
         // A 1-byte 0xFB…0xFF payload is a rejection, not data — check before anything reads offsets.
         if let error = YCBTFrameError.detect(in: payload) {
@@ -230,7 +294,13 @@ final class YCBTHistoryTransfer {
         )))
 
         guard matches else { return retryOrSkip(type) }
-        return YCBTHealthRecords.decode(buffer, type: type) + advance()
+        let records = YCBTHealthRecords.decode(buffer, type: type)
+        // Eligibility is judged on what the ring *sent*, not on what decoded: a log of unworn `hr == 0`
+        // samples is still a log the vendor would erase, and keeping it only replays junk.
+        if buffer.count >= (type.recordStride ?? 1), type.deleteKey != nil, !pendingDeletes.contains(type) {
+            pendingDeletes.append(type)
+        }
+        return records + advance()
     }
 
     /// One re-request per type on a corrupt transfer; if that also fails, drop the type rather than
@@ -241,6 +311,84 @@ final class YCBTHistoryTransfer {
         buffer.removeAll(keepingCapacity: true)
         sendQuery(type)
         return []
+    }
+
+    // MARK: - Erase phase
+
+    /// The queue has drained. With nothing eligible — or no bitmap yet — the walk is simply finished.
+    /// Otherwise ask for the durable commit.
+    ///
+    /// The commit request is deferred to the next main-actor turn on purpose. This usually runs inside
+    /// `handle`, whose return value carries the *last* type's decoded records back to the driver; they
+    /// are published only after `handle` returns. Requesting the barrier synchronously would publish it
+    /// ahead of them, and the commit would vouch for a save that didn't include them.
+    private func beginErasePhase() -> [RingDecodedEvent] {
+        guard capabilityBitmapReceived, !pendingDeletes.isEmpty, writer != nil else {
+            pendingDeletes.removeAll()
+            state = .idle
+            return [.historySyncFinished]
+        }
+        state = .awaitingCommit
+        let generation = self.generation
+        Task { @MainActor [weak self] in
+            guard let self, self.generation == generation, self.state == .awaitingCommit else { return }
+            guard let writer = self.writer else { return self.resolveCommit(false, generation: generation) }
+            writer.commitDeliveredHistory { [weak self] committed in
+                self?.resolveCommit(committed, generation: generation)
+            }
+        }
+        return []
+    }
+
+    /// `true` releases the deletes; anything else drops them — the ring keeps its data and the next sync
+    /// re-imports it. A verdict from a cancelled link (`generation` moved on) is ignored outright.
+    private func resolveCommit(_ committed: Bool, generation: Int) {
+        guard generation == self.generation, state == .awaitingCommit else { return }
+        if !committed { pendingDeletes.removeAll() }
+        publishOutOfBand(sendNextDelete())
+    }
+
+    /// Write the next eligible delete, or — when none remain — hand back to the queue: types appended
+    /// during the phase (a late bitmap) are fetched now, and an empty queue finishes the walk.
+    private func sendNextDelete() -> [RingDecodedEvent] {
+        cancelWatchdog()
+        while !pendingDeletes.isEmpty {
+            let type = pendingDeletes.removeFirst()
+            guard let command = YCBTHealthCommand.historyDelete(type) else { continue }
+            state = .deleting(type)
+            writer?.enqueue(Data(command))
+            armDeleteWatchdog(for: type)
+            return []
+        }
+        state = .idle
+        return advance()
+    }
+
+    /// The ring answers a delete on the same key (`0x40…0x52` = done) or with a 1-byte `0xFB…0xFF`
+    /// error. Either way the type is finished with: the vendor only logs the result
+    /// (`DataSyncUtils.deleteWatchesHistoryData$lambda$5/6`), and an undeleted log just replays next sync.
+    /// Frames on any other key are not ours to interpret.
+    private func handleDeleteReply(_ type: YCBTHistoryType, cmd: UInt8, payload: [UInt8]) -> [RingDecodedEvent] {
+        guard cmd == type.deleteKey else { return [] }
+        if let error = YCBTFrameError.detect(in: payload) {
+            transferLog.info("Delete of \(type.label, privacy: .public) rejected: 0x\(String(error.rawValue, radix: 16), privacy: .public)")
+        } else {
+            transferLog.info("Deleted \(type.label, privacy: .public) history from the ring")
+        }
+        return sendNextDelete()
+    }
+
+    /// A ring that never answers a delete must not hold the walk open. No retry: the type is simply left
+    /// for the next sync to read (and erase) again.
+    private func armDeleteWatchdog(for type: YCBTHistoryType) {
+        watchdog?.cancel()
+        let delay = inactivitySeconds
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.state == .deleting(type) else { return }
+            transferLog.info("Delete of \(type.label, privacy: .public) unanswered; moving on")
+            self.publishOutOfBand(self.sendNextDelete())
+        }
     }
 
     // MARK: - Stall watchdog (safety net)
@@ -280,8 +428,9 @@ final class YCBTHistoryTransfer {
     /// walk that the watchdog ended would otherwise leave today's steps stale until the next sync.
     var onOutOfBandEvents: (([RingDecodedEvent]) -> Void)?
 
-    /// `handle` returns its events to the driver, which publishes them. `start` and the watchdog have no
-    /// such return channel, so the one event they can produce — completion — is surfaced here.
+    /// `handle` returns its events to the driver, which publishes them. `start`, the watchdogs and the
+    /// commit verdict have no such return channel, so the one event they can produce — completion — is
+    /// surfaced here.
     private func publishOutOfBand(_ events: [RingDecodedEvent]) {
         guard events.contains(where: { if case .historySyncFinished = $0 { return true } else { return false } })
         else { return }

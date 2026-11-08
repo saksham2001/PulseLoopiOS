@@ -42,8 +42,11 @@ struct YCBTEncoder {
     /// **Never add these to it** — each was once here, and each was a different kind of wrong:
     ///   • **No `05 xx`.** The Health group is the *history* protocol: `YCBTHistoryTransfer` owns those
     ///     queries and a stray one here would race it. Worse, `05 40…4E` are the Health **Delete**
-    ///     opcodes — they erase the ring's stored log. The commands that actually make the ring *record*
-    ///     between syncs are the five `01 xx {enable, interval}` monitors below.
+    ///     opcodes — they erase the ring's stored log. The transfer sends them itself, and only for a type
+    ///     it has just fetched *and* whose records `commitDeliveredHistory` has proved are on disk; a
+    ///     handshake has fetched nothing, so a delete from here could only ever destroy unsynced data.
+    ///     The commands that actually make the ring *record* between syncs are the five
+    ///     `01 xx {enable, interval}` monitors below.
     ///   • **No `04 xx`.** Group 4 is DevControl, the *device→app* push channel. The app's only
     ///     legitimate `04` write is an ACK for a push it received (`YCBTDriver.acknowledgePush`) — the
     ///     `04 0e 00` seen in a capture was SmartHealth ACKing a `MeasurementResult`, not a handshake
@@ -146,6 +149,12 @@ struct YCBTEncoder {
     /// release the next type until it arrives.
     func historyBlockAck(status: UInt8) -> [UInt8] {
         YCBTHealthCommand.historyBlockAck(status: status)
+    }
+
+    /// Erase one type's stored log: `05 <deleteKey> {02}`. Exposed for the byte pins only — the sole
+    /// sender is `YCBTHistoryTransfer`'s post-commit erase phase. `nil` for a type with no delete opcode.
+    func healthHistoryDelete(_ type: YCBTHistoryType) -> [UInt8]? {
+        YCBTHealthCommand.historyDelete(type)
     }
 
     // MARK: - Live actions

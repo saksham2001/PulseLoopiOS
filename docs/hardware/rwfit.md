@@ -57,13 +57,16 @@ an explicit empty page; timers do not turn an unanswered request into success.
 Current-day steps (`051A`) and historical steps (`0502`) are reconciled through the
 existing cumulative/bucket persistence paths.
 
-**Sync consumes transferred history from the ring.** Non-sleep streams are deleted
-only after the complete response has been validated and durably imported. Sleep
-requires deletion after each page, so raw pages are first atomically saved to a
-bounded, per-device journal in Application Support. Complete sleep sessions are
-assembled and imported before removing that journal. It survives interruption and
-is cleared with the user's app data. RwFit may no longer be able to import records
-that PulseLoop has consumed.
+**Sync consumes transferred history from the ring.** Like the vendor app, each
+modern page that carries records is deleted (`05xx30`) before the next page is
+requested; the empty page that ends a stream is never deleted. Unlike the vendor,
+which deletes first, PulseLoop validates and durably imports each non-sleep page
+before deleting it. A sleep session can span pages, so raw sleep pages are first
+atomically saved to a bounded, per-device journal in Application Support; complete
+sessions are assembled and imported before removing that journal. It survives
+interruption and is cleared with the user's app data. A lost delete reply is never
+retried and ends that stream for the sync. RwFit may no longer be able to import
+records that PulseLoop has consumed.
 
 Live values arrive on `02`-group commands: HR `0224`, SpO2 `024E`, HRV `0269`, BP
 `0231`, temperature `0230`, stress `024F`, and glucose `026C`. `0609` is measurement

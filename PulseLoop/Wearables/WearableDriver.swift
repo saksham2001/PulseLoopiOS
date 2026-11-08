@@ -12,10 +12,16 @@ protocol RingCommandWriter: AnyObject {
     func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void)
     /// Deliver a synthetic decoded event without inventing a received packet.
     func emit(_ event: RingDecodedEvent)
+    /// Completes `true` once every history event delivered before this call has been durably saved —
+    /// the precondition for erasing that history from the ring (see `RingHistoryCommit`). Any failure
+    /// or timeout completes `false`; callers must then leave the ring's data in place.
+    func commitDeliveredHistory(_ completion: @escaping @MainActor (Bool) -> Void)
 }
 
 extension RingCommandWriter {
     var deviceIdentifier: String? { nil }
+    /// Fail closed: a writer that cannot prove persistence never authorizes an erase.
+    func commitDeliveredHistory(_ completion: @escaping @MainActor (Bool) -> Void) { completion(false) }
     func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
         enqueue(command)
         completion(.success(()))

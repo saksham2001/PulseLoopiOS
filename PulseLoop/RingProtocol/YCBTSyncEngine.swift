@@ -134,6 +134,8 @@ final class YCBTSyncEngine: RingSyncEngine {
         // The `05 09` combined record carries BP, HRV, temperature and blood sugar as *optional fields* of
         // a record we always fetch — so unlike the others, a late unlock of one of these doesn't add a new
         // query, it means the one we already ran was decoded with those fields dropped. Re-run it once.
+        // Re-queuing also withdraws the type's pending erase (`YCBTHistoryTransfer.append`): the copy we
+        // saved is the incomplete one, so the ring's must survive until the re-run is on disk.
         if added.contains(where: { [.bloodPressure, .hrv, .temperature, .bloodSugar].contains($0) }) {
             newTypes.append(.all)
         }

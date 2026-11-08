@@ -290,6 +290,24 @@ final class CRPSyncEngineTests: XCTestCase {
         XCTAssertEqual(sleepDays, [0], "periodic history pulls today, not the per-link backfill")
     }
 
+    /// The CRP ring SDK (`com.crrepa.ble`) sends nothing after the last history frame — no ack, no erase:
+    /// the ring keeps a fixed per-day store (days 0…14). So a full sync must never write a destructive
+    /// power-group frame (factory reset / shut down / restart).
+    func testHistoryPassNeverSendsDestructiveFrames() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.setUserProfile(UserProfileValues(metric: true, sex: "male", age: 30, heightCm: 180, weightKg: 75))
+        engine.runStartup()
+        finishTimingHistory(engine)
+        engine.syncHistory()
+        finishTimingHistory(engine)
+
+        XCTAssertFalse(w.opcodes.isEmpty)
+        let destructive: Set<Int> = [CRPCommands.cmdFactoryReset, CRPCommands.cmdShutDown, CRPCommands.cmdRestart]
+        XCTAssertFalse(w.opcodes.contains { $0[0] == Int(CRPCommands.groupPower) && destructive.contains($0[1]) },
+                       "a sync must never reset, shut down or restart the ring")
+    }
+
     func testAllTerminalTimingStreamsPublishExactlyOneDone() {
         let w = FakeWriter()
         var stages: [String] = []

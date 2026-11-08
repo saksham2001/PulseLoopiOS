@@ -729,6 +729,12 @@ extension RingBLEClient: RingCommandWriter {
         deliverDecoded(event)
     }
 
+    /// Published through the same `publish` path as every decoded history event, so the persistence
+    /// subscriber reaches the barrier only after applying all of them.
+    func commitDeliveredHistory(_ completion: @escaping @MainActor (Bool) -> Void) {
+        publish(.historyCommitBarrier(RingHistoryCommit.register(completion)))
+    }
+
     private func deliverDecoded(_ decoded: RingDecodedEvent) {
         for event in RingNotificationDelivery.events(for: decoded) { publish(event) }
         if case let .supportFunctions(derived) = decoded { applySupportFunctions(derived) }

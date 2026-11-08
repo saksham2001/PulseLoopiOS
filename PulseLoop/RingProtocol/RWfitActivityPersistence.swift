@@ -3,6 +3,8 @@ import SwiftData
 
 /// A history transaction's activity snapshot. Reads throw; mutations never save internally.
 /// The caller commits all buckets and derived daily totals together before consuming ring history.
+/// RWfit commits one page per transaction: buckets upsert by start epoch and day totals are
+/// re-derived from every stored bucket of that day, so a day split across pages sums once.
 @MainActor
 final class RWfitActivityPersistence {
     nonisolated deinit {}
