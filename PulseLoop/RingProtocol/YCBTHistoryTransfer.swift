@@ -81,8 +81,31 @@ final class YCBTHistoryTransfer {
     /// What the header promised, kept for the terminal block to be checked against. See `handleTerminal`.
     private var expectedPackets = 0
     private var expectedBytes = 0
-    /// Types the firmware answered `0xFB`/`0xFC` for — never asked again this session.
+    /// Types the firmware answered `0xFB`/`0xFC` for — never asked again this session. Deliberately
+    /// survives `cancel()`: an auto-reconnect keeps this driver, and a rejection is a firmware fact.
     private var unsupported: Set<UInt8> = []
+    /// Types the watchdog skipped **without the ring sending anything at all** — no header, no frame on
+    /// the type's keys — not asked again until the link drops.
+    ///
+    /// An R99 never answers the dedicated SpO₂ log (`05 1a`): no header, no `0xFB`/`0xFC`, nothing, in
+    /// ~45 syncs. Without this, every 30-minute pass and every post-workout vitals backfill sat through
+    /// the full inactivity watchdog for it. No `02 01` bit names that log (SmartHealth never queries it),
+    /// so the ring's own silence is the only signal there is.
+    ///
+    /// Unlike `unsupported` this is cleared by `cancel()`. A silence is evidence, not a verdict: a fresh
+    /// link — possibly to a different ring of the same family on the same driver — asks again, and a ring
+    /// that does keep the log loses at most one connection's worth of reads (never data: a skipped type
+    /// is never erased, so the next connection reads it in full).
+    private var silent: Set<UInt8> = []
+    /// Only the dedicated SpO₂ (`05 1a`) and temperature (`05 1e`) logs — the two SmartHealth itself never
+    /// queries (`DataSyncUtils.syncData`, `DataSyncUtils.java:99-143`) — can be remembered as silent. A core
+    /// log the vendor reads every sync (sport, sleep, heart, All, …) that misses one reply is retried on
+    /// the next pass: rings stay connected for days, and skipping one until a reconnect would let its
+    /// log fill up unread and un-erased — the very failure that froze the R99's automatic SpO₂.
+    private static let mayGoSilent: Set<UInt8> = [YCBTHistoryType.spo2.queryKey, YCBTHistoryType.temperature.queryKey]
+    /// Whether the ring has sent a header or a data frame for the in-flight type. Reset per type by
+    /// `advance()`, not by the CRC retry — a type that earned a retry was plainly answered.
+    private var currentTypeAnswered = false
 
     /// Types eligible for the erase phase, in completion order: CRC-accepted, ≥1 record, not re-queued
     /// since. See the type doc.
@@ -115,8 +138,8 @@ final class YCBTHistoryTransfer {
     /// running — the walk isn't over until its deletes are.
     var isActive: Bool { state != .idle }
 
-    /// Seed the queue and request the first type. Types the ring already rejected this session are
-    /// skipped.
+    /// Seed the queue and request the first type. Types the ring already rejected this session, or left
+    /// unanswered on this connection, are skipped.
     ///
     /// **A transfer already in flight wins.** There are now three callers (the connect handshake, the
     /// post-workout vitals backfill, the 30-minute periodic pass), and a second `start` would abandon the
@@ -127,8 +150,12 @@ final class YCBTHistoryTransfer {
     /// interleaved with a delete could be answered out of order against either.
     func start(types: [YCBTHistoryType]) {
         guard !isActive else { return }
-        queue = types.filter { !unsupported.contains($0.queryKey) }
+        queue = types.filter(isWorthAsking)
         publishOutOfBand(advance())
+    }
+
+    private func isWorthAsking(_ type: YCBTHistoryType) -> Bool {
+        !unsupported.contains(type.queryKey) && !silent.contains(type.queryKey)
     }
 
     /// Add types to the queue **without** disturbing whatever is in flight.
@@ -148,7 +175,7 @@ final class YCBTHistoryTransfer {
     /// the erase phase is running the additions simply wait; the phase hands over to them when it ends.
     func append(types: [YCBTHistoryType]) {
         let additions = types.filter { type in
-            !unsupported.contains(type.queryKey)
+            isWorthAsking(type)
                 && !queue.contains(type)
                 && state.type != type
         }
@@ -159,14 +186,16 @@ final class YCBTHistoryTransfer {
         publishOutOfBand(advance())
     }
 
-    /// Abandon any in-flight transfer (disconnect / teardown). Also forgets the erase phase and the
-    /// bitmap: both belong to one link, and a commit verdict still in flight is orphaned by `generation`.
+    /// Abandon any in-flight transfer (disconnect / teardown). Also forgets the erase phase, the bitmap
+    /// and the silent types: all belong to one link, and a commit verdict still in flight is orphaned by
+    /// `generation`. `unsupported` is kept (see its doc).
     func cancel() {
         cancelWatchdog()
         state = .idle
         queue.removeAll()
         buffer.removeAll()
         pendingDeletes.removeAll()
+        silent.removeAll()
         capabilityBitmapReceived = false
         generation &+= 1
     }
@@ -185,6 +214,7 @@ final class YCBTHistoryTransfer {
         buffer.removeAll(keepingCapacity: false)
         bufferCap = Self.defaultBufferCap
         retriedCurrentType = false
+        currentTypeAnswered = false
         expectedPackets = 0
         expectedBytes = 0
         guard !queue.isEmpty else { return beginErasePhase() }
@@ -220,10 +250,14 @@ final class YCBTHistoryTransfer {
             return advance()
         }
 
+        // A terminal is deliberately not evidence of an answer: one that arrives before this type's header
+        // or data is the previous type's, late (see `handleTerminal`), and says nothing about this one.
         switch cmd {
         case type.queryKey:
+            currentTypeAnswered = true
             return handleHeader(type, payload: payload)
         case type.ackKey:
+            currentTypeAnswered = true
             appendData(payload)
             armWatchdog(for: type)
             return []
@@ -404,6 +438,10 @@ final class YCBTHistoryTransfer {
     /// Fires only on silence: the type is declared stalled and skipped. It must never ACK (an ACK
     /// without a verified terminal block tells the ring we accepted data we don't have) and must never
     /// stand in for completion.
+    ///
+    /// A type the ring never answered at all is also remembered as `silent` for the rest of this
+    /// connection. One that answered and *then* stalled is not: that is a transfer gone wrong, and the
+    /// next pass should try it again.
     private func armWatchdog(for type: YCBTHistoryType) {
         watchdog?.cancel()
         let deadline = typeDeadline ?? Date().addingTimeInterval(absoluteCapSeconds)
@@ -412,6 +450,10 @@ final class YCBTHistoryTransfer {
         watchdog = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self, self.state.type == type else { return }
+            if !self.currentTypeAnswered, Self.mayGoSilent.contains(type.queryKey) {
+                self.silent.insert(type.queryKey)
+                transferLog.info("\(type.label, privacy: .public) history unanswered; not asked again on this connection")
+            }
             self.publishOutOfBand(self.advance())
         }
     }

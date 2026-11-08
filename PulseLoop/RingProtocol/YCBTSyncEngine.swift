@@ -34,8 +34,16 @@ final class YCBTSyncEngine: RingSyncEngine {
     ///
     /// A ring that doesn't implement a type answers with a no-data header or a `0xFC` (unsupported key)
     /// error; `YCBTHistoryTransfer` skips both and — for `0xFC` — stops asking for the rest of the
-    /// session. Querying the full catalog is therefore free, and which types actually return data is
-    /// exactly the capability evidence the on-device checkpoint is looking for.
+    /// session. Some firmware answers nothing at all instead (the R99 on `05 1a`): that costs one
+    /// watchdog, after which the transfer stops asking until the link drops. Querying the full catalog is
+    /// therefore cheap, and which types actually return data is exactly the capability evidence the
+    /// on-device checkpoint is looking for.
+    ///
+    /// `05 1a` (SpO₂) and `05 1e` (temperature) are queried although SmartHealth never asks for them
+    /// (`DataSyncUtils.syncData`): the SDK defines and decodes both logs, and asking is the only way to
+    /// learn whether a given ring keeps them. No `02 01` bit names either *log* — the nearest are the
+    /// sensor bits `ISHASBLOODOXYGEN` / `ISHASTEMP` — so `05 1e` is gated on the temperature sensor, and
+    /// `05 1a` only on the family's `.spo2History` claim; see `supportedHistoryTypes`.
     private static let historyTypes: [YCBTHistoryType] = [
         .sport, .sleep, .heart, .blood, .all, .spo2, .temperature, .comprehensive, .bodyData,
     ]

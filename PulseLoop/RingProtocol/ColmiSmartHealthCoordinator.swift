@@ -137,7 +137,8 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     ///   R99 proved this benign: it NAKed `01 45` (HRV) and `01 1c` (all-day BP) with `0xFC` and honoured
     ///   the other three.
     /// - `.spo2History` is the all-day `05 1A` log. A ring without it answers the query with a no-data
-    ///   header or `0xFC`, which `YCBTHistoryTransfer` skips permanently.
+    ///   header or `0xFC`, which `YCBTHistoryTransfer` skips permanently — or, like the R99, with nothing
+    ///   at all, which costs one watchdog and is then not asked again until the link drops.
     ///
     /// Neither is named by any bit in `YCBTSupportFunction`, so gating them would not defer the decision
     /// — it would make them permanently unreachable (see `bitmapGatedCapabilities`).

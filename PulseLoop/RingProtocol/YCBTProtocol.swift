@@ -246,7 +246,9 @@ struct YCBTHistoryType: Equatable, Hashable, Sendable {
     /// Every type the SDK's `DataSyncUtils` can request, in its own ascending-key sync order — and every
     /// type `YCBTHealthRecords` decodes. Both YCBT families query the whole catalog, whatever their
     /// capability set says: a type the ring doesn't implement answers with a no-data header or a `0xFC`
-    /// (unsupported key), which `YCBTHistoryTransfer` skips — permanently, for `0xFC`. Asking is
+    /// (unsupported key), which `YCBTHistoryTransfer` skips — permanently, for `0xFC` — or, on some
+    /// firmware, with nothing at all, which costs one watchdog per connection (see
+    /// `YCBTHistoryTransfer.silent`). Asking is
     /// therefore cheaper than keeping a second, capability-derived list that could disagree with the
     /// ring's own answer.
     ///

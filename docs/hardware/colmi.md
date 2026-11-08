@@ -241,7 +241,7 @@ The R09 shows why that matters: it reports **no HRV, temperature, stress or bloo
 | Capability | QRing-Colmi | SmartHealth-Colmi (R09) |
 |---|:---:|:---:|
 | Heart rate — history / live / spot | ✅ | ✅ |
-| SpO₂ — history | ✅ | ✅ |
+| SpO₂ — history | ✅ | ✅ ² |
 | SpO₂ — **spot** | ❌ (all-day only) | ✅ (takes ~40 s) |
 | Steps / distance / calories | ✅ | ✅ |
 | Sleep, incl. REM | ✅ | 🧪 untested |
@@ -255,6 +255,11 @@ The R09 shows why that matters: it reports **no HRV, temperature, stress or bloo
 
 ¹ **Ring-declared.** A different SmartHealth-Colmi that sets the bit would get these cards. The R09
 leaves them clear, and backs that up on the wire — it refuses the HRV commands outright.
+
+² **From the combined `05 09` record.** PulseLoop also asks for the dedicated SpO₂ log (`05 1a`), which
+SmartHealth itself never requests. The R99 never answers that query at all — no data, no error — so
+PulseLoop gives up after its 10-second timeout and doesn't ask again until the ring reconnects. Each
+connection costs one 10-second wait, not one per sync.
 
 ### 🧪 Still unconfirmed
 

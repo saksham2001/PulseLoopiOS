@@ -207,6 +207,32 @@ final class YCBTHistoryEraseTests: XCTestCase {
         XCTAssertEqual(writer.deletes, [spo2Delete])
     }
 
+    /// A type the ring never answered at all (the R99's `05 1a`) is remembered as silent for the
+    /// connection — and silence never makes it eligible: neither that walk nor a later one on the same
+    /// link erases it, while the types that did answer are erased as usual.
+    func testASilentTypeIsNeverErased() async throws {
+        let writer = CommitWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+        transfer.noteCapabilityBitmapReceived()
+        transfer.start(types: [.heart, .spo2])
+        complete(.heart, sixByteBuffer, on: transfer)
+        XCTAssertEqual(writer.sent.last, spo2Query)
+        // SpO₂: no header, no error, nothing — the watchdog skips it and the erase phase begins.
+        try await waitForCommit(writer)
+        writer.commits[0](true)
+        XCTAssertTrue(isFinished(transfer.handle(cmd: 0x42, payload: [0x00])))
+        XCTAssertEqual(writer.deletes, [heartDelete])
+
+        writer.sent.removeAll()
+        transfer.start(types: [.heart, .spo2])
+        complete(.heart, sixByteBuffer, on: transfer)
+        XCTAssertEqual(writer.sent, [heartQuery, Data([0x05, 0x80, 0x00])],
+                       "the silent type is not asked again on this link")
+        try await waitForCommit(writer, count: 2)
+        writer.commits[1](true)
+        XCTAssertEqual(writer.deletes, [heartDelete], "and is never erased")
+    }
+
     /// Until this connection's `02 01` bitmap arrives, the driver filters samples on the baseline set, so
     /// a saved log may be missing fields the ring does have. Nothing is erased then.
     func testNoDeleteBeforeTheCapabilityBitmap() async throws {
