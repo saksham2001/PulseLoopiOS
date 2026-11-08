@@ -349,12 +349,78 @@ final class CRPSyncEngineTests: XCTestCase {
         XCTAssertEqual(stages.filter { $0 == "done" }.count, 1)
     }
 
+    /// Stress `2/47` goes unanswered on zaggash's R11 and the issue-#58 R100. A vital that returns no
+    /// frame inside the first-frame window must stop holding the pass, so `done` lands at the window
+    /// rather than at the whole-pass watchdog (set far out here so only the window can end the pass).
+    func testSilentStressStreamCompletesAtTheFirstFrameWindowNotTheWatchdog() async {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(
+            writer: w,
+            historyWatchdogNanos: 60_000_000_000,
+            timingFirstFrameWindowNanos: 50_000_000,
+            eventSink: { event in
+                if case let .syncProgress(stage) = event { stages.append(stage) }
+            }
+        )
+        engine.syncHistory()
+
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 0))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingSpO2, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHRV, day: 0, frameIndex: 3))
+        XCTAssertEqual(stages, ["Syncing ring history…"], "stress is still inside its window")
+
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(stages, ["Syncing ring history…", "done"])
+
+        // A stress reply after completion neither restarts the walk nor publishes a second `done`.
+        w.sent.removeAll()
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingStress, day: 0, frameIndex: 0))
+        XCTAssertTrue(w.sent.isEmpty)
+        XCTAssertEqual(stages.filter { $0 == "done" }.count, 1)
+    }
+
+    /// The window only drops a vital that never answered. Stress answering after the other vitals
+    /// finished, but inside its window, must still be walked to its terminal frame, and must keep the
+    /// pass open past the window while that walk is in progress.
+    func testLateStressInsideTheWindowIsWalkedToItsLastFrame() async {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(
+            writer: w,
+            historyWatchdogNanos: 60_000_000_000,
+            timingFirstFrameWindowNanos: 500_000_000,
+            eventSink: { event in
+                if case let .syncProgress(stage) = event { stages.append(stage) }
+            }
+        )
+        engine.syncHistory()
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingSpO2, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHRV, day: 0, frameIndex: 3))
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        w.sent.removeAll()
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingStress, day: 0, frameIndex: 0))
+        XCTAssertEqual(w.opcodes, [[2, CRPCommands.cmdQueryTimingStress]], "stress frame 1 is requested")
+        XCTAssertEqual(w.payloadByte(0, 7), 1)
+
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertEqual(stages, ["Syncing ring history…"], "an answering vital is not dropped at the window")
+
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingStress, day: 0, frameIndex: 1))
+        XCTAssertEqual(stages, ["Syncing ring history…", "done"])
+    }
+
     func testDisconnectCancelsCompletionAndReconnectResendsPerLinkQueries() async {
         let w = FakeWriter()
         var stages: [String] = []
         let engine = CRPSyncEngine(
             writer: w,
             historyWatchdogNanos: 20_000_000,
+            // Both deadlines expire inside the sleep below, so neither may survive the disconnect.
+            timingFirstFrameWindowNanos: 10_000_000,
             eventSink: { event in
                 if case let .syncProgress(stage) = event { stages.append(stage) }
             }
