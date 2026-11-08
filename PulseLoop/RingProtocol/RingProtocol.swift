@@ -82,6 +82,26 @@ struct JringBandCapabilities: Sendable, Equatable {
     var hasPressureHistory: Bool { bit(83) }
 }
 
+/// One control frame of the jring's per-day history transfer — the markers `JringSyncEngine` chains
+/// its day loop on. Vendor decoder: `BluetoothLeService.java` notify handler (`bad.java:3810-3893`).
+enum JringHistoryFrame: Sendable, Equatable {
+    /// A `0x10` steps or `0x11` sleep packet. These carry no terminator: the vendor ends the transfer
+    /// after 2 s without one (`d(strArrSplit, true)` → `postDelayed(.., h1 = 2000)`, `bad.java:212`).
+    case activity
+    /// `0x90`: the ring refused the `10 dd` request (vendor "getdayabyday failed").
+    case activityFailed
+    /// `0x16 F0`: the number of `AA` segments that follow, u16 LE at [6..7] (vendor `a1`).
+    case measurementHeader(segments: Int)
+    /// `0x16 AA`: segment number at [2] (`b1`) and its `A0` block count, u16 LE at [7..8] (`c1`).
+    case measurementSegment(index: Int, blocks: Int)
+    /// `0x16 A0`: one data block; its zero-based index within the segment is u16 LE at [6..7].
+    case measurementBlock(index: Int)
+    /// `0x16 FF`: end of the heart-rate transfer.
+    case measurementEnd
+    /// `0x96`: the ring refused the `16 dd` request (vendor "getheartdata detail failed").
+    case measurementFailed
+}
+
 struct RingPacket {
     let commandId: UInt8
     let payload: [UInt8]
@@ -194,6 +214,11 @@ enum RingDecodedEvent: Sendable {
     /// Produces no `PulseEvent` — the samples themselves arrive as separate `.historyMeasurement`
     /// events; this only advances the cursor.
     case timingHistoryFrame(cmd: Int, day: Int, frameIndex: Int)
+    /// A jring per-day history control frame (see `JringHistoryFrame`). Consumed by
+    /// `JringSyncEngine`, which chains `10 dd` → `16 dd` → the next day on it. Produces no `PulseEvent`:
+    /// the samples themselves arrive as separate `.activityBucket` / `.sleepTimeline` /
+    /// `.historyMeasurement` events.
+    case jringHistoryFrame(JringHistoryFrame)
     case timeSyncAck(timestamp: Date)
     case commandAck(commandId: UInt8)
     case unknown(commandId: UInt8, raw: Data)
@@ -230,6 +255,7 @@ enum RingDecodedEvent: Sendable {
         case .spotVitalSample: return "spot_vital_sample"
         case .spotVitalNoReading: return "spot_vital_no_reading"
         case .timingHistoryFrame: return "timing_history_frame"
+        case .jringHistoryFrame: return "jring_history_frame"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"
         case .unknown: return "unknown"
@@ -290,6 +316,8 @@ enum RingDecodedEvent: Sendable {
             return #"{"rejected_mode":\#(mode)}"#
         case let .timingHistoryFrame(cmd, day, frameIndex):
             return #"{"cmd":\#(cmd),"day":\#(day),"frameIndex":\#(frameIndex)}"#
+        case let .jringHistoryFrame(frame):
+            return #"{"frame":"\#(frame)"}"#
         case let .historySyncProgress(stage):
             return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):
@@ -333,6 +361,14 @@ struct RingDecoder {
         if packet.commandId == 0x16, bytes.count >= 20, bytes[1] == 0xa0 {
             return decodeHistoryHeartRate(bytes)
         }
+        // Steps (0x10) / sleep (0x11) history: the data, then the marker that restarts the sync
+        // engine's quiet window — these transfers have no end-of-stream frame of their own.
+        if packet.commandId == 0x10 {
+            return (decodeStepHistory(bytes).map { [$0] } ?? []) + [.jringHistoryFrame(.activity)]
+        }
+        if packet.commandId == 0x11 {
+            return [decode(data), .jringHistoryFrame(.activity)]
+        }
         // The 0x0c status payload carries both the embedded address and the firmware string; emit both.
         if packet.commandId == 0x0c, bytes.count >= 13 {
             return [decode(data), .firmware(version: firmwareString(bytes))]
@@ -340,9 +376,27 @@ struct RingDecoder {
         return [decode(data)]
     }
 
+    /// Decode a 0x10 step-history packet: LE u32 ring timestamp at [1..4], then fifteen one-minute step
+    /// counts at [5..19] (vendor `onGetDataByDay(1, ts + 60·i, bytes[5 + i], 0)`, `bad.java:3810-3820`).
+    ///
+    /// Published as **one** `.activityBucket` per packet (the quarter-hour it covers), like Colmi's
+    /// history: buckets are upserted by start time and summed per day, so re-pulling a day is
+    /// idempotent and today's live `0x03` total is never double-counted. One bucket rather than fifteen
+    /// keeps a 7-day pull to ~670 upserts instead of ~10,000. The packet has no distance channel, so the
+    /// bucket carries 0 m (persistence keeps a day's live distance when its buckets carry none).
+    /// `nil` for an all-zero packet: there is nothing to add, and no row is worth creating.
+    private func decodeStepHistory(_ bytes: [UInt8]) -> RingDecodedEvent? {
+        guard bytes.count >= 20 else { return nil }
+        let steps = bytes[5..<20].reduce(0) { $0 + Int($1) }
+        guard steps > 0 else { return nil }
+        return .activityBucket(timestamp: ringDate(u32le(bytes, 1)), steps: steps, distanceMeters: 0)
+    }
+
     /// Decode a 0x16 `0xA0` data block: base timestamp at [2..5] (LE u32), then two consecutive
     /// blocks of six 1-minute HR samples at [8..13] and [14..19]. Each block is averaged into one
     /// reading, the second timestamped 60s after the first. Mirrors the Android multi-packet routing.
+    /// The block's index ([6..7]) follows as a marker so the sync engine can end the transfer the way
+    /// the vendor does when the last segment's last block lands (`bad.java:3881-3884`).
     private func decodeHistoryHeartRate(_ bytes: [UInt8]) -> [RingDecodedEvent] {
         let base = ringDate(u32le(bytes, 2))
         func average(_ slice: ArraySlice<UInt8>) -> Int? {
@@ -358,7 +412,7 @@ struct RingDecoder {
             events.append(.historyMeasurement(kind: .heartRate, value: Double(avg),
                                                timestamp: base.addingTimeInterval(60)))
         }
-        return events.isEmpty ? [.commandAck(commandId: 0x16)] : events
+        return events + [.jringHistoryFrame(.measurementBlock(index: Int(u16le(bytes, 6))))]
     }
 
     /// Decode the 9-byte `0x24` combined-sensor payload into one event per valid metric. Byte map
@@ -414,21 +468,29 @@ struct RingDecoder {
             // in `decodeAll`. Here we surface just the embedded address (re-asserts connected state).
             let address = bytes.count >= 9 ? bytes[3...8].map { String(format: "%02x", $0) }.joined(separator: ":") : nil
             return .status(address: address)
+        case 0x10 where bytes.count >= 20:
+            return decodeStepHistory(bytes) ?? .jringHistoryFrame(.activity)
         case 0x11 where bytes.count >= 20:
             let timestamp = ringDate(u32le(bytes, 1))
             let stages = bytes[5..<20].map(stage)
             return .sleepTimeline(timestamp: timestamp, stages: stages)
         case 0x14 where bytes.count >= 6:
             return .heartRateSample(bpm: Int(bytes[5]), timestamp: now)
-        case 0x16 where bytes.count >= 2 && bytes[1] == 0xff:
-            // End-of-stream marker for the measurement-history sync: surface it as "finished" so the
-            // coordinator's endSync path fires (via RingEventBridge → `.syncProgress("done")`).
-            return .historySyncFinished
+        case 0x16 where bytes[1] == 0xff:
+            // End of one day's heart-rate transfer. Not "sync finished": `JringSyncEngine` chains the
+            // next day on it and reports `.historySyncFinished` itself once day 0 is done.
+            return .jringHistoryFrame(.measurementEnd)
+        case 0x16 where bytes[1] == 0xf0:
+            return .jringHistoryFrame(.measurementHeader(segments: Int(u16le(bytes, 6))))
+        case 0x16 where bytes[1] == 0xaa:
+            return .jringHistoryFrame(.measurementSegment(index: Int(bytes[2]), blocks: Int(u16le(bytes, 7))))
         case 0x16:
-            // Header (0xF0) carries the total packet count; index (0xAA) is a sync-flow marker. Data
-            // blocks (0xA0) are handled in `decodeAll`. None decode to a measurement on their own, so
-            // they're plain acks here.
+            // Data blocks (0xA0) are handled in `decodeAll`; anything else is an unnamed sub-type.
             return .commandAck(commandId: packet.commandId)
+        case 0x90:
+            return .jringHistoryFrame(.activityFailed)
+        case 0x96:
+            return .jringHistoryFrame(.measurementFailed)
         case 0x20 where bytes.count >= 2:
             return .bandFunction(JringBandCapabilities(bytes: Array(bytes.dropFirst())))
         case 0x24:
@@ -463,6 +525,11 @@ struct RingDecoder {
         return String(format: "%04X%04XV%d", cid, did, version)
     }
 
+    private func u16le(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
+        guard bytes.count >= offset + 2 else { return 0 }
+        return UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
+    }
+
     private func u32le(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
         guard bytes.count >= offset + 4 else { return 0 }
         return UInt32(bytes[offset])
@@ -485,8 +552,20 @@ struct RingEncoder {
     func makeStatusCommand() -> Data { data(hex: "0c00000000000000000000000000000000000000") }
     func makeLocaleCommand(locale: String = "en-US") -> Data { data(hex: "21656e2d55530000000000000000000000000000") }
     func makeActivityQueryCommand() -> Data { data(hex: "0299b85a00000000000000000000000000000000") }
-    func makeHistoryQueryCommand() -> Data { data(hex: "1000000000000000000000000000000000000000") }
-    func makeHistoryMeasurementQueryCommand() -> Data { data(hex: "1600000000000000000000000000000000000000") }
+    /// Steps + sleep history for one day (`10 dd`, vendor `getDataByDay(1, dd)` →
+    /// `BluetoothLeService.a(int,int)` at :5218). `day` 0 = today … 6; the ring answers with `0x10`
+    /// steps and `0x11` sleep packets, or `0x90` on failure.
+    func makeHistoryQueryCommand(day: Int = 0) -> Data { makeDayQuery(0x10, day: day) }
+    /// Heart-rate history for one day (`16 dd`, vendor `getDataByDay(2, dd)`): `F0` header, `AA`
+    /// segment, `A0` data blocks, `FF` end — or `0x96` on failure.
+    func makeHistoryMeasurementQueryCommand(day: Int = 0) -> Data { makeDayQuery(0x16, day: day) }
+
+    private func makeDayQuery(_ opcode: UInt8, day: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        bytes[0] = opcode
+        bytes[1] = UInt8(clamping: max(0, day))
+        return Data(bytes)
+    }
     func makeHeartRateStartCommand() -> Data { data(hex: "14b4000000000000000000000000000000000000") }
     func makeHeartRateStopCommand() -> Data { data(hex: "1500000000000000000000000000000000000000") }
     func makeFindRingCommand() -> Data { data(hex: "040a000000000000000000000000000000000000") }

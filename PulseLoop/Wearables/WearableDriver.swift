@@ -178,8 +178,9 @@ struct UserProfileValues: Sendable, Equatable {
     }
 }
 
-/// Per-device orchestration of command flows. The jring engine is fire-and-forget (`handle` is a
-/// no-op); the Colmi engine advances a 7-stage response-driven history machine inside `handle`.
+/// Per-device orchestration of command flows. The jring engine fires its handshake up front, then
+/// chains a per-day history loop in `handle`; the Colmi engine advances a 7-stage response-driven
+/// history machine inside `handle`.
 /// Lives behind the driver so `RingBLEClient` / `RingSyncCoordinator` stay clean.
 @MainActor
 protocol RingSyncEngine: AnyObject {

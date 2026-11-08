@@ -307,22 +307,64 @@ final class RingDecoderTests: XCTestCase {
         XCTAssertTrue(events.contains { if case .firmware = $0 { return true } else { return false } })
     }
 
-    /// 0x16 with the end-of-stream marker (bytes[1] == 0xFF) decodes as `.historySyncFinished`, which
-    /// the event bridge maps to `.syncProgress("done")` so the coordinator's endSync fires.
-    func testHistoryMeasurementFinishedMarker() {
-        let event = decode("16ff000000000000000000000000000000000000")
-        guard case .historySyncFinished = event else {
-            return XCTFail("expected historySyncFinished, got \(event.kind)")
-        }
+    /// 0x16 `FF` ends one *day's* heart-rate transfer — a marker for `JringSyncEngine`'s day loop, not
+    /// "sync finished" (the engine reports that itself after day 0).
+    func testHistoryMeasurementEndIsADayMarker() {
+        XCTAssertEqual(historyFrame(decode("16ff000000000000000000000000000000000000")), .measurementEnd)
     }
 
-    /// A non-0xFF 0x16 sub-type (e.g. the 0xF0 header marker) still decodes as a plain ack, unchanged.
-    func testHistoryMeasurementHeaderStillAcks() {
-        let event = decode("16f0000000000000000000000000000000000000")
-        guard case let .commandAck(commandId) = event else {
-            return XCTFail("expected commandAck, got \(event.kind)")
+    /// `F0` header: segment count u16 LE at [6..7]; `AA` segment: number at [2], block count u16 LE at
+    /// [7..8] (vendor `a1`/`b1`/`c1`, `bad.java:3869-3874`).
+    func testHistoryMeasurementHeaderAndSegmentMarkers() {
+        XCTAssertEqual(historyFrame(decode("16f0000000000201000000000000000000000000")), .measurementHeader(segments: 0x0102))
+        XCTAssertEqual(historyFrame(decode("16aa030000000004000000000000000000000000")), .measurementSegment(index: 3, blocks: 4))
+    }
+
+    /// `0x90` / `0x96` are the ring refusing `10 dd` / `16 dd`; both end the step.
+    func testHistoryFailureMarkers() {
+        XCTAssertEqual(historyFrame(decode("9000000000000000000000000000000000000000")), .activityFailed)
+        XCTAssertEqual(historyFrame(decode("9600000000000000000000000000000000000000")), .measurementFailed)
+    }
+
+    /// 0x10 step history: LE u32 ring time at [1..4], fifteen one-minute step counts at [5..19]
+    /// (`bad.java:3810-3820`) → one quarter-hour bucket, then the quiet-window marker.
+    func testStepHistoryPacketDecodesToBucketAndMarker() {
+        let base: UInt32 = 1_700_000_000
+        var bytes = [UInt8](repeating: 0, count: 20)
+        bytes[0] = 0x10
+        bytes[1] = UInt8(base & 0xff); bytes[2] = UInt8((base >> 8) & 0xff)
+        bytes[3] = UInt8((base >> 16) & 0xff); bytes[4] = UInt8((base >> 24) & 0xff)
+        for i in 5..<20 { bytes[i] = UInt8(i) }          // 5 + 6 + … + 19 = 180 steps
+        let events = decoder.decodeAll(Data(bytes))
+        XCTAssertEqual(events.count, 2)
+        guard case let .activityBucket(ts, steps, distance) = events.first else {
+            return XCTFail("expected activityBucket, got \(events.first?.kind ?? "nil")")
         }
-        XCTAssertEqual(commandId, 0x16)
+        XCTAssertEqual(ts.timeIntervalSince1970, TimeInterval(base))
+        XCTAssertEqual(steps, 180)
+        XCTAssertEqual(distance, 0, "0x10 has no distance channel")
+        XCTAssertEqual(historyFrame(events[1]), .activity)
+    }
+
+    /// An all-zero minute block adds nothing, but still restarts the quiet window.
+    func testEmptyStepHistoryPacketIsMarkerOnly() {
+        let events = decoder.decodeAll((try? Data(hexString: "1000f15365000000000000000000000000000000")) ?? Data())
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(historyFrame(events[0]), .activity)
+    }
+
+    /// Sleep history (0x11) keeps its timeline event and gains the same marker.
+    func testSleepHistoryPacketAlsoEmitsMarker() {
+        let events = decoder.decodeAll((try? Data(hexString: "1100f15365282828282828282828282828282828")) ?? Data())
+        XCTAssertEqual(events.count, 2)
+        guard case .sleepTimeline = events[0] else { return XCTFail("expected sleepTimeline") }
+        XCTAssertEqual(historyFrame(events[1]), .activity)
+    }
+
+    private func historyFrame(_ event: RingDecodedEvent) -> JringHistoryFrame? {
+        if case let .jringHistoryFrame(frame) = event { return frame }
+        XCTFail("expected jringHistoryFrame, got \(event.kind)")
+        return nil
     }
 
     /// 0x16 data block (sub-type 0xA0): base ts at [2..5], then two 6-sample HR blocks → two averages
@@ -342,5 +384,12 @@ final class RingDecoderTests: XCTestCase {
         XCTAssertEqual(hr[0].0, 60)
         XCTAssertEqual(hr[1].0, 60)
         XCTAssertEqual(hr[1].1.timeIntervalSince1970 - hr[0].1.timeIntervalSince1970, 60, accuracy: 0.5)
+    }
+
+    /// Each `A0` block ends with its index (u16 LE at [6..7]) so the engine can end by count.
+    func testHistoryHeartRateBlockCarriesIndexMarker() {
+        let events = decoder.decodeAll((try? Data(hexString: "16a000f153650500000000000000000000000000")) ?? Data())
+        XCTAssertEqual(events.count, 1, "no non-zero samples → just the marker")
+        XCTAssertEqual(historyFrame(events[0]), .measurementBlock(index: 5))
     }
 }

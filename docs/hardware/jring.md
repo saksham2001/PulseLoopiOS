@@ -115,6 +115,43 @@ teardown and how the packet formats were decoded.
 - Flashing: Renesas SUOTA (`0xFEF5` service) to the DA14531.
 - **All firmware traffic is plain HTTP with no token or signature — integrity is an MD5 only.**
 
+## History sync
+
+PulseLoop pulls history the way the vendor app (`com.jaga.ibraceletplus.jyring`)
+does: **one day at a time**, oldest first.
+
+| Request | Answer | Transfer ends on |
+|---|---|---|
+| `10 dd` — steps + sleep | `0x10` steps / `0x11` sleep packets: LE u32 time at [1..4], then 15 one-minute values | 2 s with no new packet, or `0x90` (refused) |
+| `16 dd` — heart rate | `F0` header (segment count), `AA` segment, `A0` data blocks | `FF`, the last segment's last `A0` block, or `0x96` (refused) |
+
+`dd` is 0 = today … 6. The frames are 20 bytes, zero padded.
+
+- **How far back.** On connect, the sync starts at the number of calendar days
+  since this ring's last *finished* sync, capped at 6. A ring never synced here
+  gets all 6 days. This matches the vendor's `DupMainActivity.autoSync`.
+- **Chaining.** Each day runs `10 dd` → `16 dd`, then moves to the next-newer
+  day. After day 0 the app shows "done" — once per sync, not once per day.
+- **Sync point.** The time the sync *started* is saved per ring, but only when
+  every step ended on the ring's own terminator. If the ring goes silent for
+  10 s, that step is skipped and the next sync re-reads the same days. Forgetting
+  the ring clears its sync point.
+- **No 300 s gap.** The vendor skips a sync that starts within 300 s of the last
+  one. PulseLoop always reads at least today, because a manual sync must finish
+  with "done". Re-reading a day is idempotent.
+- **Steps** come down as one 15-minute bucket per `0x10` packet. Buckets are
+  upserted by start time and summed per day. The packet has no distance, so a
+  day's distance comes only from the live `0x03` total.
+- **Post-workout** backfill sends only today's `16 00`.
+- **Not pulled yet:** temperature (`39 dd`), offline SpO₂ (`40 dd`), pressure
+  (`55 dd`) and multi-sport (`25 dd`). The vendor sends these only on rings whose
+  `0x20` capability reply lists them, and PulseLoop has no decoders for their
+  replies yet.
+
+!!! danger "Never send `0E 12 34 12 34 12 34 12 34`"
+    That frame is a factory reset. Other `0E` frames are OTA, power-off and
+    restart. PulseLoop sends no `0x0E` frame at all.
+
 ## Background behavior
 
 - Idle timeout: ~20 seconds of inactivity
