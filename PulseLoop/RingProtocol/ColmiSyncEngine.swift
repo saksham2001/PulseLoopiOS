@@ -54,6 +54,9 @@ final class ColmiSyncEngine: RingSyncEngine {
     private var daysAgo = 0
     /// The midnight of the day currently being synced (for HR/stress/HRV sample timestamps).
     private var syncDay = Calendar.current.startOfDay(for: Date())
+    /// How many packets the current HR/stress/HRV day has, from its packet 0 (`v[2]`); nil until that
+    /// header arrives. Reset on every day request. Drives `isTerminalPacket`.
+    private var expectedPackets: Int?
     /// A targeted post-workout run: today's HR log → SpO2 big-data → done, skipping the other five
     /// stages. Set by `startVitalsBackfill()`, cleared whenever a run finishes or a full sync starts.
     private var isVitalsBackfill = false
@@ -219,22 +222,35 @@ final class ColmiSyncEngine: RingSyncEngine {
 
     private func requestActivity() {
         syncDay = dayStart(daysAgo)
+        expectedPackets = nil
         writer?.enqueue(Data(encoder.syncActivity(daysAgo: daysAgo)))
     }
 
     private func requestHeartRate() {
         syncDay = dayStart(daysAgo)
-        let unix = Int(syncDay.timeIntervalSince1970)
+        expectedPackets = nil
+        let unix = Self.heartRateRequestEpoch(dayStart: syncDay, timeZone: calendar.timeZone)
         writer?.enqueue(Data(encoder.syncHeartRate(fromUnix: unix)))
+    }
+
+    /// The ring indexes its daily HR logs by local wall-clock time read as UTC, so the request carries
+    /// local midnight *plus* the zone offset — the calendar date at 00:00 UTC. GadgetBridge
+    /// (`YawellRingDeviceSupport.java:916`, `+ ZONE_OFFSET + DST_OFFSET`) and PulseLoopAndroid
+    /// (`ColmiSyncEngine.kt:496-500`, `atStartOfDay(ZoneOffset.UTC)`, from QRing) agree. The true
+    /// local-midnight epoch we sent before falls inside the ring's *previous* day east of UTC.
+    static func heartRateRequestEpoch(dayStart: Date, timeZone: TimeZone) -> Int {
+        Int(dayStart.timeIntervalSince1970) + timeZone.secondsFromGMT(for: dayStart)
     }
 
     private func requestStress() {
         syncDay = calendar.startOfDay(for: Date())
+        expectedPackets = nil
         writer?.enqueue(Data(encoder.syncStress()))
     }
 
     private func requestHRV() {
         syncDay = dayStart(daysAgo)
+        expectedPackets = nil
         writer?.enqueue(Data(encoder.syncHRV(daysAgo: daysAgo)))
     }
 
@@ -251,6 +267,7 @@ final class ColmiSyncEngine: RingSyncEngine {
     /// Decode a paged history frame for the current sync-day and advance the machine. Returns the
     /// decoded sample events for the bus.
     func handleHistoryFrame(_ data: Data) -> [RingDecodedEvent] {
+        captureExpectedPackets(data)
         let events = decoder.decodeHistory(data, day: syncDay, calendar: calendar)
         advanceAfterPagedFrame(data)
         armWatchdog()   // progress made — reset the stall timer
@@ -284,13 +301,30 @@ final class ColmiSyncEngine: RingSyncEngine {
         lastRealtimeFrameAt = Date()
     }
 
+    /// HR/stress/HRV packet 0 is a header: `<op> 00 <size> <cadence min> …`, where `size` counts the
+    /// day's packets *including* this header (QRing `ReadHeartRateRsp`/`PressureRsp`/`HRVRsp` per
+    /// PulseLoopAndroid `ColmiSyncEngine.kt:357-372`; GadgetBridge reads the same `v[2]` for HR at
+    /// `YawellRingDeviceSupport.java:232` and HRV at `YawellRingPacketHandler.java:541`; tahnok
+    /// `hr.py` too). Out-of-range sizes are ignored so a garbled header falls back to the defaults.
+    private func captureExpectedPackets(_ data: Data) {
+        guard let packet = ColmiPacket(validating: data) else { return }
+        let v = packet.bytes
+        switch v[0] {
+        case ColmiCommandID.syncHeartRate, ColmiCommandID.syncStress, ColmiCommandID.syncHRV:
+            guard v[1] == 0 else { return }
+            let size = Int(v[2])
+            expectedPackets = (2...64).contains(size) ? size : nil
+        default:
+            return
+        }
+    }
+
     /// Paged stages (activity/HR/stress/HRV) advance day-by-day, then to the next stage. We treat an
-    /// empty marker (0xff) OR the final packet as "this day done".
+    /// empty marker (0xff) OR the final packet as "this day done". A header packet (0) just waits for
+    /// data packets.
     private func advanceAfterPagedFrame(_ data: Data) {
         let packetNr = ColmiDecoder.historyPacketNumber(data)
         let isEmpty = packetNr == 0xff
-        // For paged HR/stress/HRV, byte[2] in packet 0 carries the total; we conservatively treat any
-        // empty/terminal as "advance". A header packet (0) just waits for data packets.
         let dayComplete = isEmpty || isTerminalPacket(data)
 
         guard dayComplete else { return }
@@ -313,19 +347,25 @@ final class ColmiSyncEngine: RingSyncEngine {
         }
     }
 
-    /// Terminal packet heuristic for paged stages: stress/HRV finish at packet 4 (GadgetBridge);
-    /// activity finishes when `currentPacket == totalPackets - 1` (bytes 5/6).
+    /// A day's last data packet: `packetNr == size - 1`, with `size` from the day's header
+    /// (`captureExpectedPackets`) — QRing's rule (PulseLoopAndroid `ColmiSyncEngine.kt:565-588`),
+    /// GadgetBridge's `hrPacketNr == packetsTotalNr - 1` (`YawellRingDeviceSupport.java:290`) and
+    /// tahnok's `sub_type == self.size - 1`. HR used to have no terminal at all, so every HR day with
+    /// data sat out the 10 s watchdog, which then skipped the whole stage and days 1-7 were never
+    /// requested. Fallbacks when the header was missed: stress/HRV keep the old size 5 (48 half-hour
+    /// slots = 12 + 3 × 13 values); HR ends on packet 23 (a full 5-minute day is 9 + 22 × 13 ≥ 288
+    /// values), else the watchdog. Activity ends when `currentPacket == totalPackets - 1` (bytes 5/6).
     private func isTerminalPacket(_ data: Data) -> Bool {
         let v = [UInt8](data)
         guard v.count >= 7 else { return false }
+        let packetNr = Int(v[1])
         switch v[0] {
         case ColmiCommandID.syncStress, ColmiCommandID.syncHRV:
-            return Int(v[1]) == 4
+            return packetNr == (expectedPackets ?? 5) - 1
         case ColmiCommandID.syncActivity:
             return Int(v[5]) == Int(v[6]) - 1
         case ColmiCommandID.syncHeartRate:
-            // packet 0 carries total in byte[2]; treat last packet as terminal.
-            return false   // UNVERIFIED: rely on emptiness / next-day request cadence
+            return packetNr == (expectedPackets ?? 24) - 1
         default:
             return false
         }

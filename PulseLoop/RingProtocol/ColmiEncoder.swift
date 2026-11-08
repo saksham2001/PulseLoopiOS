@@ -137,13 +137,49 @@ struct ColmiEncoder {
 
     // MARK: Big-data requests (raw, sent on the command characteristic)
 
+    /// `bc 2a 01 00 ff 00 ff` — all-history SpO2 (payload `ff`).
     func bigDataSpo2() -> Data {
-        Data([ColmiCommandID.bigDataV2, ColmiCommandID.bigDataSpo2, 0x01, 0x00, 0xff, 0x00, 0xff])
+        Self.bigDataRequest(ColmiCommandID.bigDataSpo2, payload: [0xff])
     }
+
+    /// `bc 27 02 00 81 80 ff 01` — QRing's New_Sleep_Protocol request, `LargeDataHandler.addHeader(39,
+    /// [0xff, 0x01])`: `ff` = all history, `01` = protocol version (PulseLoopAndroid
+    /// `ColmiEncoder.kt:261-268`, ported from the QRing decompile; its `ColmiSleepSyncTest.kt:47-58`
+    /// pins the same bytes). The 1-byte `bc 27 01 00 ff 00 ff` we used to send (GadgetBridge
+    /// `YawellRingDeviceSupport.fetchHistorySleep`) is silently ignored by newer firmware, so sleep
+    /// never synced there. The reply is the same `0x27` day-record frame `decodeSleep` reads
+    /// (`testRing2ProCapturedNightDecodes` is a reply to this request), plus a `0x3e` nap frame on
+    /// rings that file short sleeps separately.
     func bigDataSleep() -> Data {
-        Data([ColmiCommandID.bigDataV2, ColmiCommandID.bigDataSleep, 0x01, 0x00, 0xff, 0x00, 0xff])
+        Self.bigDataRequest(ColmiCommandID.bigDataSleep, payload: [0xff, 0x01])
     }
+
+    /// `bc 25 01 00 3e 81 02` — legacy temperature series (payload = day count 2).
     func bigDataTemperature() -> Data {
-        Data([ColmiCommandID.bigDataV2, ColmiCommandID.bigDataTemperature, 0x01, 0x00, 0x3e, 0x81, 0x02])
+        Self.bigDataRequest(ColmiCommandID.bigDataTemperature, payload: [0x02])
+    }
+
+    /// `bc <type> <len u16 LE> <crc u16 LE> <payload>` — QRing's `LargeDataHandler.addHeader`, where
+    /// the CRC is CRC16/MODBUS over the payload (PulseLoopAndroid `ColmiEncoder.kt:237-256`).
+    static func bigDataRequest(_ type: UInt8, payload: [UInt8]) -> Data {
+        let crc = crc16Modbus(payload)
+        let len = payload.count
+        return Data([
+            ColmiCommandID.bigDataV2, type,
+            UInt8(len & 0xff), UInt8((len >> 8) & 0xff),
+            UInt8(crc & 0xff), UInt8((crc >> 8) & 0xff),
+        ] + payload)
+    }
+
+    /// CRC16/MODBUS: init `0xffff`, reflected poly `0xa001`, no final xor.
+    static func crc16Modbus(_ bytes: [UInt8]) -> UInt16 {
+        var crc: UInt16 = 0xffff
+        for byte in bytes {
+            crc ^= UInt16(byte)
+            for _ in 0..<8 {
+                crc = crc & 1 != 0 ? (crc >> 1) ^ 0xa001 : crc >> 1
+            }
+        }
+        return crc
     }
 }

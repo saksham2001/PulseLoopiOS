@@ -116,10 +116,29 @@ unit-tested against the same captures but has not been run against the ring.
   `6a 0b 00 00` for temperature (`StopHeartRateReq.stopTemperatureCheck`). Temperature is
   `raw / 10 + 20` °C.
 - **Sleep.** A session of 180 minutes or less is filed under the nap action (`bc 3e`) with main sleep
-  (`bc 27`) left empty; longer sessions land on `bc 27`, which iOS decodes (pinned by
-  `testRing2ProCapturedNightDecodes`). **iOS does not request or decode `bc 3e`**, so short sleeps on
-  this ring are not imported on iOS yet. Firmware analysis shows light/deep/REM are generated with
-  `rand()`; only the asleep/awake boundaries come from the sensors.
+  (`bc 27`) left empty; longer sessions land on `bc 27` (pinned by `testRing2ProCapturedNightDecodes`).
+  The ring sends `bc 3e` on its own alongside the `bc 27` reply; iOS decodes both with the same
+  day-record parser, but the iOS port has not yet been run against this ring. Firmware analysis
+  shows light/deep/REM are generated with `rand()`; only the asleep/awake boundaries come from the
+  sensors.
+
+## History sync (QRing firmware)
+
+PulseLoop pulls history as one chain on every connect and every 30 minutes while connected:
+activity (8 days) → heart rate (8 days) → stress → SpO₂ → sleep → HRV (7 days) → temperature. It
+sends what QRing sends:
+
+- **Paged days (HR `0x15`, stress `0x37`, HRV `0x39`) end on the ring's own page count.** Packet 0
+  is a header, `<op> 00 <size> <cadence>`, and the day is done at packet `size − 1`. Without a
+  header, HR ends at packet 23 and stress/HRV at packet 4. A day with no data answers `<op> ff`.
+- **HR is requested by date, not by instant.** The request carries local midnight plus the zone
+  offset, which is the calendar date at 00:00 UTC. The ring keys its daily logs on that.
+- **Sleep uses QRing's New_Sleep_Protocol request**, `bc 27 02 00 81 80 ff 01`. Payload `ff 01` means
+  all history, protocol version 1, and `81 80` is its CRC16/MODBUS. Newer firmware ignores the
+  1-byte `bc 27 01 00 ff 00 ff` that GadgetBridge sends.
+
+A stage that never answers is skipped after 10 s (20 s for activity), so one silent stage can't
+stall the chain.
 
 ## Sensors
 
