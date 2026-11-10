@@ -106,7 +106,8 @@ enum SeedData {
             let secondRecordStart = i == 0 && blocks.count > 5 ? blocks[5].startAt : nil
             for block in blocks {
                 let recordStart = secondRecordStart.map { block.startAt >= $0 ? $0 : startAt } ?? startAt
-                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: recordStart))
+                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute,
+                                               durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: recordStart))
             }
 
             // A few recent days also get daytime nap(s) — separate sessions sharing the same waking
@@ -126,7 +127,8 @@ enum SeedData {
                 let napSession = SleepSession(date: dayDate, startAt: napStart, endAt: napEnd, totalMinutes: nap.minutes, score: napScore.score, syncedAt: napEnd)
                 context.insert(napSession)
                 for block in napBlocks {
-                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: napStart))
+                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute,
+                                                   durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: napStart))
                 }
             }
         }
