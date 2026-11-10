@@ -140,9 +140,24 @@ enum MetricsService {
                           isEstimated: window.isEstimated)
     }
 
+    /// `spo2Series` over a fixed calendar window `[start, end)` (a vital detail period, issue #102) —
+    /// the same hide-or-flag rule, decided on the raw rows before bucketing.
+    static func spo2Series(start: Date, end: Date, range: MetricRange, context: ModelContext,
+                           scope: MetricScope = .vitals) -> SpO2Series {
+        let window = applyEstimatedSpO2Rule(windowSamples(kind: .spo2, start: start, end: end, context: context),
+                                            context: context)
+        return SpO2Series(samples: displaySamples(window.samples, range: range, scope: scope),
+                          isEstimated: window.isEstimated)
+    }
+
     /// The raw (un-bucketed) SpO₂ rows of a window after the hide-estimated preference.
     private static func spo2Window(range: MetricRange, context: ModelContext) -> (samples: [MetricSample], isEstimated: Bool) {
-        let raw = rangeSamples(kind: .spo2, range: range, context: context)
+        applyEstimatedSpO2Rule(rangeSamples(kind: .spo2, range: range, context: context), context: context)
+    }
+
+    /// Hide estimated hourly SpO₂ rows (the default) or keep them and flag the series.
+    private static func applyEstimatedSpO2Rule(_ raw: [MetricSample],
+                                               context: ModelContext) -> (samples: [MetricSample], isEstimated: Bool) {
         let estimated = estimatedSpO2Timestamps(in: raw, context: context)
         guard !estimated.isEmpty else { return (raw, false) }
         if MetricPrefsStore.shared.settings.hideEstimatedSpO2 {
@@ -170,6 +185,30 @@ enum MetricsService {
     private static func estimatedSpO2Timestamps(in samples: [MetricSample], context: ModelContext) -> Set<Date> {
         guard let first = samples.first?.timestamp, let last = samples.last?.timestamp else { return [] }
         return EstimatedSpO2.estimatedTimestamps(from: min(first, last), to: max(first, last), context: context)
+    }
+
+    /// One kind's readings inside a fixed calendar window `[start, end)` (a vital detail period,
+    /// issue #102), oldest first, calibrated and display-downsampled exactly like `metricRange`. Unlike
+    /// `metricRange` it never widens to full history for demo data — the window is the window. SpO₂
+    /// goes through `spo2Series(start:end:…)` so estimated hourly rows are hidden or flagged as on
+    /// every other surface; use that directly when the flag is needed.
+    static func measurementWindow(kind: MeasurementKind, start: Date, end: Date, range: MetricRange,
+                                  context: ModelContext, scope: MetricScope = .vitals) -> [MetricSample] {
+        if kind == .spo2 {
+            return spo2Series(start: start, end: end, range: range, context: context, scope: scope).samples
+        }
+        let samples = calibrated(windowSamples(kind: kind, start: start, end: end, context: context), kind: kind)
+        return displaySamples(samples, range: range, scope: scope)
+    }
+
+    /// Raw rows of one kind in `[start, end)`, oldest first.
+    private static func windowSamples(kind: MeasurementKind, start: Date, end: Date, context: ModelContext) -> [MetricSample] {
+        let raw = kind.rawValue
+        let descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw && $0.timestamp >= start && $0.timestamp < end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).map { MetricSample(timestamp: $0.timestamp, value: $0.value) }
     }
 
     /// The display transform applied to already-fetched, windowed samples: bucket-average per the

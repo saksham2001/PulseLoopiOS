@@ -123,6 +123,16 @@ enum MetricsRepository {
         return try? context.fetch(descriptor).first?.timestamp
     }
 
+    /// Oldest timestamp of one kind — how far back a vital's detail screen may page.
+    @MainActor
+    static func oldestMeasurementTimestamp(kind: MeasurementKind, context: ModelContext) -> Date? {
+        let raw = kind.rawValue
+        var descriptor = FetchDescriptor<Measurement>(predicate: #Predicate { $0.kindRaw == raw },
+                                                      sortBy: [SortDescriptor(\.timestamp, order: .forward)])
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first?.timestamp
+    }
+
     /// Whether any mock measurement exists (demo-mode detection). `fetchLimit: 1` predicated probe.
     @MainActor
     static func hasMockMeasurement(context: ModelContext) -> Bool {
