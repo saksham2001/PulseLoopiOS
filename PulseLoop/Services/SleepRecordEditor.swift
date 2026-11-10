@@ -5,25 +5,35 @@ import SwiftData
 /// A re-sent record reproduces its declared start and its blocks' starts exactly, so those are the
 /// keys: a deleted record is dropped whole, and any block of a deleted night that re-sends is
 /// skipped even when the record's own start was only a guess (nights stored before stamping).
+///
+/// It also carries the bounds of every edited record, which the import re-applies (Android #92/#130).
 struct SleepRecordTombstones {
     private let deletedRecords: Set<Int64>
     private let deletedBlocks: Set<Int64>
+    private let editedBounds: [Int64: (start: Date, end: Date)]
 
     init(_ edits: [SleepRecordEdit]) {
-        var records = Set<Int64>(), blocks = Set<Int64>()
+        var records = Set<Int64>(), blocks = Set<Int64>(), bounds: [Int64: (start: Date, end: Date)] = [:]
         for edit in edits {
             switch edit.kind {
             case .recordDeleted: records.insert(SleepRecords.key(edit.recordStartAt))
             case .blockDeleted: blocks.insert(SleepRecords.key(edit.recordStartAt))
+            case .edited:
+                if let start = edit.newStartAt, let end = edit.newEndAt {
+                    bounds[SleepRecords.key(edit.recordStartAt)] = (start, end)
+                }
             case nil: break
             }
         }
         deletedRecords = records
         deletedBlocks = blocks
+        editedBounds = bounds
     }
 
     func isRecordDeleted(_ recordStart: Date) -> Bool { deletedRecords.contains(SleepRecords.key(recordStart)) }
     func isBlockDeleted(_ blockStart: Date) -> Bool { deletedBlocks.contains(SleepRecords.key(blockStart)) }
+    /// The bounds the wearer gave record `recordStart`, if they edited it.
+    func editedBounds(_ recordStart: Date) -> (start: Date, end: Date)? { editedBounds[SleepRecords.key(recordStart)] }
 }
 
 /// The wearer's edits to one ring sleep record of a stored night (Android `SleepRecordDeletion`).
@@ -50,7 +60,10 @@ enum SleepRecordEditor {
         }) else { return false }
 
         let day = session.date
-        var known = Set(((try? context.fetch(FetchDescriptor<SleepRecordEdit>())) ?? [])
+        let edits = (try? context.fetch(FetchDescriptor<SleepRecordEdit>())) ?? []
+        // The record goes whole, so an edit of it has nothing left to re-apply.
+        forgetEdit(of: run.recordStartAt, in: edits, context: context)
+        var known = Set(edits.filter { $0.kind != .edited }
             .map { "\($0.kindRaw):\(SleepRecords.key($0.recordStartAt))" })
         func remember(_ kind: SleepRecordEditKind, _ at: Date) {
             // One tombstone per key, so deleting the same record twice never grows the table.
@@ -66,16 +79,74 @@ enum SleepRecordEditor {
         return true
     }
 
-    /// Re-derive waking day `day` from its blocks less `removing`, then stamp the surviving rows as
+    /// Move the bounds of record `recordStartAt` in session `sessionId` to `newStart`...`newEnd` —
+    /// shorter, longer, or one side each (Android #92/#130). Stages outside the new range drop from
+    /// the night; time inside it the ring didn't measure becomes `.added` minutes. The bounds are
+    /// held to `SleepRecordExtension.limits` (the sheet's limits) and clear of records in the day's
+    /// other sessions, which the sheet doesn't see. The edit is remembered so every re-sync of the
+    /// record re-applies it. False when nothing changed or no ring-measured minute would remain.
+    @discardableResult
+    static func edit(sessionId: UUID, recordStartAt: Date, newStart: Date, newEnd: Date,
+                     context: ModelContext, calendar: Calendar = .current) -> Bool {
+        guard newStart < newEnd, let session = session(sessionId, context: context) else { return false }
+        let blocks = SleepRepository.blocks(sessionId: sessionId, context: context)
+        let runs = SleepRecords.runs(blocks)
+        guard let index = runs.firstIndex(where: {
+            SleepRecords.key($0.recordStartAt) == SleepRecords.key(recordStartAt)
+        }) else { return false }
+        let run = runs[index]
+        let day = session.date
+
+        let limits = SleepRecordExtension.limits(run: run, previous: index > 0 ? runs[index - 1] : nil,
+                                                 next: index + 1 < runs.count ? runs[index + 1] : nil,
+                                                 wakingDay: day, calendar: calendar)
+        let otherSessionIds = Set(((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
+            .filter { calendar.isDate($0.date, inSameDayAs: day) && $0.id != sessionId }.map(\.id))
+        let others = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
+            .filter { otherSessionIds.contains($0.sessionId) }
+        let bounds = SleepRecordExtension.clampToNeighbours(
+            editStart: max(newStart, limits.earliestStart), editEnd: min(newEnd, limits.latestEnd),
+            measuredStart: limits.measuredStart, measuredEnd: limits.measuredEnd,
+            others: others, night: SleepRecordExtension.nightWindow(wakingDay: day, calendar: calendar))
+        guard let edited = SleepRecordExtension.editedBlocks(run.blocks, gridOrigin: run.recordStartAt,
+                                                             editStart: bounds.start, editEnd: bounds.end)
+        else { return false }
+        let shape = { (b: [SleepStageBlock]) in b.map { "\(SleepRecords.key($0.startAt)):\($0.durationMinutes):\($0.stageRaw)" } }
+        guard shape(edited) != shape(run.blocks.sorted { $0.startAt < $1.startAt }) else { return false }
+
+        let edits = (try? context.fetch(FetchDescriptor<SleepRecordEdit>())) ?? []
+        forgetEdit(of: run.recordStartAt, in: edits, context: context)
+        context.insert(SleepRecordEdit(wakingDay: day, recordStartAt: run.recordStartAt, kind: .edited,
+                                       newStartAt: bounds.start, newEndAt: bounds.end))
+
+        let removed = Set(run.blocks.map(\.id))
+        for block in run.blocks { context.delete(block) }
+        for block in edited {
+            block.sessionId = sessionId
+            context.insert(block)
+        }
+        restate(day: day, removing: removed, adding: edited, context: context)
+        return true
+    }
+
+    private static func forgetEdit(of recordStart: Date, in edits: [SleepRecordEdit], context: ModelContext) {
+        for edit in edits where edit.kind == .edited && SleepRecords.key(edit.recordStartAt) == SleepRecords.key(recordStart) {
+            context.delete(edit)
+        }
+    }
+
+    /// Re-derive waking day `day` from its blocks less `removing` (plus `adding`), then stamp the surviving rows as
     /// changed (a deleted middle record leaves the bounds where they were, which reconcile alone
     /// would treat as no change) and recompute any stored score. Saves and signals the UI.
-    static func restate(day: Date, removing: Set<UUID>, context: ModelContext) {
+    static func restate(day: Date, removing: Set<UUID>, adding: [SleepStageBlock] = [], context: ModelContext) {
         let calendar = Calendar.current
         let daySessions = ((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
             .filter { calendar.isDate($0.date, inSameDayAs: day) }
         let ids = Set(daySessions.map(\.id))
+        // `adding` is passed explicitly: a fetch need not see blocks inserted since the last save.
+        let added = Set(adding.map(\.id))
         let dayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
-            .filter { ids.contains($0.sessionId) && !removing.contains($0.id) }
+            .filter { ids.contains($0.sessionId) && !removing.contains($0.id) && !added.contains($0.id) } + adding
         SleepService.reconcileWakingDay(dateKey: day, context: context,
                                         daySessions: daySessions, dayBlocks: dayBlocks)
         try? context.save()

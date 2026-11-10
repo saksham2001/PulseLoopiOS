@@ -16,6 +16,14 @@ struct SleepRecordRun {
     /// were stamped) the run's own first minute. This is the identity delete and edit key on.
     var recordStartAt: Date { blocks.first { $0.recordStartAt != nil }?.recordStartAt ?? startAt }
     var asleepMinutes: Int { SleepRecords.asleepMinutes(blocks) }
+    /// Minutes the wearer added over time the ring missed; part of `asleepMinutes`.
+    var addedMinutes: Int { SleepRecords.addedMinutes(blocks) }
+
+    private var measured: [SleepStageBlock] { blocks.filter { $0.stage != .added } }
+    /// Where the ring's own recording starts and ends inside this run, without the added minutes —
+    /// the bounds an extension is measured from. The run's own when nothing is measured.
+    var measuredStartAt: Date { measured.map(\.startAt).min() ?? startAt }
+    var measuredEndAt: Date { measured.map(\.endAt).max() ?? endAt }
 }
 
 /// Pure helpers over a session's stage blocks: splitting them into ring records and counting the
@@ -25,6 +33,17 @@ enum SleepRecords {
     /// Minutes asleep across `blocks`: every stage except awake.
     static func asleepMinutes(_ blocks: [SleepStageBlock]) -> Int {
         max(0, blocks.filter { $0.stage != .awake }.reduce(0) { $0 + $1.durationMinutes })
+    }
+
+    /// Minutes the wearer added over time the ring missed (Android #106). Inside `asleepMinutes`,
+    /// outside everything that judges stages: subtract them wherever a stage share or score is taken.
+    static func addedMinutes(_ blocks: [SleepStageBlock]) -> Int {
+        blocks.filter { $0.stage == .added }.reduce(0) { $0 + $1.durationMinutes }
+    }
+
+    /// The asleep minutes the ring itself measured: `asleepMinutes` less `addedMinutes`.
+    static func measuredAsleepMinutes(_ blocks: [SleepStageBlock]) -> Int {
+        max(0, asleepMinutes(blocks) - addedMinutes(blocks))
     }
 
     /// Split `blocks` into the ring records they came from.

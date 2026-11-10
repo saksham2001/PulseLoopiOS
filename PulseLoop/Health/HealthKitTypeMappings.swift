@@ -139,14 +139,15 @@ enum HealthKitTypeMappings {
     // MARK: - Sleep
 
     /// Maps a ring sleep stage onto a HealthKit sleep-analysis category value. Light → `.asleepCore`
-    /// (Apple's core-sleep bucket), unknown → `.asleepUnspecified`.
+    /// (Apple's core-sleep bucket), unknown → `.asleepUnspecified`. Minutes the wearer added over
+    /// time the ring missed are asleep with no stage measured, so they're `.asleepUnspecified` too.
     static func sleepValue(_ stage: SleepStage) -> HKCategoryValueSleepAnalysis {
         switch stage {
         case .deep:    return .asleepDeep
         case .light:   return .asleepCore
         case .rem:     return .asleepREM
         case .awake:   return .awake
-        case .unknown: return .asleepUnspecified
+        case .unknown, .added: return .asleepUnspecified
         }
     }
 

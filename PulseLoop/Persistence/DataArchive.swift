@@ -350,6 +350,8 @@ nonisolated struct ArchiveSleepRecordEdit: Codable, Sendable {
     var wakingDay: Date
     var recordStartAt: Date
     var kindRaw: String
+    var newStartAt: Date?
+    var newEndAt: Date?
     var createdAt: Date
 
     @MainActor init(_ m: SleepRecordEdit) {
@@ -357,11 +359,14 @@ nonisolated struct ArchiveSleepRecordEdit: Codable, Sendable {
         wakingDay = m.wakingDay
         recordStartAt = m.recordStartAt
         kindRaw = m.kindRaw
+        newStartAt = m.newStartAt
+        newEndAt = m.newEndAt
         createdAt = m.createdAt
     }
 
     @MainActor func insert(into context: ModelContext) {
-        let m = SleepRecordEdit(wakingDay: wakingDay, recordStartAt: recordStartAt, kind: .recordDeleted)
+        let m = SleepRecordEdit(wakingDay: wakingDay, recordStartAt: recordStartAt, kind: .recordDeleted,
+                                newStartAt: newStartAt, newEndAt: newEndAt)
         m.id = id
         m.kindRaw = kindRaw
         m.createdAt = createdAt

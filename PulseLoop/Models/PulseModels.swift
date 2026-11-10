@@ -61,6 +61,10 @@ enum SleepStage: String, Codable, CaseIterable {
     case awake
     case unknown
     case rem
+    /// Minutes the wearer added over time the ring missed (Android #106 `ADDED`). Asleep but
+    /// unstaged: counted in time asleep, left out of the stage breakdown and the score. No decoder
+    /// produces it — only `SleepRecordExtension.editedBlocks` does. Raw value persisted; append only.
+    case added
 }
 
 enum ActivitySessionStatus: String, Codable, CaseIterable {
@@ -353,13 +357,19 @@ final class SleepRecordEdit {
     /// `.recordDeleted`: the record's declared start. `.blockDeleted`: one deleted block's start.
     var recordStartAt: Date
     var kindRaw: String
+    /// `.edited`: the bounds the wearer picked, re-applied on every re-sync of the record.
+    var newStartAt: Date?
+    var newEndAt: Date?
     var createdAt: Date
 
-    init(id: UUID = UUID(), wakingDay: Date, recordStartAt: Date, kind: SleepRecordEditKind) {
+    init(id: UUID = UUID(), wakingDay: Date, recordStartAt: Date, kind: SleepRecordEditKind,
+         newStartAt: Date? = nil, newEndAt: Date? = nil) {
         self.id = id
         self.wakingDay = wakingDay
         self.recordStartAt = recordStartAt
         self.kindRaw = kind.rawValue
+        self.newStartAt = newStartAt
+        self.newEndAt = newEndAt
         self.createdAt = Date()
     }
 
@@ -372,6 +382,8 @@ enum SleepRecordEditKind: String, Codable, CaseIterable {
     /// One block of a deleted record. Covers nights stored before records were stamped, where the
     /// record's start is only a guess but every block start re-sends exactly.
     case blockDeleted = "block_deleted"
+    /// The record's bounds were moved — trimmed, or extended over time the ring missed (#92/#130).
+    case edited
 }
 
 @Model
