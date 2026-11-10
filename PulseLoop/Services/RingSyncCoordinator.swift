@@ -237,9 +237,9 @@ final class RingSyncCoordinator {
     /// when the not-worn signal arrives *before* any reading, so a wear-state drop right after a good
     /// reading can't turn a success into a failure.
     private(set) var measureNotWorn = false
-    /// SpO2's counterpart to `hrNoReadingReported`: SpO2 has no "complete with no reading" reply, so
-    /// the wear-state push is the only thing that can abort it early.
-    private var spo2NotWornReported = false
+    /// The CRP spot HR / SpO₂ measurement in flight — see `CRPSpotMeasurement` for why CRP ends on the
+    /// ring's single result frame instead of `HRSampleWindow`.
+    private var crpSpot: CRPSpotMeasurement?
     /// The samples of the HR measurement in flight, and the rule for whether they settled — see
     /// `HRSampleWindow`, which owns the warm-up echo and the consistency gate.
     private var hrWindow = HRSampleWindow()
@@ -505,6 +505,7 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureHR() async -> Int? {
         guard hrState != .measuring else { return nil }
+        if client.activeDeviceType == .crp { return await measureCRPSpot(.heartRate) }
         if client.activeDeviceType == .rwfit,
            [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { hrState = .failed; return nil }
@@ -554,6 +555,42 @@ final class RingSyncCoordinator {
         return result
     }
 
+    /// The CRP spot path for `measureHR` / `measureSpO2`: start, then end on the ring's one result frame,
+    /// a not-worn push, a link drop, or the deadline — see `CRPSpotMeasurement`. The reading itself is
+    /// persisted like any CRP result, by the decoder's `.heartRateSample` / `.spo2Result`.
+    private func measureCRPSpot(_ kind: CRPSpotMeasurement.Kind) async -> Int? {
+        // One channel carries both, so only one spot measurement at a time.
+        guard crpSpot == nil else { return nil }
+        let setState: (MeasureState) -> Void = { state in
+            if kind == .heartRate { self.hrState = state } else { self.spo2State = state }
+        }
+        guard client.state == .connected, let crp = engine as? CRPSyncEngine else { setState(.failed); return nil }
+        setState(.measuring)
+        measureNotWorn = false
+        if kind == .spo2 { latestSpO2Value = nil }
+        let measurement = CRPSpotMeasurement(kind: kind)
+        crpSpot = measurement
+        crp.startSpot(kind) { [weak self] written in
+            guard let self, self.crpSpot?.id == measurement.id else { return }
+            self.crpSpot?.noteStartWritten(written)
+        }
+
+        var verdict: CRPSpotMeasurement.Verdict?
+        while !Task.isCancelled {
+            if client.state != .connected { crpSpot?.noteDisconnected() }
+            if let decided = crpSpot?.check() { verdict = decided; break }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        crpSpot = nil
+        if client.state == .connected { crp.stopSpot(kind) }
+        restartWorkoutHeartRateIfActive()
+
+        if verdict == .failed(.notWorn) { measureNotWorn = true }
+        guard case let .reading(value) = verdict else { setState(.failed); return nil }
+        setState(.done(value))
+        return value
+    }
+
     /// Poll a value getter every 0.5s up to `window` seconds; returns as soon as it's non-nil, or when
     /// `abort` becomes true, else nil at timeout.
     private func pollForValue(window: UInt64, value: () -> Int?, abort: () -> Bool) async -> Int? {
@@ -570,13 +607,13 @@ final class RingSyncCoordinator {
     @discardableResult
     func measureSpO2() async -> Int? {
         guard spo2State != .measuring else { return nil }
+        if client.activeDeviceType == .crp { return await measureCRPSpot(.spo2) }
         if client.activeDeviceType == .rwfit,
            [hrState, spo2State, hrvState, bpState].contains(.measuring) { return nil }
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
         measureNotWorn = false
-        spo2NotWornReported = false
         let token = spot.begin(mode: YCBTMeasurementMode.spo2)
         engine?.startSpO2()
         if let rwfit = engine as? RWfitSyncEngine,
@@ -589,8 +626,8 @@ final class RingSyncCoordinator {
         let result = await pollForValue(
             window: spo2MeasureSeconds,
             value: { self.latestSpO2Value },
-            // The ring refused the measurement, or told us it isn't on the finger.
-            abort: { self.spot.isRejected(token) || self.spo2NotWornReported }
+            // The ring refused the measurement.
+            abort: { self.spot.isRejected(token) }
         )
         spot.end(token)
         engine?.stopSpO2()
@@ -782,6 +819,13 @@ final class RingSyncCoordinator {
 
     private func handle(_ event: PulseEvent) {
         if handleRWfit(event) { return }
+        if crpSpot != nil {
+            switch event {
+            case let .rawPacket(.incoming, data, _): crpSpot?.ingest(data)
+            case let .deviceStateChanged(state, _) where state != .connected: crpSpot?.noteDisconnected()
+            default: break
+            }
+        }
         switch event {
         case let .heartRateSample(bpm, _):
             latestHRValue = bpm
@@ -798,22 +842,10 @@ final class RingSyncCoordinator {
             // measurement hasn't already produced a real reading.
             if hrState == .measuring, !measurementReceivedReading { hrNoReadingReported = true }
         case let .wearState(worn):
-            // `worn == false` means no skin contact, so an optical spot measure can't read. Fast-fail
-            // the in-flight measure instead of idling out the full window, and flag *why* — but only
-            // if no reading landed first (a wear-state drop right after a good reading must not turn a
-            // success into a failure). Gated to CRP: other families' wear polarity is unverified.
-            if !worn, client.activeDeviceType == .crp {
-                var flagged = false
-                if hrState == .measuring, !measurementReceivedReading {
-                    hrNoReadingReported = true
-                    flagged = true
-                }
-                if spo2State == .measuring, latestSpO2Value == nil {
-                    spo2NotWornReported = true
-                    flagged = true
-                }
-                if flagged { measureNotWorn = true }
-            }
+            // `worn == false` means no skin contact, so an optical spot measure can't read: the CRP spot
+            // measurement fails at once (unless its reading already landed). Gated to CRP: other
+            // families' wear polarity is unverified.
+            if client.activeDeviceType == .crp { crpSpot?.noteWorn(worn) }
         case .deviceStateChanged(.connected, _):
             if client.activeDeviceType != .rwfit { lastSyncAt = Date() }
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was

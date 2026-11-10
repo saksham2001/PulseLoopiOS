@@ -368,6 +368,27 @@ final class CRPSyncEngine: RingSyncEngine {
     func startSpO2() { send(CRPProtocol.measureSpO2(true)) }
     func stopSpO2() { send(CRPProtocol.measureSpO2(false)) }
 
+    // MARK: - Spot HR / SpO2 (see `CRPSpotMeasurement`)
+
+    /// Start a spot measurement, reporting when the start frame is actually written (`true`) or can't
+    /// be (`false`): the ring can't begin measuring before then, so that is where the deadline starts.
+    func startSpot(_ kind: CRPSpotMeasurement.Kind, written: @escaping @MainActor (Bool) -> Void) {
+        guard let writer else { written(false); return }
+        writer.enqueueTracked(spotFrame(kind, enable: true)) { result in
+            if case .success = result { written(true) } else { written(false) }
+        }
+    }
+
+    /// Stop a spot measurement. Sent even when the start may still be queued: the write queue is FIFO,
+    /// so the stop lands right behind it and the ring never runs a measurement nobody is waiting for.
+    func stopSpot(_ kind: CRPSpotMeasurement.Kind) {
+        send(spotFrame(kind, enable: false))
+    }
+
+    private func spotFrame(_ kind: CRPSpotMeasurement.Kind, enable: Bool) -> Data {
+        kind == .heartRate ? CRPProtocol.measureHeartRate(enable) : CRPProtocol.measureSpO2(enable)
+    }
+
     func findDevice() { send(CRPProtocol.findDevice(true)) }
 
     func setGoal(steps: Int) {

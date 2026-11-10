@@ -90,8 +90,10 @@ struct MeasurementSheet: View {
     /// Nil in demo mode too — no 30s window is running there, so a countdown would be pure theatre.
     private var countdownWindow: Double? {
         // RwFit first waits for a history page boundary and command acceptance, so total
-        // wall-clock duration is variable even though the sampling window remains fixed.
-        guard kind == .hr, ble.state == .connected, ble.activeDeviceType != .rwfit else { return nil }
+        // wall-clock duration is variable even though the sampling window remains fixed. A CRP ring
+        // ends on its one result frame (`CRPSpotMeasurement`), so its window is a ceiling, not a wait.
+        guard kind == .hr, ble.state == .connected,
+              ble.activeDeviceType != .rwfit, ble.activeDeviceType != .crp else { return nil }
         return Double(coordinator.hrMeasureSeconds)
     }
 
