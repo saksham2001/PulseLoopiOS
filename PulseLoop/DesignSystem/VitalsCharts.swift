@@ -102,6 +102,8 @@ struct ZoneLineChart: View {
     /// Zone boundaries (y-values) where the line color may change. The line is split at each crossing
     /// so a piece never spans two zones. Empty = no splitting (whole-segment color).
     var thresholds: [Double] = []
+    /// Faint vertical rules at these instants (e.g. day boundaries on a week of battery history).
+    var verticalGridlines: [Date] = []
     /// Injected from the threshold engine: maps a value to the color its segment should take.
     let colorForValue: (Double) -> Color
 
@@ -112,6 +114,11 @@ struct ZoneLineChart: View {
 
     var body: some View {
         Chart {
+            ForEach(verticalGridlines, id: \.self) { mark in
+                RuleMark(x: .value("Grid", mark))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .foregroundStyle(PulseColors.borderSubtle)
+            }
             ForEach(referenceBands) { band in
                 RectangleMark(
                     yStart: .value("Band low", band.lower),
