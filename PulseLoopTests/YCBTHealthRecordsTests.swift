@@ -109,6 +109,17 @@ final class YCBTHealthRecordsTests: XCTestCase {
         XCTAssertFalse(stages.contains(.awake))
     }
 
+    /// The captured night is placed against its header's own bounds: it starts at the declared start
+    /// and runs exactly to the declared end (474 min), where concatenating rounded segments drifted
+    /// to 470 — enough, on a split night, to make one record abut the next.
+    func testSleepSpansTheHeadersDeclaredStartAndEnd() {
+        guard case let .sleepTimeline(start, stages) = YCBTHealthRecords.sleep(capturedNight).first else {
+            return XCTFail("expected a sleepTimeline")
+        }
+        XCTAssertEqual(start, YCBTBytes.date(0x31dee99f))
+        XCTAssertEqual(stages.count, (0x31df58bd - 0x31dee99f) / 60)
+    }
+
     /// The buffer can hold several nights back to back — each session's 20-byte header carries its own
     /// length at [2..3], so the decoder walks them rather than assuming one.
     func testMultipleSessionsInOneBuffer() {
@@ -296,8 +307,10 @@ final class YCBTHealthRecordsTests: XCTestCase {
     /// mis-size one stage, it allocates ~280 000 array entries for a single 8-byte record, and a buffer
     /// of them exhausts memory before anything gets a chance to reject the reading.
     func testSleepSegmentDurationIsClampedToOneDay() {
-        // header: recordLength 28 (20 header + 1 segment), then one DEEP segment of 0xFFFFFF seconds.
-        let record = bytes("00001c00" + "1cf0de31" + "a0f3de31" + "0000000000000000")
+        // header: recordLength 28 (20 header + 1 segment) and no start/end bounds — so the timeline is
+        // concatenated from the segments — then one DEEP segment of 0xFFFFFF seconds. (A record with
+        // header bounds is placed against them, which bounds it by construction.)
+        let record = bytes("00001c00" + "00000000" + "00000000" + "0000000000000000")
             + bytes("02" + "1cf0de31" + "ffffff")
         let events = YCBTHealthRecords.sleep(record)
 
@@ -310,8 +323,8 @@ final class YCBTHealthRecordsTests: XCTestCase {
 
     /// A real night is nowhere near the cap, so the clamp must not touch it.
     func testRealisticSleepSegmentsAreNotClamped() {
-        // Two segments: 30 min deep, 45 min light.
-        let record = bytes("00002400" + "1cf0de31" + "a0f3de31" + "0000000000000000")
+        // Two segments: 30 min deep, 45 min light; no header bounds, so concatenated.
+        let record = bytes("00002400" + "00000000" + "00000000" + "0000000000000000")
             + bytes("01" + "1cf0de31" + "080700")     // tag 1 = deep, 1800 s
             + bytes("02" + "44fdde31" + "8c0a00")     // tag 2 = light, 2700 s
         guard case let .sleepTimeline(_, stages) = YCBTHealthRecords.sleep(record).first else {

@@ -241,6 +241,9 @@ enum YCBTHealthRecords {
     /// firmware repeats a segment inside one session; because the timeline is laid out *positionally*
     /// from the session start, a repeat would both inflate that stage's minutes and shift every later
     /// block by its duration — and the shifted copies re-insert as new blocks on the next re-sync.
+    ///
+    /// Each session's timeline is placed against the header's own `start`/`end` (`placeStages`), so a
+    /// record ends where the ring says it ended rather than where its rounded segments add up to.
     static func sleep(_ buffer: [UInt8]) -> [RingDecodedEvent] {
         let headerLength = 20
         let segmentLength = 8
@@ -249,6 +252,10 @@ enum YCBTHealthRecords {
         var cursor = 0
         while cursor + headerLength <= buffer.count {
             let recordLength = YCBTBytes.u16(buffer, cursor + 2)
+            // The vendor reads the session's own bounds out of the header (`DataUnpack`'s
+            // `startTime` at +4, `endTime` at +8) rather than inferring them from the segments.
+            let headerStart = YCBTBytes.u32(buffer, cursor + 4)
+            let headerEnd = YCBTBytes.u32(buffer, cursor + 8)
             let segmentsStart = cursor + headerLength
             // Trust the record length, but never past the bytes we actually hold (a truncated transfer
             // must not walk off the end — the SDK's own loop has no such guard).
@@ -256,35 +263,94 @@ enum YCBTHealthRecords {
             let available = (buffer.count - segmentsStart) / segmentLength
             let segmentCount = min(declared, available)
 
-            var stages: [SleepStage] = []
-            var sessionStart: Date?
+            var segments: [SleepSegment] = []
             var seenStarts: Set<Int> = []
             for index in 0..<segmentCount {
                 let offset = segmentsStart + index * segmentLength
                 guard let stage = sleepStage(buffer[offset]) else { continue }   // e.g. padding — skip, don't stop
                 let segmentStart = YCBTBytes.u32(buffer, offset + 1)
-                guard seenStarts.insert(segmentStart).inserted else { continue } // firmware repeat — count once
                 let segmentSeconds = YCBTBytes.u24(buffer, offset + 5)
-                if sessionStart == nil { sessionStart = YCBTBytes.date(segmentStart) }
-                // The timeline is expanded positionally — one entry per minute from the session start —
-                // so a bogus duration doesn't just mis-size one stage, it allocates. The field is u24:
-                // an all-ones segment is 194 days, or ~280 000 array entries for a single 8-byte record,
-                // and a buffer of them exhausts memory before anything gets a chance to reject it. No
-                // real session exceeds a day, so cap there and stop.
-                let remaining = Self.maxSleepSessionMinutes - stages.count
-                if remaining <= 0 { break }
-                let minutes = Int((Double(segmentSeconds) / 60.0).rounded())
-                stages.append(contentsOf: Array(repeating: stage, count: min(max(1, minutes), remaining)))
+                // A zero-length segment claims no minute, so it must not take the start time's place
+                // in the de-duplication and shadow a real segment sharing it — the minutes that one
+                // claimed would then read as wake.
+                guard segmentSeconds > 0 else { continue }
+                guard seenStarts.insert(segmentStart).inserted else { continue } // firmware repeat — count once
+                segments.append(SleepSegment(stage: stage, startSeconds: segmentStart, seconds: segmentSeconds))
             }
 
-            if let start = sessionStart, !stages.isEmpty {
-                events.append(.sleepTimeline(timestamp: start, stages: stages))
+            let stages = placeStages(segments, headerStart: headerStart, headerEnd: headerEnd)
+            if let first = segments.first, !stages.isEmpty {
+                let start = usableHeaderBounds(headerStart, headerEnd) ? headerStart : first.startSeconds
+                events.append(.sleepTimeline(timestamp: YCBTBytes.date(start), stages: stages))
             }
             // Advance exactly as the SDK does — to the end of the segments we consumed. A bogus
             // `recordLen` therefore still moves the cursor by at least the header, so we can't spin.
             cursor = segmentsStart + segmentCount * segmentLength
         }
         return events
+    }
+
+    /// One session's stage segment, kept with its own start.
+    private struct SleepSegment {
+        let stage: SleepStage
+        let startSeconds: Int
+        let seconds: Int
+    }
+
+    /// A hole between segments shorter than this much real time is a seam, not a waking.
+    static let sleepSeamSeconds = 60
+
+    private static func usableHeaderBounds(_ start: Int, _ end: Int) -> Bool {
+        start > 0 && end > start && (end - start) / 60 <= maxSleepSessionMinutes
+    }
+
+    /// A session's minute-by-minute stage timeline.
+    ///
+    /// Each segment is placed at its own start for its own length, and the run spans exactly the
+    /// header's `start`...`end`. Concatenating rounded segment minutes instead drifts from the
+    /// declared end (470 against 474 on the captured night), which can make one record of a split
+    /// night appear to abut the next. A minute no segment claims reads as awake — the ring reports
+    /// wake as its own segment type, so an unclaimed minute is one it did not call sleep.
+    ///
+    /// **A hole under a minute of real time is closed** (Android #111): the ring leaves a one-second
+    /// seam between segments, and rounding each side to the minute grid independently can strand a
+    /// whole AWAKE minute in it (a segment ending at minute 315.48 rounds to 315, the next starting at
+    /// 315.5 rounds to 316). So each segment runs on to the next one's start — the first from the
+    /// record's start, the last to its end — across any such hole. Holes of a minute or more stay awake.
+    ///
+    /// The timeline is expanded positionally — one entry per minute — so a bogus duration doesn't
+    /// just mis-size one stage, it allocates: the u24 field reaches 194 days. No real session exceeds
+    /// a day, so both paths cap there. A session with unusable header bounds (synthetic, truncated)
+    /// keeps the concatenation, since there is nothing better to place against.
+    private static func placeStages(_ segments: [SleepSegment], headerStart: Int, headerEnd: Int) -> [SleepStage] {
+        guard !segments.isEmpty else { return [] }
+        guard usableHeaderBounds(headerStart, headerEnd) else {
+            var stages: [SleepStage] = []
+            for segment in segments {
+                let remaining = maxSleepSessionMinutes - stages.count
+                if remaining <= 0 { break }
+                let minutes = Int((Double(segment.seconds) / 60.0).rounded())
+                stages.append(contentsOf: Array(repeating: segment.stage, count: min(max(1, minutes), remaining)))
+            }
+            return stages
+        }
+        let total = min(max(1, Int((Double(headerEnd - headerStart) / 60.0).rounded())), maxSleepSessionMinutes)
+        var timeline = Array(repeating: SleepStage.awake, count: total)
+        let ordered = segments.sorted { $0.startSeconds < $1.startSeconds }
+        for (index, segment) in ordered.enumerated() {
+            var start = segment.startSeconds
+            if index == 0, (0..<sleepSeamSeconds).contains(start - headerStart) { start = headerStart }
+            var end = segment.startSeconds + segment.seconds
+            // The next segment to start at or after this one's end: one nested inside this segment
+            // must not hide the seam to the one that really follows it.
+            let next = ordered.first { $0.startSeconds >= end }?.startSeconds ?? headerEnd
+            if (0..<sleepSeamSeconds).contains(next - end) { end = next }
+            let from = Int((Double(start - headerStart) / 60.0).rounded())
+            let until = Int((Double(end - headerStart) / 60.0).rounded())
+            let lower = max(0, from), upper = min(total, until)
+            if lower < upper { for minute in lower..<upper { timeline[minute] = segment.stage } }
+        }
+        return timeline
     }
 
     /// `tag & 0x0F` → shared stage. 5 = nap/daytime sleep, which the app counts separately and PulseLoop

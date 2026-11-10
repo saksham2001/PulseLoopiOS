@@ -148,7 +148,8 @@ struct SleepView: View {
             scoreLabel: score.label.rawValue
         )
         SleepVisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
-            SleepHypnogramView(blocks: s.blocks, totalMin: s.session.totalMinutes, startTs: s.session.startAt,
+            // Plus an awake block over each counted gap between records (display only).
+            SleepHypnogramView(blocks: SleepRecords.hypnogramBlocks(s.blocks), totalMin: s.session.totalMinutes, startTs: s.session.startAt,
                                onScrubActiveChanged: { hypnogramScrubbing = $0 })
         }
         // The ring records behind the merged night, single-record nights included, so any record

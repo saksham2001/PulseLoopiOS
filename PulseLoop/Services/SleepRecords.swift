@@ -83,12 +83,40 @@ enum SleepRecords {
         return runs
     }
 
-    /// The waking between two consecutive records of one session, in minutes — 0 for the one-minute
-    /// reopen seam. The one rule the Awake figure and the RECORDS card's "Awake Xm between" line
-    /// both read (Android #81).
+    /// The waking between two consecutive records of one session, in minutes. The one rule the
+    /// Awake figure, the RECORDS card's "Awake Xm between" line and the hypnogram's gap blocks all
+    /// read, so they can't disagree about the same gap (Android #81/#111).
+    ///
+    /// **Any gap is a waking, and counts at least one minute.** A reporter checked every
+    /// between-record gap on their ring over six weeks: the shortest (52 s, 88 s) were get-ups they
+    /// had logged, and none was a reopen without waking. The ring opens a record on a whole minute,
+    /// so how short a gap looks depends on where in the minute the last one ended.
+    ///
+    /// **Rounded, ties down, not truncated:** a record's stored end is its start plus whole minutes,
+    /// up to 30 s either side of the ring's own, so a 2m07 waking can be stored as 1m46. Records that
+    /// touch exactly (a Jring's back-to-back packets) count nothing.
     static func betweenRecordAwakeMinutes(_ earlier: SleepRecordRun, _ later: SleepRecordRun) -> Int {
-        let gapMinutes = Int(later.startAt.timeIntervalSince(earlier.endAt) / 60)
-        return gapMinutes >= 2 ? gapMinutes : 0
+        let gap = later.startAt.timeIntervalSince(earlier.endAt)
+        guard gap > 0 else { return 0 }
+        return max(1, Int(((gap - 30) / 60).rounded(.up)))
+    }
+
+    /// The blocks to draw on the hypnogram: the session's own, plus an awake block over each gap
+    /// between records that `betweenRecordAwakeMinutes` counts (Android #111). Without it the chart
+    /// draws two records back to back while the Awake and RECORDS cards count the minutes between.
+    /// Display only — never feed these back into `awakeMinutes`, which counts the gaps itself.
+    static func hypnogramBlocks(_ blocks: [SleepStageBlock]) -> [SleepStageBlock] {
+        let runs = runs(blocks)
+        guard runs.count > 1 else { return blocks }
+        let gaps: [SleepStageBlock] = zip(runs, runs.dropFirst()).compactMap { earlier, later in
+            guard betweenRecordAwakeMinutes(earlier, later) > 0 else { return nil }
+            let fromMinute = earlier.blocks.map { $0.startMinute + $0.durationMinutes }.max() ?? 0
+            let untilMinute = later.blocks.map(\.startMinute).min() ?? fromMinute
+            guard untilMinute > fromMinute else { return nil }
+            return SleepStageBlock(sessionId: earlier.blocks[0].sessionId, startAt: earlier.endAt, startMinute: fromMinute,
+                                   durationMinutes: untilMinute - fromMinute, stage: .awake)
+        }
+        return blocks + gaps
     }
 
     /// Awake minutes for a session: the stages the ring marked awake plus the gaps between its
