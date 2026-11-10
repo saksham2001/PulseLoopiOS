@@ -35,6 +35,9 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var batterySamples: [ArchiveBatterySample]
     var sleepSessions: [ArchiveSleepSession]
     var sleepStageBlocks: [ArchiveSleepStageBlock]
+    /// Sleep record deletion tombstones. Optional so archives written before it existed still
+    /// decode (as none).
+    var sleepRecordEdits: [ArchiveSleepRecordEdit]?
     var rawPackets: [ArchiveRawPacket]
     var derivedUpdates: [ArchiveDerivedUpdate]
     var userProfiles: [ArchiveUserProfile]
@@ -321,6 +324,7 @@ nonisolated struct ArchiveSleepStageBlock: Codable, Sendable {
     var startMinute: Int
     var durationMinutes: Int
     var stageRaw: String
+    var recordStartAt: Date?
 
     @MainActor init(_ m: SleepStageBlock) {
         id = m.id
@@ -329,12 +333,38 @@ nonisolated struct ArchiveSleepStageBlock: Codable, Sendable {
         startMinute = m.startMinute
         durationMinutes = m.durationMinutes
         stageRaw = m.stageRaw
+        recordStartAt = m.recordStartAt
     }
 
     @MainActor func insert(into context: ModelContext) {
         let m = SleepStageBlock(sessionId: sessionId, startAt: startAt, startMinute: startMinute, durationMinutes: durationMinutes, stage: .unknown)
         m.id = id
         m.stageRaw = stageRaw
+        m.recordStartAt = recordStartAt
+        context.insert(m)
+    }
+}
+
+nonisolated struct ArchiveSleepRecordEdit: Codable, Sendable {
+    var id: UUID
+    var wakingDay: Date
+    var recordStartAt: Date
+    var kindRaw: String
+    var createdAt: Date
+
+    @MainActor init(_ m: SleepRecordEdit) {
+        id = m.id
+        wakingDay = m.wakingDay
+        recordStartAt = m.recordStartAt
+        kindRaw = m.kindRaw
+        createdAt = m.createdAt
+    }
+
+    @MainActor func insert(into context: ModelContext) {
+        let m = SleepRecordEdit(wakingDay: wakingDay, recordStartAt: recordStartAt, kind: .recordDeleted)
+        m.id = id
+        m.kindRaw = kindRaw
+        m.createdAt = createdAt
         context.insert(m)
     }
 }

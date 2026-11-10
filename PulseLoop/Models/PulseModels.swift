@@ -310,14 +310,21 @@ final class SleepStageBlock {
     var startMinute: Int
     var durationMinutes: Int
     var stageRaw: String
-    
+    /// The declared start of the ring record these stages arrived in (Android #68). Stamped by
+    /// `persistSleepTimeline` — the only point the record boundary is known, since the night is
+    /// merged into one session straight afterwards. Nil on rows written before it existed; those
+    /// nights fall back to gap-splitting in `SleepRecords.runs`. Optional so the SwiftData
+    /// migration is additive.
+    var recordStartAt: Date?
+
     init(
         id: UUID = UUID(),
         sessionId: UUID,
         startAt: Date,
         startMinute: Int,
         durationMinutes: Int,
-        stage: SleepStage
+        stage: SleepStage,
+        recordStartAt: Date? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -325,9 +332,46 @@ final class SleepStageBlock {
         self.startMinute = startMinute
         self.durationMinutes = durationMinutes
         self.stageRaw = stage.rawValue
+        self.recordStartAt = recordStartAt
     }
-    
+
     var stage: SleepStage { SleepStage(rawValue: stageRaw) ?? .unknown }
+    var endAt: Date { startAt.addingTimeInterval(Double(durationMinutes) * 60) }
+}
+
+/// What the wearer did to one ring sleep record, remembered so a re-sync of the night can't undo
+/// it (Android `measurement_deletions` sleep rows, #78/#80). The import path rebuilds a night from
+/// the stages the ring re-sends, so deleting the stored blocks alone would last exactly one sync.
+///
+/// Matched on the absolute instant (`recordStartAt`), which a re-sent record reproduces exactly;
+/// `wakingDay` is kept alongside for inspection and export only.
+@Model
+final class SleepRecordEdit {
+    @Attribute(.unique) var id: UUID
+    /// The session's waking day (`SleepSession.date`) at the time of the edit.
+    var wakingDay: Date
+    /// `.recordDeleted`: the record's declared start. `.blockDeleted`: one deleted block's start.
+    var recordStartAt: Date
+    var kindRaw: String
+    var createdAt: Date
+
+    init(id: UUID = UUID(), wakingDay: Date, recordStartAt: Date, kind: SleepRecordEditKind) {
+        self.id = id
+        self.wakingDay = wakingDay
+        self.recordStartAt = recordStartAt
+        self.kindRaw = kind.rawValue
+        self.createdAt = Date()
+    }
+
+    var kind: SleepRecordEditKind? { SleepRecordEditKind(rawValue: kindRaw) }
+}
+
+enum SleepRecordEditKind: String, Codable, CaseIterable {
+    /// The whole record was deleted: a re-send of it is dropped.
+    case recordDeleted = "record_deleted"
+    /// One block of a deleted record. Covers nights stored before records were stamped, where the
+    /// record's start is only a guess but every block start re-sends exactly.
+    case blockDeleted = "block_deleted"
 }
 
 @Model

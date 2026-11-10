@@ -2,7 +2,7 @@ import XCTest
 import SwiftData
 @testable import PulseLoop
 
-/// Locks down the full-app export/import archive: a complete round trip over all 24 models,
+/// Locks down the full-app export/import archive: a complete round trip over all 25 models,
 /// wipe completeness, version/corruption rejection (without data loss), and the settings +
 /// attachment side channels. Hermetic — in-memory SwiftData, suite-scoped UserDefaults, temp dirs.
 @MainActor
@@ -14,7 +14,7 @@ final class DataArchiveTests: XCTestCase {
         (try? context.fetchCount(FetchDescriptor<T>())) ?? -1
     }
 
-    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 24.
+    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 25.
     private func insertModelsMissingFromSeed(_ context: ModelContext, deviceId: UUID) {
         context.insert(BatterySample(percent: 57, timestamp: Date(timeIntervalSince1970: 1_750_000_000)))
         context.insert(DeviceMeasurementConfig(deviceId: deviceId))
@@ -34,6 +34,8 @@ final class DataArchiveTests: XCTestCase {
         context.insert(CoachNotificationRecord(slotRaw: "morning", dateKey: "2026-07-25", title: "Hi", body: "Check in"))
         context.insert(CoachSummary(kind: "today", scopeKey: "2026-07-25", title: "Today", body: "Solid", dataSignature: "sig1"))
         context.insert(WearableLog(category: .sync, level: .info, message: "sync done", metadataJSON: #"{"n":1}"#))
+        context.insert(SleepRecordEdit(wakingDay: Date(timeIntervalSince1970: 1_750_000_000),
+                                       recordStartAt: Date(timeIntervalSince1970: 1_749_990_000), kind: .blockDeleted))
         try? context.save()
     }
 
@@ -43,7 +45,7 @@ final class DataArchiveTests: XCTestCase {
             XCTAssertGreaterThan(count(type, b), 0, "\(T.self) should have rows in this test", file: file, line: line)
         }
         check(Device.self); check(ActivityDaily.self); check(PulseLoop.Measurement.self)
-        check(BatterySample.self); check(SleepSession.self); check(SleepStageBlock.self)
+        check(BatterySample.self); check(SleepSession.self); check(SleepStageBlock.self); check(SleepRecordEdit.self)
         check(RawPacketRow.self); check(DerivedUpdateRow.self); check(UserProfile.self)
         check(UserGoal.self); check(DeviceMeasurementConfig.self); check(ActivitySession.self)
         check(ActivitySample.self); check(ActivityBucketSample.self); check(ActivityGpsPoint.self)
@@ -116,6 +118,13 @@ final class DataArchiveTests: XCTestCase {
         XCTAssertEqual(importedBucket.startEpoch, refBucketEpoch)
         XCTAssertNotEqual(importedBucket.startEpoch, Int(importedBucket.timestamp.timeIntervalSince1970))
 
+        // Sleep records survive: each block keeps its ring record, and the tombstone keeps its kind.
+        let sourceStamps = Set(try source.fetch(FetchDescriptor<SleepStageBlock>()).compactMap(\.recordStartAt))
+        let importedStamps = Set(try target.fetch(FetchDescriptor<SleepStageBlock>()).compactMap(\.recordStartAt))
+        XCTAssertFalse(sourceStamps.isEmpty)
+        XCTAssertEqual(importedStamps.count, sourceStamps.count)
+        XCTAssertEqual(try target.fetch(FetchDescriptor<SleepRecordEdit>()).first?.kind, .blockDeleted)
+
         // FK integrity: every child row still points at a parent that exists.
         let sessionIDs = Set(try target.fetch(FetchDescriptor<SleepSession>()).map(\.id))
         for block in try target.fetch(FetchDescriptor<SleepStageBlock>()) {
@@ -143,6 +152,7 @@ final class DataArchiveTests: XCTestCase {
         }
         assertEmpty(Device.self); assertEmpty(ActivityDaily.self); assertEmpty(PulseLoop.Measurement.self)
         assertEmpty(BatterySample.self); assertEmpty(SleepSession.self); assertEmpty(SleepStageBlock.self)
+        assertEmpty(SleepRecordEdit.self)
         assertEmpty(RawPacketRow.self); assertEmpty(DerivedUpdateRow.self); assertEmpty(UserProfile.self)
         assertEmpty(UserGoal.self); assertEmpty(DeviceMeasurementConfig.self); assertEmpty(ActivitySession.self)
         assertEmpty(ActivitySample.self); assertEmpty(ActivityBucketSample.self); assertEmpty(ActivityGpsPoint.self)

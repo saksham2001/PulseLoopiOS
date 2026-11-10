@@ -113,7 +113,7 @@ struct SleepView: View {
             // The "wear your ring" explainer lives in the architecture card ONLY — the hero and
             // stage cards just dash out, so the message isn't repeated all over one page.
             SleepHeroCardView(label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep", value: "—", score: nil)
-            VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: false) {
+            SleepVisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: false) {
                 InlineEmptyState(title: "No sleep recorded", message: "Wear your ring overnight to see your hypnogram here.")
                     .frame(height: 180)
             }
@@ -147,9 +147,15 @@ struct SleepView: View {
             score: score.score,
             scoreLabel: score.label.rawValue
         )
-        VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
+        SleepVisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: true) {
             SleepHypnogramView(blocks: s.blocks, totalMin: s.session.totalMinutes, startTs: s.session.startAt,
                                onScrubActiveChanged: { hypnogramScrubbing = $0 })
+        }
+        // The ring records behind the merged night, single-record nights included, so any record
+        // can be managed (Android #68/#71/#80).
+        let runs = SleepRecords.runs(s.blocks)
+        if !runs.isEmpty {
+            SleepRecordsCard(session: s.session, runs: runs)
         }
         SleepStageSummaryCardsView(
             deep: SleepFormat.duration(s.deepMinutes),
@@ -437,7 +443,7 @@ struct SleepView: View {
             scoreLabel: enough ? avgScore.map { SleepScore.qualityLabel($0).rawValue } : nil,
             noData: !enough
         )
-        VisualizationCard(eyebrow: "Duration", title: vizTitle, legend: false) {
+        SleepVisualizationCard(eyebrow: "Duration", title: vizTitle, legend: false) {
             SleepDurationHistogramChart(bars: bars, goalMin: goalMin, slim: range == .month, barWidth: range == .week ? 30 : nil, weekBars: range == .week)
         }
         SleepStageSummaryCardsView(
@@ -451,7 +457,7 @@ struct SleepView: View {
 }
 
 /// Card wrapper for sleep visualizations (eyebrow + title + optional stage legend).
-private struct VisualizationCard<Content: View>: View {
+struct SleepVisualizationCard<Content: View>: View {
     let eyebrow: String
     let title: String
     let legend: Bool

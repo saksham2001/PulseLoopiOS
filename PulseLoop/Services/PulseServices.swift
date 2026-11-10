@@ -688,7 +688,9 @@ enum SleepService {
         let blocks = SleepRepository.blocks(sessionId: session.id, context: context)
         let light = blocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
         let deep = blocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
-        let awake = blocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+        // Awake counts the gaps between the night's ring records too (Android #81) — the same
+        // minutes the Day view's RECORDS card labels "Awake Xm between".
+        let awake = SleepRecords.awakeMinutes(blocks)
         return SleepSummary(
             session: session,
             lightMinutes: light,

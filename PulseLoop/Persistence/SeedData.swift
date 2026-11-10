@@ -98,8 +98,12 @@ enum SeedData {
             let score = SleepScore.calculate(summary)
             let session = SleepSession(date: dayDate, startAt: startAt, endAt: wake, totalMinutes: totalMin, score: score.score, syncedAt: wake)
             context.insert(session)
+            // Stamp each block with its ring record. Last night arrives as two records (the ring
+            // reopened one after the first waking) so the Day view's RECORDS card has rows to show.
+            let secondRecordStart = i == 0 && blocks.count > 5 ? blocks[5].startAt : nil
             for block in blocks {
-                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage))
+                let recordStart = secondRecordStart.map { block.startAt >= $0 ? $0 : startAt } ?? startAt
+                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: recordStart))
             }
 
             // A few recent days also get daytime nap(s) — separate sessions sharing the same waking
@@ -119,7 +123,7 @@ enum SeedData {
                 let napSession = SleepSession(date: dayDate, startAt: napStart, endAt: napEnd, totalMinutes: nap.minutes, score: napScore.score, syncedAt: napEnd)
                 context.insert(napSession)
                 for block in napBlocks {
-                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage))
+                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: napStart))
                 }
             }
         }
@@ -334,6 +338,7 @@ enum SeedData {
         deleteAll(Measurement.self, context)
         deleteAll(SleepSession.self, context)
         deleteAll(SleepStageBlock.self, context)
+        deleteAll(SleepRecordEdit.self, context)
         deleteAll(RawPacketRow.self, context)
         deleteAll(DerivedUpdateRow.self, context)
         deleteAll(UserProfile.self, context)
