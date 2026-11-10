@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Adapts the app's `ResponsesClient` protocol to Google Gemini's
 /// `generateContent` API. Translates OpenAI Responses-API request bodies into
@@ -34,11 +35,33 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
     // Sources cited by a google_search turn, queued to prepend to the next user
     // message so the schema turn can fill the response `sources` array.
     private var pendingSourcesNote: String?
+    // Inputs of the last built body, so a refused grounding turn can be rebuilt
+    // as the plain schema turn it would otherwise have been.
+    private var lastTextFormat: [String: Any]?
+    private var lastThinkingLevel: String?
+    /// First wait before re-sending a 503; doubled for the second retry (2 s, 4 s).
+    private let overloadBackoff: Duration
 
-    init(apiKey: String, model: String = GeminiModel.default.rawValue, session: URLSession = .shared) {
+    private static let maxOverloadRetries = 2
+
+    static let webSearchSkippedNote = "Web search was not available for this answer "
+        + "(Google refused Search grounding for this API key; free-tier keys often can't use it). "
+        + "Answer from the health data alone, leave `sources` empty, and say briefly in "
+        + "`data_quality_note` that web search was skipped."
+
+    /// Keys whose grounding turn was refused with a 429 while the same turn went
+    /// through without it. Process-wide because each agent turn gets a fresh client;
+    /// an app restart (e.g. after upgrading the plan) tries grounding again.
+    private static let groundingRefusedKeys = OSAllocatedUnfairLock(initialState: Set<String>())
+
+    init(
+        apiKey: String, model: String = GeminiModel.default.rawValue, session: URLSession = .shared,
+        overloadBackoff: Duration = .seconds(2)
+    ) {
         self.apiKey = apiKey
         self.model = model
         self.session = session
+        self.overloadBackoff = overloadBackoff
     }
 
     func send(requestBody: Data) async throws -> OpenAIResponse {
@@ -66,9 +89,49 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
             appendContinuation(previousId: previousResponseId!, input: input)
         }
 
+        lastTextFormat = textFormat
+        lastThinkingLevel = thinkingLevel
         let geminiBody = buildGeminiBody(tools: convertTools(tools), textFormat: textFormat, thinkingLevel: thinkingLevel)
-        let geminiData = try JSONSerialization.data(withJSONObject: geminiBody)
 
+        let data: Data
+        do {
+            data = try await post(geminiBody)
+        } catch ResponsesError.http(status: 429, body: _) where Self.isGroundingBody(geminiBody) {
+            // A free-tier key can be refused `google_search` grounding outright (429
+            // RESOURCE_EXHAUSTED) while every other call on the same key succeeds.
+            // Re-send this turn once without it — as the schema turn it would otherwise
+            // have been — so the answer still arrives. The rebuilt body carries no
+            // google_search, so this can't loop; a 429 on it is a real quota refusal.
+            data = try await post(ungroundedRetryBody())
+            // Only now is it proven that grounding, not the key, was refused: skip it
+            // on this key for the rest of the process so later questions don't pay
+            // the extra round trip.
+            _ = Self.groundingRefusedKeys.withLock { $0.insert(apiKey) }
+        }
+
+        return try parseGeminiResponse(data)
+    }
+
+    // MARK: - Transport
+
+    /// POST with a bounded retry on Gemini's 503 "high demand". A 503 means the
+    /// request was never served — nothing generated, nothing billed — so a retry
+    /// can't double-charge. Waits 2 s then 4 s (cancellable). A 429 is never
+    /// retried: quota buckets refill daily, not in seconds.
+    private func post(_ geminiBody: [String: Any]) async throws -> Data {
+        let bodyData = try JSONSerialization.data(withJSONObject: geminiBody)
+        var attempt = 0
+        while true {
+            do {
+                return try await postOnce(bodyData)
+            } catch ResponsesError.http(status: 503, body: _) where attempt < Self.maxOverloadRetries {
+                try await Task.sleep(for: overloadBackoff * (1 << attempt))
+                attempt += 1
+            }
+        }
+    }
+
+    private func postOnce(_ bodyData: Data) async throws -> Data {
         let urlStr = "\(baseURL)/\(model):generateContent?key=\(apiKey)"
         guard let url = URL(string: urlStr) else {
             throw ResponsesError.decoding("GeminiClient: could not build endpoint URL")
@@ -77,7 +140,7 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = geminiData
+        request.httpBody = bodyData
         request.timeoutInterval = 60
 
         let data: Data
@@ -92,8 +155,34 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw ResponsesError.http(status: http.statusCode, body: body)
         }
+        return data
+    }
 
-        return try parseGeminiResponse(data)
+    // MARK: - Refused grounding
+
+    private static func isGroundingBody(_ body: [String: Any]) -> Bool {
+        (body["tools"] as? [[String: Any]])?.contains { $0["google_search"] != nil } == true
+    }
+
+    /// The refused grounding turn rebuilt without `google_search`: same conversation,
+    /// the response schema applied, and a note so the answer says web search was
+    /// skipped. `webSearchGrounded` is already set, so it never re-grounds.
+    private func ungroundedRetryBody() -> [String: Any] {
+        noteWebSearchSkipped()
+        return buildGeminiBody(tools: [], textFormat: lastTextFormat, thinkingLevel: lastThinkingLevel)
+    }
+
+    /// Tells the model, on the current user turn, that web search didn't run — so it
+    /// leaves `sources` empty and says so in `data_quality_note`, which the chat
+    /// shows under the answer.
+    private func noteWebSearchSkipped() {
+        let note: [String: Any] = ["text": Self.webSearchSkippedNote]
+        if var last = contents.last, last["role"] as? String == "user" {
+            last["parts"] = (last["parts"] as? [[String: Any]] ?? []) + [note]
+            contents[contents.count - 1] = last
+        } else {
+            contents.append(["role": "user", "parts": [note]])
+        }
     }
 
     // MARK: - Conversation setup
@@ -288,10 +377,19 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         // and skip the schema. The grounded prose + cited sources land in history;
         // the orchestrator's subsequent tool-less repair turn then enforces the
         // coach_response schema (and can fill the `sources` array from them).
-        let groundingTurn = tools.isEmpty && webSearchRequested && !webSearchGrounded
+        //
+        // A key already known to be refused grounding skips it here and gets the
+        // plain schema turn with a "web search skipped" note instead.
+        var groundingTurn = tools.isEmpty && webSearchRequested && !webSearchGrounded
         if groundingTurn {
-            body["tools"] = [["google_search": [:]]]
             webSearchGrounded = true
+            if Self.groundingRefusedKeys.withLock({ $0.contains(apiKey) }) {
+                groundingTurn = false
+                noteWebSearchSkipped()
+                body["contents"] = contents
+            } else {
+                body["tools"] = [["google_search": [:]]]
+            }
         }
 
         // Gemini rejects function declarations combined with a JSON response

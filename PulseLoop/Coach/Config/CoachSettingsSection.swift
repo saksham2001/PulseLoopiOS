@@ -299,7 +299,14 @@ struct CoachSettingsSection: View {
                    // spec defensively, and offering the switch would only promise something the
                    // server can't do.
                    store.settings.providerMode != .localOpenAICompat {
-                    FormToggleRow(title: "Web search", isOn: webSearchBinding)
+                    FormToggleRow(
+                        title: "Web search", isOn: webSearchBinding,
+                        // Free-tier Gemini keys can be refused Google Search grounding (HTTP 429)
+                        // while every other call works; the coach then answers without it.
+                        hint: store.settings.providerMode == .userGeminiKey
+                            ? "Google Search grounding may need a paid Gemini plan. Free-tier keys can be refused, "
+                                + "and the coach then answers without web results."
+                            : nil)
                 }
 
                 FormToggleRow(title: "AI actions (set goals, log, edit)", isOn: writeToolsBinding)
