@@ -104,7 +104,7 @@ art and a fallback name.
 | Heart rate — spot / live / history | ✅ | BPM |
 | SpO₂ — spot / history | ✅ | |
 | HRV — spot / history | ✅ | ms |
-| Steps / distance | ✅ | Distance/calorie units unverified; calories dropped |
+| Steps / distance | ✅ | Each sport record is the day's running total (the day keeps the latest), not an interval. Distance/calorie units unverified; calories dropped |
 | Sleep (light / deep / awake) | ✅ | No REM; "movement" entries render as light sleep |
 | Battery level | ✅ | In-band, with charging flag |
 | Find device | ✅ | |
@@ -125,7 +125,7 @@ art and a fallback name.
     PulseLoop ACKs every completed frame the ring sends (including the
     SEND_NO_ACK frames history arrives in), which is how the ring learns its
     records were delivered. Any replay is still deduped app-side (upserts by
-    kind + timestamp / bucket / night), so re-syncs never duplicate.
+    kind + timestamp / day / night), so re-syncs never duplicate.
 
 ### What the TK18 CANNOT do
 

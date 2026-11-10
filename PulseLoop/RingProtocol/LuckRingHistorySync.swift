@@ -6,8 +6,8 @@ import Foundation
 /// sequential pager: request a type, advance when its data frames stop arriving (a short settle window),
 /// or skip it if none arrive at all (a stall timeout — an unsupported type answers with nothing).
 ///
-/// Replays are safe: persistence upserts history by `(kind, timestamp)`, activity by bucket timestamp,
-/// and sleep by night, so re-requesting a type it already saw never double-counts. The destructive
+/// Replays are safe: persistence upserts history by `(kind, timestamp)`, activity as a per-day max of the
+/// ring's running total, and sleep by night, so re-requesting a type it already saw never double-counts. The destructive
 /// `cleanData` (207) opcode is deliberately never sent.
 @MainActor
 final class LuckRingHistorySync {

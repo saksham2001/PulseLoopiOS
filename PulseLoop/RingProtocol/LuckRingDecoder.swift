@@ -113,17 +113,28 @@ struct LuckRingDecoder {
         return [.firmware(version: version)]
     }
 
-    /// Sport records — 20 bytes each (`K6_Sport`): `[start u32][steps u32][distance u24(+pad)]`
-    /// `[calories u24(+pad)][duration u24(+pad)]`. Emitted as `.activityBucket` (per-interval, summed into
-    /// the day and upserted by timestamp) for both the live (4) and history (5) streams, so a re-sync is
-    /// idempotent. Calories are intentionally dropped (`.activityBucket` carries none).
+    /// Sport records — 20 bytes each (`K6_Sport`): `[time u32][steps u32][distance u24(+pad)]`
+    /// `[calories u24(+pad)][duration u24(+pad)]`, the same layout for the live (4) and history (5)
+    /// streams (the vendor parses both in `ProcessDATA_TYPE_SPORT`).
+    ///
+    /// **Each record is the day's running total, not an interval.** The ring pushes a fresh one every few
+    /// seconds while the wearer walks, stamped with the time of that update: 537, 549, 584 … 668 steps
+    /// across one afternoon. The vendor files each under its half-hour and *sets* the day's steps to it
+    /// (`DevSportDataManager.handleBlueDevSport`); it never adds them up. Decoded as `.activityBucket`s,
+    /// whose day total is the sum of distinct buckets, every push counted the whole day again (~9,000
+    /// steps for a real 668, miles of distance for a walk round the house). So they are
+    /// `.activityUpdate`s: the day row keeps the largest, which is the latest. Days already inflated are
+    /// restored once by `ActivityService.repairLuckRingActivityIfNeeded`.
+    ///
+    /// Calories stay 0 (unverified ring field), which leaves the on-device estimate in charge as before.
     private func decodeSport(_ p: [UInt8], dataType: UInt8) -> [RingDecodedEvent] {
         let recs = records(p, stride: 20)
         guard !recs.isEmpty else { return [.commandAck(commandId: dataType)] }
         return recs.map { r in
-            .activityBucket(timestamp: ringDate(r),
+            .activityUpdate(timestamp: ringDate(r),
                             steps: Int(LuckRingBytes.u32(r, 4)),
-                            distanceMeters: Double(LuckRingBytes.u24(r, 8)))
+                            distanceMeters: Double(LuckRingBytes.u24(r, 8)),
+                            calories: 0)
         }
     }
 
