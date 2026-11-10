@@ -15,6 +15,8 @@ final class VitalsStore {
     /// The 24h SpO₂ series holds hourly readings computed from heart rate (`EstimatedSpO2`).
     private(set) var spo2IsEstimated = false
     private(set) var stressSamples: [MetricSample]
+    /// `stressSamples` came from HRV because the ring has never reported stress (issue #67).
+    private(set) var stressIsDerived = false
     private(set) var hrvSamples: [MetricSample]
     private(set) var tempSamples: [MetricSample]
     // jring/56ff metrics (calibration offsets already applied by `metricRange`).
@@ -50,7 +52,7 @@ final class VitalsStore {
         let spo2 = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext)
         self.spo2Samples = spo2.samples
         self.spo2IsEstimated = spo2.isEstimated
-        self.stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
+        self.stressSamples = []
         self.hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         self.tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
         self.systolicSamples = MetricsService.metricRange(metric: .bloodPressureSystolic, range: .twentyFourHours, context: modelContext)
@@ -60,6 +62,7 @@ final class VitalsStore {
         self.capabilities = MetricsService.deviceCapabilities(modelContext)
         self.visibleMetrics = Self.computeVisible(context: modelContext)
         self.cards = [:]
+        loadStress()
         self.signature = Self.currentSignature(context: modelContext, profile: profile)
         applyRebuiltCards()
     }
@@ -94,7 +97,7 @@ final class VitalsStore {
         let spo2 = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext)
         spo2Samples = spo2.samples
         spo2IsEstimated = spo2.isEstimated
-        stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
+        loadStress()
         hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
         systolicSamples = MetricsService.metricRange(metric: .bloodPressureSystolic, range: .twentyFourHours, context: modelContext)
@@ -107,13 +110,29 @@ final class VitalsStore {
         signature = sig
     }
 
+    /// The ring's own 24 h stress, or — only for a ring that has never reported stress at all — stress
+    /// derived from the last 24 h of HRV (issue #67). Never a blend of the two.
+    private func loadStress() {
+        let stored = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
+        if stored.isEmpty, MetricsService.mayDeriveStress(context: modelContext) {
+            let now = Date()
+            let derived = MetricsService.derivedStress(start: now.addingTimeInterval(-86_400), end: now.addingTimeInterval(1),
+                                                       context: modelContext)
+            stressSamples = MetricsService.displaySamples(derived, range: .twentyFourHours)
+            stressIsDerived = !stressSamples.isEmpty
+        } else {
+            stressSamples = stored
+            stressIsDerived = false
+        }
+    }
+
     /// Assemble every card view-model from the current sample arrays + profile. Runs once per rebuild.
     private func buildCards() -> [MetricKind: VitalCardViewModel] {
         let physiology = UserPhysiologyProfile(profile)
         let calibration = CalibrationStore.shared.settings
         let inputs = VitalsCardFactory.Inputs(
             hr: hrSamples, spo2: spo2Samples, hrv: hrvSamples,
-            stress: stressSamples, fatigue: fatigueSamples, temperature: tempSamples,
+            stress: stressSamples, stressIsDerived: stressIsDerived, fatigue: fatigueSamples, temperature: tempSamples,
             systolic: systolicSamples, diastolic: diastolicSamples, glucose: bloodSugarSamples,
             spo2Estimated: spo2IsEstimated,
             summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric

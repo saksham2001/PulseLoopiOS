@@ -211,6 +211,29 @@ enum MetricsService {
         return ((try? context.fetch(descriptor)) ?? []).map { MetricSample(timestamp: $0.timestamp, value: $0.value) }
     }
 
+    /// Whether stress may be derived from HRV (issue #67): only when the store has never held a stress
+    /// reading. Asked of the whole history, not a window — an empty day happens on a ring that *does*
+    /// measure stress (monitoring off, a quiet night), and a derived number must never stand in for, or
+    /// be blended with, a ring's own stress.
+    static func mayDeriveStress(context: ModelContext) -> Bool {
+        !MetricsRepository.hasAnyMeasurement(kind: .stress, context: context)
+    }
+
+    /// Stress derived from the raw HRV readings in `[start, end)`, each score at the time of the HRV
+    /// reading it came from (`DerivedStress`). Not stored — there is nothing to delete or export.
+    static func derivedStress(start: Date, end: Date, context: ModelContext) -> [MetricSample] {
+        let raw = MeasurementKind.hrv.rawValue
+        let descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw && $0.timestamp >= start && $0.timestamp < end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        let hrv = (try? context.fetch(descriptor)) ?? []
+        guard !hrv.isEmpty else { return [] }
+        return DerivedStress.scored(hrv.map(\.value)).map {
+            MetricSample(timestamp: hrv[$0.index].timestamp, value: Double($0.score))
+        }
+    }
+
     /// The display transform applied to already-fetched, windowed samples: bucket-average per the
     /// user's graph-resolution preference (`.full`/targetBuckets 0 is identity). This is the SINGLE
     /// source of truth for the vitals sparkline/chart shape, so any caller that runs it over the same

@@ -20,6 +20,8 @@ struct MetricDetailView: View {
     /// HRV's baseline on a Day: the 24 h ending at the window's end (a calendar day holds too few
     /// readings early on to establish one).
     @State private var hrvBaselineSamples: [MetricSample] = []
+    /// The stress chart is derived from HRV: the ring has never reported stress (issue #67).
+    @State private var stressIsDerived = false
     @State private var primary: [MetricSample] = []
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
     /// The SpO₂ window holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
@@ -285,7 +287,9 @@ struct MetricDetailView: View {
 
             if readingsExpanded {
                 if readings.isEmpty {
-                    Text("No readings in this period.")
+                    Text(stressIsDerived
+                         ? "Estimated stress isn't stored — it's worked out from your HRV readings, so there's nothing here to delete."
+                         : "No readings in this period.")
                         .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                         .padding(.horizontal, 16).padding(.bottom, 14)
                 } else {
@@ -427,6 +431,14 @@ struct MetricDetailView: View {
             primary = fetch(kind, window.start, window.end)
             spo2Estimated = false
         }
+        // Same gate as the Vitals card, so a filled card never opens onto an empty chart.
+        stressIsDerived = false
+        let derivesStress = metric == .stress && MetricsService.mayDeriveStress(context: modelContext)
+        if derivesStress, primary.isEmpty {
+            let derived = MetricsService.derivedStress(start: window.start, end: window.end, context: modelContext)
+            primary = MetricsService.displaySamples(derived, range: period.range)
+            stressIsDerived = !primary.isEmpty
+        }
         secondary = metric == .bloodPressure ? fetch(.bloodPressureDiastolic, window.start, window.end) : []
         if metric == .hrv, period == .day {
             let end = min(Date(), window.end)
@@ -434,7 +446,8 @@ struct MetricDetailView: View {
         } else {
             hrvBaselineSamples = primary
         }
-        earliestReading = MetricsRepository.oldestMeasurementTimestamp(kind: kind, context: modelContext)
+        // Derived stress pages as far back as the HRV it comes from.
+        earliestReading = MetricsRepository.oldestMeasurementTimestamp(kind: derivesStress ? .hrv : kind, context: modelContext)
         readings = VitalReadings.load(metric: metric, start: window.start, end: window.end, context: modelContext)
     }
 
@@ -497,7 +510,7 @@ struct MetricDetailView: View {
     }
 
     private var isEstimatedMetric: Bool {
-        metric == .glucose || (metric == .spo2 && spo2Estimated)
+        metric == .glucose || (metric == .spo2 && spo2Estimated) || stressIsDerived
     }
 
     private var explainerText: String {
@@ -537,6 +550,9 @@ struct MetricDetailView: View {
                 + "FDA-authorized to measure or estimate glucose on its own."
         case .spo2:
             return EstimatedSpO2.disclaimer
+        case .stress where stressIsDerived:
+            return "Estimated from HRV — your ring doesn't measure stress. Scored against your own recent HRV "
+                + "readings, so it says how this reading compares with your normal, not how you compare with anyone else."
         case .bloodPressure:
             return "Ring blood pressure is an estimate. Calibrate against a validated cuff in Settings → Calibration, "
                 + "and talk to a clinician about persistent high or low readings."
