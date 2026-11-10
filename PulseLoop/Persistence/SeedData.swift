@@ -77,6 +77,9 @@ enum SeedData {
                     activeMinutes: max(8, steps / 230)
                 )
             )
+            // The last week also gets the intraday blocks behind each total, so the Activity
+            // RECORDS card (issue #70) has something to list and delete.
+            if offset >= -6 { seedDemoBuckets(context, day: date, steps: steps, isToday: offset == 0, calendar: calendar, now: now) }
         }
 
         seedVitals(context, now: now, calendar: calendar)
@@ -98,8 +101,13 @@ enum SeedData {
             let score = SleepScore.calculate(summary)
             let session = SleepSession(date: dayDate, startAt: startAt, endAt: wake, totalMinutes: totalMin, score: score.score, syncedAt: wake)
             context.insert(session)
+            // Stamp each block with its ring record. Last night arrives as two records (the ring
+            // reopened one after the first waking) so the Day view's RECORDS card has rows to show.
+            let secondRecordStart = i == 0 && blocks.count > 5 ? blocks[5].startAt : nil
             for block in blocks {
-                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage))
+                let recordStart = secondRecordStart.map { block.startAt >= $0 ? $0 : startAt } ?? startAt
+                context.insert(SleepStageBlock(sessionId: session.id, startAt: block.startAt, startMinute: block.startMinute,
+                                               durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: recordStart))
             }
 
             // A few recent days also get daytime nap(s) — separate sessions sharing the same waking
@@ -119,7 +127,8 @@ enum SeedData {
                 let napSession = SleepSession(date: dayDate, startAt: napStart, endAt: napEnd, totalMinutes: nap.minutes, score: napScore.score, syncedAt: napEnd)
                 context.insert(napSession)
                 for block in napBlocks {
-                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute, durationMinutes: block.durationMinutes, stage: block.stage))
+                    context.insert(SleepStageBlock(sessionId: napSession.id, startAt: block.startAt, startMinute: block.startMinute,
+                                                   durationMinutes: block.durationMinutes, stage: block.stage, recordStartAt: napStart))
                 }
             }
         }
@@ -230,6 +239,23 @@ enum SeedData {
     /// zone-colored charts show their full color range. HR/SpO₂ are dense over the last 24h (the
     /// dashboard's window); the slow vitals span ~30 days so the detail screen's baseline/trend fills.
     @MainActor
+    /// Hourly demo buckets that sum exactly to the day's `steps` (waking hours; today only up to now).
+    private static func seedDemoBuckets(_ context: ModelContext, day: Date, steps: Int, isToday: Bool,
+                                        calendar: Calendar, now: Date) {
+        let lastHour = isToday ? Swift.min(21, calendar.component(.hour, from: now)) : 21
+        let hours = Array(7...Swift.max(7, lastHour))
+        let weights = hours.map { 1.2 + sin(Double($0) * 0.9) + ($0 == 18 ? 2.5 : 0) }
+        let total = weights.reduce(0, +)
+        var remaining = steps
+        for (i, hour) in hours.enumerated() {
+            guard let start = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day) else { continue }
+            let share = i == hours.count - 1 ? remaining : Int(Double(steps) * weights[i] / total)
+            remaining -= share
+            context.insert(ActivityBucketSample(timestamp: start, steps: share,
+                                                distanceMeters: Double(share) * 0.72, source: "mock"))
+        }
+    }
+
     private static func seedVitals(_ context: ModelContext, now: Date, calendar: Calendar) {
         func add(_ kind: MeasurementKind, _ value: Double, _ ts: Date) {
             context.insert(Measurement(kind: kind, value: value, unit: kind.unit, timestamp: ts, source: .mock))
@@ -334,6 +360,7 @@ enum SeedData {
         deleteAll(Measurement.self, context)
         deleteAll(SleepSession.self, context)
         deleteAll(SleepStageBlock.self, context)
+        deleteAll(SleepRecordEdit.self, context)
         deleteAll(RawPacketRow.self, context)
         deleteAll(DerivedUpdateRow.self, context)
         deleteAll(UserProfile.self, context)
@@ -341,6 +368,7 @@ enum SeedData {
         deleteAll(ActivitySession.self, context)
         deleteAll(ActivitySample.self, context)
         deleteAll(ActivityBucketSample.self, context)
+        deleteAll(MeasurementDeletion.self, context)
         deleteAll(ActivityGpsPoint.self, context)
         deleteAll(ActivityEvent.self, context)
         deleteAll(CoachConversation.self, context)

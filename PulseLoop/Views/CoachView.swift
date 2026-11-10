@@ -74,6 +74,12 @@ struct CoachView: View {
         !viewModel.isSending && (messages.isEmpty || messages.last?.role == "assistant")
     }
 
+    /// A turn is running on the thread on screen. One started on another thread
+    /// keeps going and lands there; its live trace doesn't follow the user here.
+    private var isSendingHere: Bool {
+        viewModel.isSending && viewModel.sendingConversationId == activeConversationId
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -91,7 +97,7 @@ struct CoachView: View {
                                 onOpenMeal: { openMeal($0) }
                             ).id(message.id)
                         }
-                        if viewModel.isSending {
+                        if isSendingHere {
                             CoachTraceStrip(events: viewModel.traceEvents).id("trace")
                         }
                     }
@@ -160,9 +166,13 @@ struct CoachView: View {
             if id != nil { openRequestedConversation() }
         }
         .sheet(isPresented: $showHistory) {
-            CoachHistorySheet(conversations: conversations, activeId: activeConversationId) { id in
-                activeConversationId = id
-            }
+            CoachHistorySheet(
+                conversations: CoachHistory.summaries(conversations: conversations, messages: allMessages),
+                activeId: activeConversationId,
+                onSelect: { activeConversationId = $0 },
+                onDelete: deleteConversation,
+                onDeleteAll: deleteAllConversations
+            )
         }
         .sheet(isPresented: $showUsage) {
             CoachUsageSheet(
@@ -344,10 +354,12 @@ struct CoachView: View {
         Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext, attachments: attachments, coordinator: coordinator) }
     }
 
-    /// The active conversation, creating one on first use.
+    /// The active conversation, creating one on first use. An id whose row is gone
+    /// (deleted from history, or a stale notification link) gets a fresh thread —
+    /// a reply to a missing conversation is dropped rather than resurrecting it.
     private func resolveConversationId() -> UUID {
-        if let id = activeConversationId { return id }
-        if let existing = conversations.first {
+        if let id = activeConversationId, conversations.contains(where: { $0.id == id }) { return id }
+        if activeConversationId == nil, let existing = conversations.first {
             activeConversationId = existing.id
             return existing.id
         }
@@ -378,61 +390,17 @@ struct CoachView: View {
         try? modelContext.save()
         activeConversationId = conversation.id
     }
-}
 
-/// Conversation history sheet — pick a past conversation to resume.
-struct CoachHistorySheet: View {
-    let conversations: [CoachConversation]
-    let activeId: UUID?
-    let onSelect: (UUID) -> Void
-    @Environment(\.dismiss) private var dismiss
+    /// Delete one past conversation; deleting the one on screen starts a new thread.
+    private func deleteConversation(_ id: UUID) {
+        if id == activeConversationId { newConversation() }
+        CoachHistory.delete(id, context: modelContext)
+    }
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if conversations.isEmpty {
-                    Text("No conversations yet.")
-                        .font(PulseFont.subheadline.weight(.regular)).foregroundStyle(PulseColors.textMuted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(conversations) { convo in
-                            Button { onSelect(convo.id); dismiss() } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(convo.title)
-                                            .font(PulseFont.callout)
-                                            .foregroundStyle(PulseColors.textPrimary)
-                                        Text(Self.dateFormatter.string(from: convo.updatedAt))
-                                            .font(PulseFont.caption2.weight(.regular))
-                                            .foregroundStyle(PulseColors.textMuted)
-                                    }
-                                    Spacer()
-                                    if convo.id == activeId {
-                                        Image(systemName: "checkmark").foregroundStyle(PulseColors.accent)
-                                    }
-                                }
-                            }
-                            .listRowBackground(PulseColors.card)
-                        }
-                    }
-                    .scrollContentBackground(.hidden)
-                }
-            }
-            .background(PulseColors.background)
-            .navigationTitle("Conversations")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
-            }
-        }
+    /// Delete every conversation and start a new thread.
+    private func deleteAllConversations() {
+        CoachHistory.deleteAll(context: modelContext)
+        newConversation()
     }
 }
 

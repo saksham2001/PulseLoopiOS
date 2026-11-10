@@ -52,8 +52,8 @@ enum LuckRingCmdType: UInt8, Sendable {
 enum LuckRingDataType {
     static let devInfo: UInt8 = 2          // 6B → firmware "customer.hardware.code.picture.font"
     static let battery: UInt8 = 3          // [percent][charging]
-    static let realSport: UInt8 = 4        // live step buckets
-    static let historySport: UInt8 = 5     // stored step buckets
+    static let realSport: UInt8 = 4        // live day running total (steps/distance)
+    static let historySport: UInt8 = 5     // stored day running-total snapshots
     static let sleep: UInt8 = 6            // paged sleep timeline
     static let realHeart: UInt8 = 7        // live HR (envelope + 5B records)
     static let historyHeart: UInt8 = 8     // stored HR

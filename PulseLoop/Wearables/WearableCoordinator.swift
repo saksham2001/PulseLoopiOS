@@ -48,6 +48,36 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+extension RingDeviceType {
+    /// The families that speak the Yucheng YCBT protocol and share the whole `YCBT*` stack (driver,
+    /// encoder, decoder, history transfer). A protocol fact rather than a capability: what the ring's
+    /// settings commands accept, and how it fills its history records, follow from it.
+    var speaksYCBT: Bool {
+        switch self {
+        case .tk5, .colmiSmartHealth, .ycbt: return true
+        case .jring, .colmiR02, .luckRing, .rwfit, .crp: return false
+        }
+    }
+
+    /// The all-day heart-rate interval this family's ring accepts, in minutes (5-minute steps).
+    ///
+    /// YCBT rings floor at 30 (the firmware rejects faster, and SmartHealth clamps the same way) and
+    /// reach 120: past the vendor app's own 60-minute menu, but hardware-verified — a ring ACKed
+    /// `01 0c 01 78` and read at 10:00 and 12:00 (Android #103). Nothing longer until someone tries it.
+    /// Every other family keeps the 5…60 it always had.
+    var heartRateIntervalRange: ClosedRange<Int> {
+        speaksYCBT ? 30...120 : 5...60
+    }
+
+    /// Whether this family's all-day SpO₂ monitor takes an interval of its own rather than riding the
+    /// heart-rate one: YCBT's `01 26 {enable, interval}` and CRP's SpO₂ timing command each carry an
+    /// interval byte (Android #66). Note one YCBT ring was seen to ACK the byte and keep sampling SpO₂
+    /// on the heart-rate cadence anyway; it is correct on the wire, and harmless where ignored.
+    var supportsSeparateSpO2Interval: Bool {
+        speaksYCBT || self == .crp
+    }
+}
+
 /// The advertisement facts a coordinator needs to claim a discovered peripheral, wrapped so
 /// `matches` doesn't depend on CoreBluetooth's raw `[String: Any]` advertisement dictionary.
 struct AdvertisementInfo {

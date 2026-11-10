@@ -6,21 +6,21 @@ import Foundation
 /// sequential pager: request a type, advance when its data frames stop arriving (a short settle window),
 /// or skip it if none arrive at all (a stall timeout — an unsupported type answers with nothing).
 ///
-/// Replays are safe: persistence upserts history by `(kind, timestamp)`, activity by bucket timestamp,
-/// and sleep by night, so re-requesting a type it already saw never double-counts. The destructive
+/// Replays are safe: persistence upserts history by `(kind, timestamp)`, activity as a per-day max of the
+/// ring's running total, and sleep by night, so re-requesting a type it already saw never double-counts. The destructive
 /// `cleanData` (207) opcode is deliberately never sent.
 @MainActor
 final class LuckRingHistorySync {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
-    /// The full catalog, in request order. `mixSport` (10 — workout records) is skipped in v1.
+    /// The full catalog, in request order. `mixSport` (10 — workout records) is skipped in v1, and HRV (42)
+    /// is never requested: its byte isn't HRV in any usable sense (see `LuckRingCoordinator.capabilities`).
     static let catalog: [UInt8] = [
         LuckRingDataType.historySport,   // 5
         LuckRingDataType.sleep,          // 6
         LuckRingDataType.historyHeart,   // 8
         LuckRingDataType.historyO2,      // 40
         LuckRingDataType.historyBP,      // 41
-        LuckRingDataType.historyHRV,     // 42
         LuckRingDataType.historyTemp,    // 47
         LuckRingDataType.stressHistory,  // 53
     ]

@@ -11,6 +11,9 @@ enum SleepStageColors {
     static let light = Color(hex: "#7C5CFF")
     static let rem = Color(hex: "#2DD4D8")
     static let awake = Color(hex: "#FFB86B")
+    /// Minutes the wearer added over time the ring missed: a neutral grey-violet, so the hatched
+    /// band never reads as one of the four measured stage colours.
+    static let added = Color(hex: "#9A97B5")
 
     static func color(for stage: SleepStage) -> Color {
         switch stage {
@@ -19,6 +22,7 @@ enum SleepStageColors {
         case .rem: return rem
         case .awake: return awake
         case .unknown: return PulseColors.textMuted
+        case .added: return added
         }
     }
 }
@@ -467,6 +471,7 @@ struct SleepHypnogramView: View {
         case .light: return 0.62
         case .deep: return 0.85
         case .unknown: return 0.62
+        case .added: return 0.615   // the middle of the hatched REM-to-deep band
         }
     }
 
@@ -506,10 +511,33 @@ struct SleepHypnogramView: View {
                     let blocks = sortedBlocks
                     guard !blocks.isEmpty else { return }
 
+                    // Added-by-you bands first, under everything else (#106): muted fill and
+                    // diagonal hatching from the REM lane to the deep lane.
+                    let bandTop = size.height * Self.laneFraction(.rem)
+                    let bandBottom = size.height * Self.laneFraction(.deep)
+                    for block in blocks where block.stage == .added {
+                        let startX = x(forMinute: block.startMinute, in: size.width)
+                        let endX = max(startX + 1, x(forMinute: block.startMinute + block.durationMinutes, in: size.width))
+                        let band = Path(CGRect(x: startX, y: bandTop, width: endX - startX, height: bandBottom - bandTop))
+                        context.fill(band, with: .color(SleepStageColors.added.opacity(0.14)))
+                        var hatch = Path()
+                        var hx = startX - (bandBottom - bandTop)
+                        while hx < endX {
+                            hatch.move(to: CGPoint(x: hx, y: bandBottom))
+                            hatch.addLine(to: CGPoint(x: hx + (bandBottom - bandTop), y: bandTop))
+                            hx += 7
+                        }
+                        context.drawLayer { layer in
+                            layer.clip(to: band)
+                            layer.stroke(hatch, with: .color(SleepStageColors.added.opacity(0.45)), lineWidth: 1)
+                        }
+                    }
+
                     // Dashed vertical transition connectors between consecutive blocks.
                     for index in 1..<max(1, blocks.count) {
                         let prev = blocks[index - 1]
                         let cur = blocks[index]
+                        if prev.stage == .added || cur.stage == .added { continue }
                         let cx = x(forMinute: cur.startMinute, in: size.width)
                         var path = Path()
                         path.move(to: CGPoint(x: cx, y: laneY(prev.stage, in: size)))
@@ -522,7 +550,7 @@ struct SleepHypnogramView: View {
                     }
 
                     // Horizontal segment per block: soft halo underlay + solid line.
-                    for block in blocks {
+                    for block in blocks where block.stage != .added {
                         let y = laneY(block.stage, in: size)
                         let startX = x(forMinute: block.startMinute, in: size.width)
                         let endX = x(forMinute: block.startMinute + block.durationMinutes, in: size.width)
@@ -588,8 +616,19 @@ struct SleepHypnogramView: View {
             }
             .padding(.leading, 64)
             .padding(.trailing, 16)
+
+            if sortedBlocks.contains(where: { $0.stage == .added }) {
+                HStack(spacing: 5) {
+                    Rectangle().fill(SleepStageColors.added.opacity(0.45)).frame(width: 10, height: 6)
+                    Text("Added by you · asleep, no stage measured")
+                        .font(PulseFont.micro.weight(.regular))
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 64)
+            }
         }
-        .frame(height: height)
+        .frame(height: height + (sortedBlocks.contains { $0.stage == .added } ? 18 : 0))
     }
 
     // MARK: Press-and-hold scrubber
@@ -708,7 +747,7 @@ struct SleepHypnogramView: View {
     /// are offsets from sleep start ("DEEP · 0:58 – 1:44"), matching the relative tick labels.
     static func readoutText(stage: SleepStage, startMinute: Int, durationMinutes: Int, startTs: Date?,
                             locale: Locale = .current) -> String {
-        let name = stage.rawValue.uppercased()
+        let name = stage == .added ? "Added by you" : stage.rawValue.uppercased()
         let endMinute = startMinute + durationMinutes
         guard let startTs else {
             func rel(_ m: Int) -> String { "\(m / 60):" + String(format: "%02d", m % 60) }
@@ -737,9 +776,9 @@ struct SleepHypnogramView: View {
         var totals: [SleepStage: Int] = [:]
         for entry in stages { totals[entry.stage, default: 0] += entry.minutes }
         func plural(_ n: Int, _ unit: String) -> String { "\(n) \(unit)\(n == 1 ? "" : "s")" }
-        let parts: [String] = [SleepStage.deep, .light, .rem, .awake].compactMap { stage in
+        let parts: [String] = [SleepStage.deep, .light, .rem, .awake, .added].compactMap { stage in
             guard let minutes = totals[stage], minutes > 0 else { return nil }
-            let name = stage == .rem ? "REM" : stage.rawValue.capitalized
+            let name = stage == .rem ? "REM" : stage == .added ? "Added by you" : stage.rawValue.capitalized
             let h = minutes / 60, m = minutes % 60
             if h > 0 && m > 0 { return "\(name) \(plural(h, "hour")) \(plural(m, "minute"))" }
             if h > 0 { return "\(name) \(plural(h, "hour"))" }

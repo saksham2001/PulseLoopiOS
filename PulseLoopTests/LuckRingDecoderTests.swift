@@ -143,12 +143,33 @@ final class LuckRingDecoderTests: XCTestCase {
         let record = cat(LuckRingBytes.le32(base), LuckRingBytes.le32(1234),
                          le24(5000), [0], le24(300), [0], le24(600), [0])
         let events = decoder.decode(frame(5, envelope(items: 1, records: [record])))
-        guard case let .activityBucket(ts, steps, distance) = events.first else {
-            return XCTFail("expected activityBucket, got \(events)")
+        guard case let .activityUpdate(ts, steps, distance, calories) = events.first else {
+            return XCTFail("expected activityUpdate, got \(events)")
         }
         XCTAssertEqual(ts, baseDate)
         XCTAssertEqual(steps, 1234)
         XCTAssertEqual(distance, 5000)
+        XCTAssertEqual(calories, 0, "the ring's calorie field is unverified; the estimate stays in charge")
+    }
+
+    /// The TK18's live sport pushes during a walk (from a reporter's diagnostics): each is the day's
+    /// running total with a new timestamp. They must decode as day totals, never as buckets — summed as
+    /// buckets, a 30-second walk counted the whole day again for every push.
+    func testLiveSportPushesAreDayTotalsNotBuckets() {
+        let pushes: [(offset: UInt32, steps: UInt32)] = [(0, 584), (112, 594), (115, 599), (118, 604), (121, 610), (124, 616)]
+        let events = pushes.flatMap { push in
+            let record = cat(LuckRingBytes.le32(base + push.offset), LuckRingBytes.le32(push.steps),
+                             le24(Int(push.steps) * 7 / 10), [0], le24(0), [0], le24(0), [0])
+            return decoder.decode(frame(4, envelope(items: 1, records: [record])))
+        }
+        let totals = events.compactMap { event -> Int? in
+            if case .activityBucket = event { XCTFail("sport record decoded as a bucket") }
+            guard case let .activityUpdate(_, steps, _, _) = event else { return nil }
+            return steps
+        }
+        XCTAssertEqual(totals.count, pushes.count)
+        // The day row keeps the largest of these — the latest — not their 3,607 sum.
+        XCTAssertEqual(totals.max(), 616)
     }
 
     // MARK: Sleep

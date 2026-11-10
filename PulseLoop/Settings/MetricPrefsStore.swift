@@ -77,6 +77,10 @@ struct MetricPrefs: Codable, Equatable {
     /// default position, so a newly supported metric appears without any migration.
     var vitalsOrder: [String] = []
     var todayOrder: [String] = []
+    /// Hide hourly SpO₂ a ring computes from heart rate (`EstimatedSpO2`) so charts, cards and the
+    /// latest value show only real spot readings. Applies to every page — it is about what the ring
+    /// measured, not about one screen's layout. On by default; stored data is never touched.
+    var hideEstimatedSpO2: Bool = true
 
     static let `default` = MetricPrefs()
 
@@ -92,6 +96,7 @@ struct MetricPrefs: Codable, Equatable {
         todayResolution = try c.decodeIfPresent(GraphResolution.self, forKey: .todayResolution) ?? d.todayResolution
         vitalsOrder = try c.decodeIfPresent([String].self, forKey: .vitalsOrder) ?? d.vitalsOrder
         todayOrder = try c.decodeIfPresent([String].self, forKey: .todayOrder) ?? d.todayOrder
+        hideEstimatedSpO2 = try c.decodeIfPresent(Bool.self, forKey: .hideEstimatedSpO2) ?? d.hideEstimatedSpO2
     }
 }
 

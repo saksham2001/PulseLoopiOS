@@ -22,7 +22,8 @@ enum MetricsService {
         // per-kind to match Vitals when a database mixes real + mock across different metrics.) This is
         // one fetch per kind — same fetch count as the previous inline query.
         let hrSamples = rangeSamples(kind: .heartRate, range: .twentyFourHours, context: context)
-        let spo2Samples = rangeSamples(kind: .spo2, range: .twentyFourHours, context: context)
+        // SpO₂ goes through the same estimated-hourly filter `metricRange` applies (`EstimatedSpO2`).
+        let spo2Samples = spo2Window(range: .twentyFourHours, context: context).samples
         // Display copies go through the same `displaySamples` transform Vitals applies (resolution
         // downsampling). Byte-identical to `metricRange`'s output, so the sparkline shape matches too.
         let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours, scope: scope)
@@ -33,7 +34,7 @@ enum MetricsService {
         // Flatten the latest live readings to value snapshots immediately so nothing downstream
         // (or the cached TodaySummary) holds a live SwiftData object.
         let latestHR = LatestReading(MetricsRepository.latestMeasurement(kind: .heartRate, context: context))
-        let latestSpO2 = LatestReading(MetricsRepository.latestMeasurement(kind: .spo2, context: context))
+        let latestSpO2 = latestShownSpO2(context: context)
         let calibration = calibrationState(device: device, activityRows: activityRows, isDemo: isDemo, context: context)
         let hrFreshness = freshness(lastUpdatedAt: latestHR?.timestamp, isDemo: isDemo)
         let spo2Freshness = freshness(lastUpdatedAt: latestSpO2?.timestamp, isDemo: isDemo)
@@ -97,7 +98,7 @@ enum MetricsService {
         case .heartRate:
             raw = rangeSamples(kind: .heartRate, range: range, context: context)
         case .spo2:
-            raw = rangeSamples(kind: .spo2, range: range, context: context)
+            return spo2Series(range: range, context: context, scope: scope).samples
         case .stress:
             raw = rangeSamples(kind: .stress, range: range, context: context)
         case .hrv:
@@ -118,6 +119,119 @@ enum MetricsService {
             return []
         }
         return displaySamples(raw, range: range, scope: scope)
+    }
+
+    /// An SpO₂ window plus whether it holds hourly readings the ring computed from heart rate rather
+    /// than measured (`EstimatedSpO2`). Carried with the series so no surface can show those rows
+    /// unlabelled by re-deriving the samples on its own.
+    struct SpO2Series {
+        let samples: [MetricSample]
+        /// True only when estimated rows are *shown* — with "Hide estimated SpO₂" on they are filtered
+        /// out instead, so nothing on screen needs the label.
+        let isEstimated: Bool
+    }
+
+    /// `metricRange(.spo2, …)` with the estimated-hourly verdict applied: hidden when the user hides
+    /// estimates (the default), otherwise flagged. The verdict reads the raw rows, before display
+    /// bucketing averages their timestamps away.
+    static func spo2Series(range: MetricRange, context: ModelContext, scope: MetricScope = .vitals) -> SpO2Series {
+        let window = spo2Window(range: range, context: context)
+        return SpO2Series(samples: displaySamples(window.samples, range: range, scope: scope),
+                          isEstimated: window.isEstimated)
+    }
+
+    /// `spo2Series` over a fixed calendar window `[start, end)` (a vital detail period, issue #102) —
+    /// the same hide-or-flag rule, decided on the raw rows before bucketing.
+    static func spo2Series(start: Date, end: Date, range: MetricRange, context: ModelContext,
+                           scope: MetricScope = .vitals) -> SpO2Series {
+        let window = applyEstimatedSpO2Rule(windowSamples(kind: .spo2, start: start, end: end, context: context),
+                                            context: context)
+        return SpO2Series(samples: displaySamples(window.samples, range: range, scope: scope),
+                          isEstimated: window.isEstimated)
+    }
+
+    /// The raw (un-bucketed) SpO₂ rows of a window after the hide-estimated preference.
+    private static func spo2Window(range: MetricRange, context: ModelContext) -> (samples: [MetricSample], isEstimated: Bool) {
+        applyEstimatedSpO2Rule(rangeSamples(kind: .spo2, range: range, context: context), context: context)
+    }
+
+    /// Hide estimated hourly SpO₂ rows (the default) or keep them and flag the series.
+    private static func applyEstimatedSpO2Rule(_ raw: [MetricSample],
+                                               context: ModelContext) -> (samples: [MetricSample], isEstimated: Bool) {
+        let estimated = estimatedSpO2Timestamps(in: raw, context: context)
+        guard !estimated.isEmpty else { return (raw, false) }
+        if MetricPrefsStore.shared.settings.hideEstimatedSpO2 {
+            return (raw.filter { !estimated.contains($0.timestamp) }, false)
+        }
+        return (raw, raw.contains { estimated.contains($0.timestamp) })
+    }
+
+    /// The newest SpO₂ reading to present as "latest". With estimates hidden, an hourly row the ring
+    /// computed from heart rate never surfaces here either — the newest *measured* reading does, from
+    /// the last 500 rows (weeks of hourly history), or none.
+    static func latestShownSpO2(context: ModelContext) -> LatestReading? {
+        let latest = MetricsRepository.latestMeasurement(kind: .spo2, context: context)
+        guard MetricPrefsStore.shared.settings.hideEstimatedSpO2, let at = latest?.timestamp,
+              EstimatedSpO2.estimatedTimestamps(from: at, to: at, context: context).contains(at)
+        else { return LatestReading(latest) }
+        let recent = MetricsRepository.measurements(kind: .spo2, start: .distantPast, end: .distantFuture,
+                                                    limit: 500, context: context)   // newest first
+        guard let newest = recent.first?.timestamp, let oldest = recent.last?.timestamp else { return nil }
+        let estimated = EstimatedSpO2.estimatedTimestamps(from: oldest, to: newest, context: context)
+        return LatestReading(recent.first { !estimated.contains($0.timestamp) })
+    }
+
+    /// The estimated-hourly SpO₂ timestamps across the span of `samples` (empty for an empty window).
+    private static func estimatedSpO2Timestamps(in samples: [MetricSample], context: ModelContext) -> Set<Date> {
+        guard let first = samples.first?.timestamp, let last = samples.last?.timestamp else { return [] }
+        return EstimatedSpO2.estimatedTimestamps(from: min(first, last), to: max(first, last), context: context)
+    }
+
+    /// One kind's readings inside a fixed calendar window `[start, end)` (a vital detail period,
+    /// issue #102), oldest first, calibrated and display-downsampled exactly like `metricRange`. Unlike
+    /// `metricRange` it never widens to full history for demo data — the window is the window. SpO₂
+    /// goes through `spo2Series(start:end:…)` so estimated hourly rows are hidden or flagged as on
+    /// every other surface; use that directly when the flag is needed.
+    static func measurementWindow(kind: MeasurementKind, start: Date, end: Date, range: MetricRange,
+                                  context: ModelContext, scope: MetricScope = .vitals) -> [MetricSample] {
+        if kind == .spo2 {
+            return spo2Series(start: start, end: end, range: range, context: context, scope: scope).samples
+        }
+        let samples = calibrated(windowSamples(kind: kind, start: start, end: end, context: context), kind: kind)
+        return displaySamples(samples, range: range, scope: scope)
+    }
+
+    /// Raw rows of one kind in `[start, end)`, oldest first.
+    private static func windowSamples(kind: MeasurementKind, start: Date, end: Date, context: ModelContext) -> [MetricSample] {
+        let raw = kind.rawValue
+        let descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw && $0.timestamp >= start && $0.timestamp < end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        return ((try? context.fetch(descriptor)) ?? []).map { MetricSample(timestamp: $0.timestamp, value: $0.value) }
+    }
+
+    /// Whether stress may be derived from HRV (issue #67): only when the store has never held a stress
+    /// reading. Asked of the whole history, not a window — an empty day happens on a ring that *does*
+    /// measure stress (monitoring off, a quiet night), and a derived number must never stand in for, or
+    /// be blended with, a ring's own stress.
+    static func mayDeriveStress(context: ModelContext) -> Bool {
+        !MetricsRepository.hasAnyMeasurement(kind: .stress, context: context)
+    }
+
+    /// Stress derived from the raw HRV readings in `[start, end)`, each score at the time of the HRV
+    /// reading it came from (`DerivedStress`). Not stored — there is nothing to delete or export.
+    static func derivedStress(start: Date, end: Date, context: ModelContext) -> [MetricSample] {
+        let raw = MeasurementKind.hrv.rawValue
+        let descriptor = FetchDescriptor<Measurement>(
+            predicate: #Predicate { $0.kindRaw == raw && $0.timestamp >= start && $0.timestamp < end },
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        let hrv = (try? context.fetch(descriptor)) ?? []
+        guard !hrv.isEmpty else { return [] }
+        return DerivedStress.scored(hrv.map(\.value)).map {
+            MetricSample(timestamp: hrv[$0.index].timestamp, value: Double($0.score))
+        }
     }
 
     /// The display transform applied to already-fetched, windowed samples: bucket-average per the
@@ -636,7 +750,9 @@ enum SleepService {
         let blocks = SleepRepository.blocks(sessionId: session.id, context: context)
         let light = blocks.filter { $0.stage == .light }.reduce(0) { $0 + $1.durationMinutes }
         let deep = blocks.filter { $0.stage == .deep }.reduce(0) { $0 + $1.durationMinutes }
-        let awake = blocks.filter { $0.stage == .awake }.reduce(0) { $0 + $1.durationMinutes }
+        // Awake counts the gaps between the night's ring records too (Android #81) — the same
+        // minutes the Day view's RECORDS card labels "Awake Xm between".
+        let awake = SleepRecords.awakeMinutes(blocks)
         return SleepSummary(
             session: session,
             lightMinutes: light,
@@ -735,9 +851,18 @@ enum ActivityService {
             row = ActivityDaily(date: update.date, source: update.source)
             context.insert(row)
         }
-        if let steps = update.steps { row.steps = max(row.steps, steps) }
-        if let calories = update.calories { row.calories = max(row.calories, calories) }
-        if let distanceMeters = update.distanceMeters { row.distanceMeters = max(row.distanceMeters, distanceMeters) }
+        // The ring's cumulative counter still includes any bucket the user deleted from this day
+        // (issue #70); it ratchets only after that deficit is taken off. A day with a deletion keeps
+        // its calories cleared — the ring's figure counts the deleted block and can't be corrected.
+        let hasDeletion = row.deletedSteps > 0 || row.deletedDistanceMeters > 0
+        if let steps = update.steps {
+            row.steps = ActivityBucketDeletion.ratchet(stored: row.steps, ring: steps, deleted: row.deletedSteps)
+        }
+        if let calories = update.calories, !hasDeletion { row.calories = max(row.calories, calories) }
+        if let distanceMeters = update.distanceMeters {
+            row.distanceMeters = ActivityBucketDeletion.ratchet(stored: row.distanceMeters, ring: distanceMeters,
+                                                                deleted: row.deletedDistanceMeters)
+        }
         if let activeMinutes = update.activeMinutes { row.activeMinutes = max(row.activeMinutes, activeMinutes) }
         row.source = update.source
         row.syncedAt = update.syncedAt
@@ -759,8 +884,11 @@ enum ActivityService {
         let dayStart = Calendar.current.startOfDay(for: timestamp)
         let epoch = Int(timestamp.timeIntervalSince1970)
 
-        // Upsert the bucket sample by its unique start epoch (replace on re-sync).
-        if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+        // Upsert the bucket sample by its unique start epoch (replace on re-sync) — unless the user
+        // deleted it (issue #70), in which case the day is recomputed without it.
+        if MeasurementDeletionService.isActivityBucketDeleted(startEpoch: epoch, context: context) {
+            // Tombstoned: nothing to write.
+        } else if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
             predicate: #Predicate { $0.startEpoch == epoch }
         )))?.first {
             existing.steps = steps
@@ -1077,140 +1205,4 @@ enum ActivityService {
 
 // ManualActivityCreationError / ManualActivityService live in Services/ManualActivityService.swift.
 
-@MainActor
-enum ActivityRecorderService {
-    static func start(type: String, useGps: Bool, notes: String?, context: ModelContext) -> ActivitySession {
-        let session = ActivitySession(type: type, status: .recording, notes: notes, useGps: useGps)
-        context.insert(session)
-        context.insert(ActivityEvent(sessionId: session.id, kind: "created"))
-        context.insert(ActivityEvent(sessionId: session.id, kind: "started"))
-        try? context.save()
-        return session
-    }
-    
-    static func pause(_ session: ActivitySession, context: ModelContext) {
-        guard session.status == .recording else { return }
-        session.status = .paused
-        context.insert(ActivityEvent(sessionId: session.id, kind: "paused"))
-        context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
-        try? context.save()
-    }
-    
-    static func resume(_ session: ActivitySession, context: ModelContext) {
-        guard session.status == .paused else { return }
-        if let lastPause = ActivityRepository.events(sessionId: session.id, context: context).last(where: { $0.kind == "paused" }) {
-            session.totalPauseSeconds += max(0, Date().timeIntervalSince(lastPause.timestamp))
-        }
-        session.status = .recording
-        context.insert(ActivityEvent(sessionId: session.id, kind: "resumed"))
-        context.insert(ActivityEvent(sessionId: session.id, kind: "gps_started"))
-        try? context.save()
-    }
-    
-    static func finish(_ session: ActivitySession, context: ModelContext) {
-        _ = ActivityService.finishSummary(for: session, context: context)
-        context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
-        context.insert(ActivityEvent(sessionId: session.id, kind: "finished"))
-        try? context.save()
-        PulseDataChange.shared.notify()
-    }
-    
-    static func cancel(_ session: ActivitySession, context: ModelContext) {
-        session.status = .cancelled
-        session.endedAt = Date()
-        session.updatedAt = Date()
-        context.insert(ActivityEvent(sessionId: session.id, kind: "gps_stopped"))
-        context.insert(ActivityEvent(sessionId: session.id, kind: "cancelled"))
-        try? context.save()
-    }
-    
-    /// Permanently deletes a workout and all of its child rows (samples, GPS points, events, sensor
-    /// poll events — all raw-UUID FKs, so no SwiftData cascade) and reverses its contribution to the
-    /// day's activity rollup so the totals stay honest.
-    @MainActor
-    static func delete(_ session: ActivitySession, context: ModelContext) {
-        ActivityService.reverseDailyRollup(for: session, context: context)
-
-        // Capture before the row is gone; the day's calorie estimate recomputes without it below.
-        let affectedStart = session.startedAt
-        let affectedEnd = session.endedAt
-
-        let id = session.id
-        ActivityRepository.samples(sessionId: id, context: context).forEach(context.delete)
-        ActivityRepository.gpsPoints(sessionId: id, context: context).forEach(context.delete)
-        ActivityRepository.events(sessionId: id, context: context).forEach(context.delete)
-        let polls = ((try? context.fetch(FetchDescriptor<ActivitySensorPollEvent>())) ?? []).filter { $0.sessionId == id }
-        polls.forEach(context.delete)
-        context.delete(session)
-        try? context.save()
-        DailyCalorieEstimator.recompute(day: affectedStart, context: context)
-        if let affectedEnd, !Calendar.current.isDate(affectedEnd, inSameDayAs: affectedStart) {
-            DailyCalorieEstimator.recompute(day: affectedEnd, context: context)
-        }
-        try? context.save()
-        HealthSyncService.shared.deleteExportedWorkout(sessionId: id)
-        PulseDataChange.shared.notify()
-    }
-
-    static func recoverStaleSession(context: ModelContext) -> [ActivitySession] {
-        let cutoff = Calendar.current.date(byAdding: .hour, value: -6, to: Date()) ?? Date()
-        return ActivityRepository.sessions(context: context)
-            .filter { ($0.status == .recording || $0.status == .paused) && $0.startedAt < cutoff }
-    }
-    
-    /// How long after a session finishes that ring-log samples may still attach to it. Covers the
-    /// post-workout backfill sync (and a reconnect shortly after finishing).
-    static let backfillLinkWindowSeconds: TimeInterval = 15 * 60
-    /// A coarse history sample this close to an existing live sample of the same kind is noise from
-    /// the ring's 5-min log overlapping the stream — skip it (half the 5-min log interval).
-    static let historyDedupeSeconds: TimeInterval = 150
-
-    @discardableResult
-    static func linkSample(
-        kind: MeasurementKind,
-        value: Double,
-        timestamp: Date,
-        measurementId: UUID?,
-        source: MeasurementSource,
-        confidence: DecodeConfidence,
-        context: ModelContext
-    ) -> ActivitySample? {
-        let sessions = ActivityRepository.sessions(context: context)
-        let active = sessions.first { session in
-            (session.status == .recording || session.status == .paused) && timestamp >= session.startedAt && timestamp <= Date()
-        }
-        // Ring-log backfill: history samples arrive *after* finish (post-workout sync / reconnect),
-        // so also match a just-finished session whose window contains the sample.
-        let target = active ?? sessions.first { session in
-            guard session.status == .finished, let ended = session.endedAt else { return false }
-            return Date().timeIntervalSince(ended) < backfillLinkWindowSeconds
-                && timestamp >= session.startedAt && timestamp <= ended
-        }
-        guard let target else { return nil }
-        let existing = ActivityRepository.samples(sessionId: target.id, context: context)
-        if let measurementId, existing.contains(where: { $0.measurementId == measurementId }) {
-            return nil
-        }
-        // Gap-fill rule: ring-log samples only fill stretches the live stream missed.
-        if source == .history, existing.contains(where: {
-            $0.kind == kind.rawValue
-                && $0.source != MeasurementSource.history.rawValue
-                && abs($0.timestamp.timeIntervalSince(timestamp)) <= historyDedupeSeconds
-        }) {
-            return nil
-        }
-        let sample = ActivitySample(
-            sessionId: target.id,
-            measurementId: measurementId,
-            kind: kind.rawValue,
-            value: value,
-            unit: kind == .heartRate ? "bpm" : "%",
-            timestamp: timestamp,
-            source: source.rawValue,
-            confidence: confidence
-        )
-        context.insert(sample)
-        context.insert(ActivityEvent(sessionId: target.id, kind: "sensor_sample_linked", timestamp: timestamp))
-        return sample
-    }
-}
+// ActivityRecorderService lives in Services/ActivityRecorderService.swift.

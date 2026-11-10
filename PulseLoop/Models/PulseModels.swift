@@ -61,6 +61,10 @@ enum SleepStage: String, Codable, CaseIterable {
     case awake
     case unknown
     case rem
+    /// Minutes the wearer added over time the ring missed (Android #106 `ADDED`). Asleep but
+    /// unstaged: counted in time asleep, left out of the stage breakdown and the score. No decoder
+    /// produces it — only `SleepRecordExtension.editedBlocks` does. Raw value persisted; append only.
+    case added
 }
 
 enum ActivitySessionStatus: String, Codable, CaseIterable {
@@ -185,6 +189,11 @@ final class ActivityDaily {
     /// total adds the BMR baseline at read. Optional/defaulted for additive lightweight migration —
     /// same pattern as `UserProfile`'s physiology fields.
     var estimatedActiveCalories: Double? = nil
+    /// Steps / metres of activity buckets the user deleted from this day (issue #70). The ring's live
+    /// cumulative counter still includes them, so every later live reading is reduced by this much
+    /// before it ratchets the day — see `ActivityBucketDeletion.ratchet`. Defaulted (additive migration).
+    var deletedSteps: Int = 0
+    var deletedDistanceMeters: Double = 0
 
     init(
         id: UUID = UUID(),
@@ -249,6 +258,29 @@ final class Measurement {
     var kind: MeasurementKind { MeasurementKind(rawValue: kindRaw) ?? .heartRate }
 }
 
+/// A tombstone for a reading the user deleted, so the next sync of that day can't write it back.
+///
+/// Ring history is replayed on every re-sync with deterministic timestamps, and the persistence gate
+/// upserts by `(kind, timestamp)` — without this row a deleted reading would simply reappear. Keyed by
+/// what a re-sync can reproduce (the kind and the whole-second instant), never by the row's UUID.
+/// Activity buckets reuse the table with an `activity:` key (see `MeasurementDeletionService`).
+@Model
+final class MeasurementDeletion {
+    /// `"<kindRaw>:<epochSeconds>"` for a vital, `"activity:<startEpoch>"` for an activity bucket.
+    @Attribute(.unique) var key: String
+    /// A `MeasurementKind` raw value, or `MeasurementDeletionService.activityKindRaw`.
+    var kindRaw: String
+    var timestamp: Date
+    var deletedAt: Date
+
+    init(key: String, kindRaw: String, timestamp: Date, deletedAt: Date = Date()) {
+        self.key = key
+        self.kindRaw = kindRaw
+        self.timestamp = timestamp
+        self.deletedAt = deletedAt
+    }
+}
+
 /// A single historical battery reading, kept so the Wearable screen can chart drainage over time.
 /// Battery is stored separately from `Measurement` (it isn't a health vital) but follows the same
 /// timestamped-sample shape. Writes are throttled (on-change or a 30-min floor) so the table stays
@@ -310,14 +342,21 @@ final class SleepStageBlock {
     var startMinute: Int
     var durationMinutes: Int
     var stageRaw: String
-    
+    /// The declared start of the ring record these stages arrived in (Android #68). Stamped by
+    /// `persistSleepTimeline` — the only point the record boundary is known, since the night is
+    /// merged into one session straight afterwards. Nil on rows written before it existed; those
+    /// nights fall back to gap-splitting in `SleepRecords.runs`. Optional so the SwiftData
+    /// migration is additive.
+    var recordStartAt: Date?
+
     init(
         id: UUID = UUID(),
         sessionId: UUID,
         startAt: Date,
         startMinute: Int,
         durationMinutes: Int,
-        stage: SleepStage
+        stage: SleepStage,
+        recordStartAt: Date? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -325,9 +364,54 @@ final class SleepStageBlock {
         self.startMinute = startMinute
         self.durationMinutes = durationMinutes
         self.stageRaw = stage.rawValue
+        self.recordStartAt = recordStartAt
     }
-    
+
     var stage: SleepStage { SleepStage(rawValue: stageRaw) ?? .unknown }
+    var endAt: Date { startAt.addingTimeInterval(Double(durationMinutes) * 60) }
+}
+
+/// What the wearer did to one ring sleep record, remembered so a re-sync of the night can't undo
+/// it (Android `measurement_deletions` sleep rows, #78/#80). The import path rebuilds a night from
+/// the stages the ring re-sends, so deleting the stored blocks alone would last exactly one sync.
+///
+/// Matched on the absolute instant (`recordStartAt`), which a re-sent record reproduces exactly;
+/// `wakingDay` is kept alongside for inspection and export only.
+@Model
+final class SleepRecordEdit {
+    @Attribute(.unique) var id: UUID
+    /// The session's waking day (`SleepSession.date`) at the time of the edit.
+    var wakingDay: Date
+    /// `.recordDeleted`: the record's declared start. `.blockDeleted`: one deleted block's start.
+    var recordStartAt: Date
+    var kindRaw: String
+    /// `.edited`: the bounds the wearer picked, re-applied on every re-sync of the record.
+    var newStartAt: Date?
+    var newEndAt: Date?
+    var createdAt: Date
+
+    init(id: UUID = UUID(), wakingDay: Date, recordStartAt: Date, kind: SleepRecordEditKind,
+         newStartAt: Date? = nil, newEndAt: Date? = nil) {
+        self.id = id
+        self.wakingDay = wakingDay
+        self.recordStartAt = recordStartAt
+        self.kindRaw = kind.rawValue
+        self.newStartAt = newStartAt
+        self.newEndAt = newEndAt
+        self.createdAt = Date()
+    }
+
+    var kind: SleepRecordEditKind? { SleepRecordEditKind(rawValue: kindRaw) }
+}
+
+enum SleepRecordEditKind: String, Codable, CaseIterable {
+    /// The whole record was deleted: a re-send of it is dropped.
+    case recordDeleted = "record_deleted"
+    /// One block of a deleted record. Covers nights stored before records were stamped, where the
+    /// record's start is only a guess but every block start re-sends exactly.
+    case blockDeleted = "block_deleted"
+    /// The record's bounds were moved — trimmed, or extended over time the ring missed (#92/#130).
+    case edited
 }
 
 @Model
@@ -534,10 +618,14 @@ final class UserGoal {
 @Model
 final class DeviceMeasurementConfig {
     @Attribute(.unique) var deviceId: UUID
-    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps.
+    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps; YCBT rings 30…120
+    /// (`RingDeviceType.heartRateIntervalRange`).
     var hrIntervalMinutes: Int = 5
     var hrEnabled: Bool = true
     var spo2Enabled: Bool = true
+    /// All-day SpO₂ interval, minutes; `0` = follow the heart-rate interval (what every row did before
+    /// this existed, so the additive default is lossless).
+    var spo2IntervalMinutes: Int = 0
     var stressEnabled: Bool = true
     var hrvEnabled: Bool = true
     var temperatureEnabled: Bool = true
@@ -553,6 +641,7 @@ final class DeviceMeasurementConfig {
             hrEnabled: hrEnabled,
             hrIntervalMinutes: hrIntervalMinutes,
             spo2Enabled: spo2Enabled,
+            spo2IntervalMinutes: spo2IntervalMinutes,
             stressEnabled: stressEnabled,
             hrvEnabled: hrvEnabled,
             temperatureEnabled: temperatureEnabled

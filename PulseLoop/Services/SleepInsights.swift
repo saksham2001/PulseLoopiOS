@@ -66,7 +66,10 @@ enum SleepScore {
     }
 
     static func calculate(_ sleep: SleepSummary) -> SleepScoreResult {
-        let total = sleep.session.totalMinutes > 0 ? Double(sleep.session.totalMinutes) : 0
+        // Minutes the wearer added over time the ring missed are asleep but carry no stage, so the
+        // score judges the night the ring measured: they would dilute every stage share (#106).
+        let added = SleepRecords.addedMinutes(sleep.blocks)
+        let total = sleep.session.totalMinutes > 0 ? Double(max(0, sleep.session.totalMinutes - added)) : 0
         let deep = Double(max(0, sleep.deepMinutes))
         let light = Double(max(0, sleep.lightMinutes))
         let awake = Double(max(0, sleep.awakeMinutes))

@@ -112,6 +112,10 @@ struct RootAppView: View {
                     if UserDefaults.standard.bool(forKey: "openRecord") {
                         path.append(AppRoute.recordSelect)
                     }
+                    // Test tooling: `-openMetric hrv` opens that vital's detail screen.
+                    if let raw = UserDefaults.standard.string(forKey: "openMetric"), let metric = MetricKind(rawValue: raw) {
+                        path.append(AppRoute.metricDetail(metric))
+                    }
                 }
                 // Re-attach to an in-progress workout left running across launches.
                 liveWorkout.recover()

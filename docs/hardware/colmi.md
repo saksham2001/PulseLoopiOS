@@ -261,6 +261,35 @@ SmartHealth itself never requests. The R99 never answers that query at all — n
 PulseLoop gives up after its 10-second timeout and doesn't ask again until the ring reconnects. Each
 connection costs one 10-second wait, not one per sync.
 
+### Measurement intervals
+
+The SmartHealth-Colmi takes the same five `01 xx {enable, interval}` monitor writes as the TK5: heart rate
+every **30–120 minutes** (120 is past SmartHealth's own 60-minute menu, but a ring ACKed `01 0c 01 78` and
+logged at 10:00 and 12:00), every other monitor at most hourly. Blood oxygen can run on its **own** 30–60
+minute interval or follow heart rate — on at least one ring the interval byte is accepted and ignored, so
+SpO₂ stays on the heart-rate cadence. There is no stress toggle: YCBT has no stress monitor command.
+
+### Hourly SpO₂ estimated from heart rate
+
+On at least one SmartHealth-Colmi the **hourly** SpO₂ in the combined record is not a measurement: across
+304 records read off the ring, the same heart rate always came with the same SpO₂ (HR 48 → 88, 57 → 94,
+67–92 → 98, 105 → 96, never 99), so a night-time "dip" just follows a low sleeping heart rate. Its
+**spot** SpO₂ is real (red LED, readings up to 99).
+
+PulseLoop decides this **per ring, from its own data**, not per family — any YCBT ring qualifies. A
+history SpO₂ row is *hourly* only when a respiratory-rate row shares its exact timestamp (a spot
+record logs respiration 0, which is never stored), and hourly rows are labelled *estimated* only when,
+over the last 7 days, pairing each with the nearest heart-rate history row within 2 minutes gives at
+least 24 pairs, at least 12 repeated heart rates, more than one SpO₂ value, and **no** heart rate ever
+paired with two SpO₂ values. The SpO₂ card then carries an ESTIMATED chip and a note, the Today tile an
+amber "Estimated from heart rate" caption, and the detail chart a disclaimer. Stored data is unchanged.
+
+**Hide estimated SpO₂** (Settings → Vitals or Today, on by default for YCBT rings) drops those hourly
+estimates from every chart, card and "latest" value, leaving only real spot readings; turn it off to see
+them, labelled. Either way they are **never exported to Apple Health**. Neither is **respiratory rate**
+from any YCBT ring: the combined record's respiration byte is about 0.2 × heart rate, not a breathing
+measurement, so its Apple Health toggle is greyed out with that explanation.
+
 ### 🧪 Still unconfirmed
 
 **Sleep** is the one significant path no SmartHealth-Colmi has exercised yet. Everything else above is

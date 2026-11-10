@@ -23,14 +23,18 @@ final class RWfitActivityPersistence {
         switch event {
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):
             let row = day(timestamp)
-            row.steps = max(row.steps, steps)
-            row.distanceMeters = max(row.distanceMeters, distanceMeters)
-            row.calories = max(row.calories, calories)
+            // Net of any bucket the user deleted from this day (issue #70) — see `ActivityBucketDeletion`.
+            row.steps = ActivityBucketDeletion.ratchet(stored: row.steps, ring: steps, deleted: row.deletedSteps)
+            row.distanceMeters = ActivityBucketDeletion.ratchet(stored: row.distanceMeters, ring: distanceMeters,
+                                                                deleted: row.deletedDistanceMeters)
+            if row.deletedSteps == 0 && row.deletedDistanceMeters == 0 { row.calories = max(row.calories, calories) }
             row.source = "live"
             recordChange(row)
             return true
         case let .activityBucket(timestamp, steps, distanceMeters):
             let epoch = Int(timestamp.timeIntervalSince1970)
+            // A bucket the user deleted stays deleted (issue #70).
+            if MeasurementDeletionService.isActivityBucketDeleted(startEpoch: epoch, context: context) { return true }
             if let bucket = buckets.first(where: { $0.startEpoch == epoch }) {
                 bucket.steps = steps
                 bucket.distanceMeters = distanceMeters

@@ -85,6 +85,22 @@ enum CRPDecoder {
     /// `CRPHistoryDay` tops out at 14 days ago; a wilder value is a corrupt reply, not a real day.
     private static let maxHistoryDay = 14
     private static let maxSleepMinutes = 24 * 60
+    /// Hour the ring's sleep day turns over to the coming night (vendor `f4/e.h`: `20 <= HOUR_OF_DAY`).
+    /// Not `Calendar.sleepEveningBoundaryHour`'s 19, which is our own key for grouping stored sessions by
+    /// waking day; this one is the ring's boundary, read from the vendor.
+    static let sleepDayRolloverHour = 20
+    /// How close to `sleepDayRolloverHour` a sleep query is too close (see `nearSleepDayRollover`).
+    private static let rolloverGuardMinutes = 5
+
+    /// Whether `now` is within `rolloverGuardMinutes` of the 20:00 sleep-day turnover. A reply asked for
+    /// just before it and decoded just after (or from a ring clock a minute off the phone's) would be
+    /// dated against the wrong day and filed a day early; `CRPSyncEngine` skips sleep queries in this
+    /// window.
+    static func nearSleepDayRollover(_ now: Date, calendar: Calendar = .current) -> Bool {
+        let time = calendar.dateComponents([.hour, .minute], from: now)
+        let minute = (time.hour ?? 0) * 60 + (time.minute ?? 0)
+        return abs(minute - sleepDayRolloverHour * 60) < rolloverGuardMinutes
+    }
 
     /// `fdd1` push — little-endian 3-byte triples: [steps][distance][calories]. From `e1/k.b`.
     /// distance is metres, calories kcal (vendor units).
@@ -380,13 +396,16 @@ enum CRPDecoder {
     ///    (an in-progress sleep). We don't — a completed night always ends on an awake record, so the
     ///    only case affected is a sync taken mid-sleep, where showing the night up to the last real
     ///    transition beats inventing minutes up to "now".
-    ///  - Session-start anchoring is ours (the vendor keeps minute-of-day only and lets the UI place
-    ///    the date from `dayIndex`). We anchor the FIRST record on the wake day (`today − dayIndex`)
-    ///    from the actual midnight rollover in the transition sequence, then place later bouts by
+    ///  - Session-start anchoring is ours (the vendor keeps minute-of-day only). The wake day follows the
+    ///    vendor's dating: `t3/n.onHistorySleepChange` stamps a reply with the sync time, `f4/e.e` moves
+    ///    that to tomorrow from `sleepDayRolloverHour` on, and `j4/h.b` subtracts `dayIndex`. So after
+    ///    20:00 day 0 is the night about to begin and last night is day 1 — counting back from the
+    ///    phone's date alone filed every night synced after 8 PM a day early. The FIRST record is
+    ///    anchored on that wake day, rolled back to the evening before when the transition sequence
+    ///    crosses midnight or when it starts at or after the rollover hour (such sleep belongs to the
+    ///    next day's night, even in a reply that never crosses midnight). Later bouts are placed by
     ///    elapsed offset. Looking only at the final record fails when an overnight bout is followed by
     ///    another late-evening bout whose clock time is later than the first record.
-    ///    NOTE: assumes `dayIndex` is the WAKE day; verified against a post-midnight capture, but an
-    ///    evening-start night is not yet capture-confirmed.
     private static func decodeSleep(_ payload: [UInt8], now: Date, calendar: Calendar) -> [RingDecodedEvent] {
         // [dayIndex] + N*[state,hour,minute]; the vendor rejects any other shape outright.
         if payload.count < 4 || payload.count % 3 != 1 { return [] }
@@ -426,9 +445,12 @@ enum CRPDecoder {
         if transitions.count < 2 { return [] }
 
         // Anchor the first record; every bout is then just an offset from it.
-        let startOffset = firstMinuteOfDay - (crossedMidnight ? 1440 : 0)
-        guard let wakeDayStart = calendar.date(byAdding: .day, value: -dayIndex,
-                                               to: calendar.startOfDay(for: now)) else { return [] }
+        let startsTheEveningBefore = crossedMidnight || firstMinuteOfDay >= sleepDayRolloverHour * 60
+        let startOffset = firstMinuteOfDay - (startsTheEveningBefore ? 1440 : 0)
+        let today = calendar.startOfDay(for: now)
+        let ringDayOffset = calendar.component(.hour, from: now) >= sleepDayRolloverHour ? 1 : 0
+        guard let wakeDayStart = calendar.date(byAdding: .day, value: ringDayOffset - dayIndex,
+                                               to: today) else { return [] }
         let anchor = wakeDayStart.addingTimeInterval(Double(startOffset) * 60)
 
         // Pass 2: each transition's state runs until the next; split bouts on a long awake gap.

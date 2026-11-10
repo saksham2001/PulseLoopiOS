@@ -35,6 +35,9 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var batterySamples: [ArchiveBatterySample]
     var sleepSessions: [ArchiveSleepSession]
     var sleepStageBlocks: [ArchiveSleepStageBlock]
+    /// Sleep record deletion tombstones. Optional so archives written before it existed still
+    /// decode (as none).
+    var sleepRecordEdits: [ArchiveSleepRecordEdit]?
     var rawPackets: [ArchiveRawPacket]
     var derivedUpdates: [ArchiveDerivedUpdate]
     var userProfiles: [ArchiveUserProfile]
@@ -53,6 +56,10 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var coachNotificationRecords: [ArchiveCoachNotificationRecord]
     var coachSummaries: [ArchiveCoachSummary]
     var wearableLogs: [ArchiveWearableLog]
+    /// Deleted-reading tombstones (issue #60). Optional so archives written before tombstones existed
+    /// still decode; a restore must carry them, or the first sync after it resurrects every reading
+    /// the user deleted.
+    var measurementDeletions: [ArchiveMeasurementDeletion]? = nil
 
     /// Raw UserDefaults JSON blobs keyed by their storage key (metric prefs, workout prefs,
     /// calibration, coach settings, Apple Health prefs). Opaque pass-through — never re-encoded.
@@ -192,6 +199,9 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
     var syncedAt: Date?
     var createdAt: Date
     var updatedAt: Date
+    /// Issue #70 deletion deficit. Optional so older archives decode.
+    var deletedSteps: Int?
+    var deletedDistanceMeters: Double?
 
     @MainActor init(_ m: ActivityDaily) {
         id = m.id
@@ -204,6 +214,8 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
         syncedAt = m.syncedAt
         createdAt = m.createdAt
         updatedAt = m.updatedAt
+        deletedSteps = m.deletedSteps
+        deletedDistanceMeters = m.deletedDistanceMeters
     }
 
     @MainActor func insert(into context: ModelContext) {
@@ -218,6 +230,8 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
         m.syncedAt = syncedAt
         m.createdAt = createdAt
         m.updatedAt = updatedAt
+        m.deletedSteps = deletedSteps ?? 0
+        m.deletedDistanceMeters = deletedDistanceMeters ?? 0
         context.insert(m)
     }
 }
@@ -257,6 +271,24 @@ nonisolated struct ArchiveMeasurement: Codable, Sendable {
         m.rawPacketId = rawPacketId
         m.createdAt = createdAt
         context.insert(m)
+    }
+}
+
+nonisolated struct ArchiveMeasurementDeletion: Codable, Sendable {
+    var key: String
+    var kindRaw: String
+    var timestamp: Date
+    var deletedAt: Date
+
+    @MainActor init(_ m: MeasurementDeletion) {
+        key = m.key
+        kindRaw = m.kindRaw
+        timestamp = m.timestamp
+        deletedAt = m.deletedAt
+    }
+
+    @MainActor func insert(into context: ModelContext) {
+        context.insert(MeasurementDeletion(key: key, kindRaw: kindRaw, timestamp: timestamp, deletedAt: deletedAt))
     }
 }
 
@@ -321,6 +353,7 @@ nonisolated struct ArchiveSleepStageBlock: Codable, Sendable {
     var startMinute: Int
     var durationMinutes: Int
     var stageRaw: String
+    var recordStartAt: Date?
 
     @MainActor init(_ m: SleepStageBlock) {
         id = m.id
@@ -329,12 +362,43 @@ nonisolated struct ArchiveSleepStageBlock: Codable, Sendable {
         startMinute = m.startMinute
         durationMinutes = m.durationMinutes
         stageRaw = m.stageRaw
+        recordStartAt = m.recordStartAt
     }
 
     @MainActor func insert(into context: ModelContext) {
         let m = SleepStageBlock(sessionId: sessionId, startAt: startAt, startMinute: startMinute, durationMinutes: durationMinutes, stage: .unknown)
         m.id = id
         m.stageRaw = stageRaw
+        m.recordStartAt = recordStartAt
+        context.insert(m)
+    }
+}
+
+nonisolated struct ArchiveSleepRecordEdit: Codable, Sendable {
+    var id: UUID
+    var wakingDay: Date
+    var recordStartAt: Date
+    var kindRaw: String
+    var newStartAt: Date?
+    var newEndAt: Date?
+    var createdAt: Date
+
+    @MainActor init(_ m: SleepRecordEdit) {
+        id = m.id
+        wakingDay = m.wakingDay
+        recordStartAt = m.recordStartAt
+        kindRaw = m.kindRaw
+        newStartAt = m.newStartAt
+        newEndAt = m.newEndAt
+        createdAt = m.createdAt
+    }
+
+    @MainActor func insert(into context: ModelContext) {
+        let m = SleepRecordEdit(wakingDay: wakingDay, recordStartAt: recordStartAt, kind: .recordDeleted,
+                                newStartAt: newStartAt, newEndAt: newEndAt)
+        m.id = id
+        m.kindRaw = kindRaw
+        m.createdAt = createdAt
         context.insert(m)
     }
 }
@@ -509,6 +573,8 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
     var hrIntervalMinutes: Int
     var hrEnabled: Bool
     var spo2Enabled: Bool
+    /// Optional so archives written before the SpO₂ interval existed still decode (as "follow HR").
+    var spo2IntervalMinutes: Int?
     var stressEnabled: Bool
     var hrvEnabled: Bool
     var temperatureEnabled: Bool
@@ -519,6 +585,7 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
         hrIntervalMinutes = m.hrIntervalMinutes
         hrEnabled = m.hrEnabled
         spo2Enabled = m.spo2Enabled
+        spo2IntervalMinutes = m.spo2IntervalMinutes
         stressEnabled = m.stressEnabled
         hrvEnabled = m.hrvEnabled
         temperatureEnabled = m.temperatureEnabled
@@ -530,6 +597,7 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
         m.hrIntervalMinutes = hrIntervalMinutes
         m.hrEnabled = hrEnabled
         m.spo2Enabled = spo2Enabled
+        m.spo2IntervalMinutes = spo2IntervalMinutes ?? 0
         m.stressEnabled = stressEnabled
         m.hrvEnabled = hrvEnabled
         m.temperatureEnabled = temperatureEnabled

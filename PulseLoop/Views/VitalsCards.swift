@@ -38,6 +38,14 @@ struct VitalChartCard: View {
                         ).color
                     }
                 )
+                // The ESTIMATED chip says *that*; this says what, and that a spot reading is still a
+                // measurement (`EstimatedSpO2`).
+                if model.metric == .spo2 && model.isEstimated {
+                    Text(EstimatedSpO2.note)
+                        .font(PulseFont.caption.weight(.regular))
+                        .foregroundStyle(PulseColors.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }

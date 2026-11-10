@@ -85,7 +85,7 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | Heart rate — live | 🧪 | — | verified against the capture (climbed 82→86) |
 | Heart rate — history | 🧪 | — | `05 06` query, 6-byte records |
 | SpO₂ — spot | 🧪 | — | red/IR LED, `03 2f` mode `02` |
-| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants. A ring that never answers the `05 1A` query is asked once per connection (see [below](#how-pulseloop-diverges-from-smarthealth)) |
+| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants. A ring that never answers the `05 1A` query is asked once per connection (see [below](#how-pulseloop-diverges-from-smarthealth)). Hourly All-record rows are labelled *estimated* when this ring's own data show them to be a fixed function of heart rate ([how](colmi.md#hourly-spo2-estimated-from-heart-rate)) |
 | Steps / distance / calories | 🧪 | distance & calories byte offsets in the `06 00` live push | live push + `05 02` history buckets + the All record's cumulative counter |
 | Sleep (light / deep / awake) | 🧪 | — | `05 04` timeline; stage = `tag & 0x0F` |
 | REM sleep | 🧪 | — | stage tag `3` — a stage *inside* the timeline `ISHASSLEEP` grants, so no bit names it and it is not gated |
@@ -96,11 +96,11 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | Stress | 🔓 | — | ring-declared (`IS_HAS_PRESSURE`, byte 22 bit 6). **Ring-stored**, from the body-data record (`05 33`) — the SDK's `pressure` field |
 | Fatigue | 🔓 | — | ring-declared on the **same bit as stress**: no `ISHASFATIGUE` exists, but the vendor app gates the whole `05 33` query on `IS_HAS_PRESSURE`, and fatigue (the SDK's `body` field) is a field of that one record. No body data ⇒ neither score |
 | Blood sugar | 🔓 | **one real reading — the scale is inferred, not observed** | ring-declared (`ISHASBLOODSUGAR`, byte 17 bit 3). All record @17 and the comprehensive record (`05 2F`); tenths of mmol/L → mg/dL |
-| Respiratory rate | 🧪 | — | All record @10 |
+| Respiratory rate | 🧪 | — | All record @10 — about 0.2 × heart rate, so it is shown in PulseLoop but never exported to Apple Health |
 | VO₂max | 🧪 | raw byte taken unscaled | body-data record @16 |
 | Battery level | 🧪 | — | in-band: `02 00` reply payload[5], plus the unprompted `06 15` push |
 | Find device | 🧪 | **the command's three payload bytes** | `03 00 {01, 05, 02}` — the app's literal arguments; the SDK never names them |
-| Measurement intervals | 🧪 | — | five `01 xx {enable, interval}` monitors; floored at the firmware's 30-min minimum |
+| Measurement intervals | 🧪 | — | five `01 xx {enable, interval}` monitors; floored at the firmware's 30-min minimum; heart rate runs 30–120 min (`01 0c 01 78` = 120 min, hardware-verified on a SmartHealth ring), every other monitor at most hourly. Blood oxygen can take its own 30–60 min interval (`01 26`) or follow heart rate; one ring ACKed the byte and kept SpO₂ on the heart-rate cadence anyway. No stress toggle — YCBT has no stress monitor command |
 | Periodic re-sync while connected | ✅ | — | every 30 min (SmartHealth's own cadence), plus a post-workout vitals pass |
 | Continuous background sync | ❌ | — | the ring is only read while connected |
 | FW update via app | ❌ | — | out of scope — would require the JieLi RCSP auth (see below) |

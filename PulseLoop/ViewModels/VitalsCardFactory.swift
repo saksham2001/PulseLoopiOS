@@ -11,11 +11,16 @@ enum VitalsCardFactory {
         var spo2: [MetricSample] = []
         var hrv: [MetricSample] = []
         var stress: [MetricSample] = []
+        /// `stress` was derived from HRV because the ring reports none (issue #67). Never unlabelled.
+        var stressIsDerived = false
         var fatigue: [MetricSample] = []
         var temperature: [MetricSample] = []
         var systolic: [MetricSample] = []
         var diastolic: [MetricSample] = []
         var glucose: [MetricSample] = []
+        /// The SpO₂ series holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
+        /// Spot readings never set it.
+        var spo2Estimated: Bool = false
         var summary: TodaySummary?
         var range: MetricRange = .twentyFourHours
         var now: Date = Date()
@@ -86,7 +91,7 @@ enum VitalsCardFactory {
             referenceBands: [ReferenceBand(lower: 95, upper: 100, colorToken: .cyan)],
             dashedRules: [92],
             trend: TrendSummary.compute(samples: chart, metric: .spo2, unitLabel: "%"),
-            sourceQuality: quality, isEstimated: false, confidenceLabel: nil,
+            sourceQuality: quality, isEstimated: inputs.spo2Estimated, confidenceLabel: nil,
             lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
             isEmpty: samples.count < 2
         )
@@ -136,7 +141,8 @@ enum VitalsCardFactory {
         let quality = SourceQualityResolver.quality(for: metric, latest: samples.last?.timestamp, now: inputs.now, calibration: cal)
         let interp = latest.map { VitalsThresholdEngine.interpret(value: $0, metric: metric, profile: profile) }
         let chart = ChartSampleBuilder.from(samples, quality: quality)
-        let subtitle = metric == .stress ? "Lower is calmer" : "Ring model estimate"
+        let derived = metric == .stress && inputs.stressIsDerived
+        let subtitle = derived ? "Estimated from HRV" : (metric == .stress ? "Lower is calmer" : "Ring model estimate")
         return VitalCardViewModel(
             metric: metric, title: metric.title,
             valueText: latest.map { "\(Int($0))" } ?? "--", unitText: nil,
@@ -145,7 +151,7 @@ enum VitalsCardFactory {
             samples: chart, zones: VitalsThresholdEngine.zones(for: metric, profile: profile),
             yDomain: 0...100, referenceBands: [], dashedRules: [],
             trend: TrendSummary.compute(samples: chart, metric: metric),
-            sourceQuality: quality, isEstimated: false, confidenceLabel: nil,
+            sourceQuality: quality, isEstimated: derived, confidenceLabel: derived ? "Estimated from HRV" : nil,
             lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
             isEmpty: latest == nil
         )

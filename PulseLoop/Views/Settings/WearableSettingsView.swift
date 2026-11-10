@@ -61,11 +61,56 @@ struct WearableSettingsView: View {
                         SecondaryButton(title: "Forget ring", systemImage: "trash") { ble.forget() }
                     }
                 }
+                SleepTrimmingSection()
             }
             .padding()
         }
         .background(PulseColors.background)
         .pageChrome("Wearable")
+    }
+}
+
+/// "Sleep trimming" (Android #79/#80): the opt-in quiet-hours schedule. When on, imported sleep is
+/// trimmed to the clock window and a long waking inside it no longer splits the night. The rationale
+/// lives on `SleepQuietHours`; this is just the switch and the two times.
+private struct SleepTrimmingSection: View {
+    @State private var store = SleepQuietHoursStore.shared
+
+    private var enabled: Binding<Bool> {
+        Binding(get: { store.prefs.enabled }, set: { store.prefs.enabled = $0 })
+    }
+
+    /// A clock-time binding over minutes-of-day, on an arbitrary reference day.
+    private func time(_ keyPath: WritableKeyPath<SleepQuietHours, Int>) -> Binding<Date> {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: Date())
+        return Binding(
+            get: { day.addingTimeInterval(Double(store.prefs[keyPath: keyPath]) * 60) },
+            set: { store.prefs[keyPath: keyPath] = SleepQuietHours.minuteOfDay($0, calendar: calendar) }
+        )
+    }
+
+    var body: some View {
+        SettingsGroup(
+            header: "Sleep trimming",
+            footer: "A still wrist reads as sleep, so an evening on the sofa can run the night high. "
+                + (store.prefs.enabled
+                    ? "Only sleep inside this schedule is kept, and naps outside it are skipped. "
+                    : "")
+                + "Trimmed minutes are never imported — changing these later won't bring them back."
+        ) {
+            FormToggleRow(title: "Sleep quiet hours", isOn: enabled)
+            if store.prefs.enabled {
+                FormValueRow(title: "From") {
+                    DatePicker("From", selection: time(\.startMinutes), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                }
+                FormValueRow(title: "Until") {
+                    DatePicker("Until", selection: time(\.endMinutes), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                }
+            }
+        }
     }
 }
 
@@ -98,16 +143,21 @@ private struct BatteryHistorySection: View {
                 .fixedSize()
             }
             FormField {
-                if samples.count >= 2 {
-                    ZoneLineChart(
-                        samples: samples,
-                        metric: .heartRate,          // axis styling only; battery uses its own domain + colors
-                        yDomain: 0...100,
-                        range: range,
-                        showAxes: true,
-                        height: 160,
-                        colorForValue: color(for:)
-                    )
+                if samples.count >= 2, let first = samples.first, let last = samples.last {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ZoneLineChart(
+                            samples: samples,
+                            metric: .heartRate,          // axis styling only; battery uses its own domain + colors
+                            yDomain: 0...100,
+                            range: range,
+                            showAxes: true,
+                            height: 160,
+                            // Day boundaries on 7d, six-hour marks on 24h (Android #65).
+                            verticalGridlines: BatteryProjection.gridlines(start: first.timestamp, end: last.timestamp),
+                            colorForValue: color(for:)
+                        )
+                        runtimeEstimate
+                    }
                 } else {
                     Text("Not enough data yet — battery history builds up as your ring reports its level.")
                         .font(.system(size: 13))
@@ -120,6 +170,28 @@ private struct BatteryHistorySection: View {
         .onAppear(perform: reload)
         .onChange(of: range) { _, _ in reload() }
         .onChange(of: dataChange.token) { _, _ in reload() }
+    }
+
+    /// "About 1d 16h left", or an honest silence. Fitted over the current discharge run rather than the
+    /// window, because a week of history almost always contains a charge (`BatteryProjection`). Worded
+    /// as an estimate because it is one: a straight line through past drain, which knows nothing about a
+    /// day that measures more often than the last.
+    @ViewBuilder private var runtimeEstimate: some View {
+        if let estimate = BatteryProjection.estimate(samples.map { .init(timestamp: $0.timestamp, percent: $0.value) }) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("About \(estimate.label) left")
+                    .font(PulseFont.subheadline.weight(.semibold))
+                    .foregroundStyle(PulseColors.textPrimary)
+                Text(String(format: "Estimated from the current discharge at %.1f %%/h.", estimate.percentPerHour))
+                    .font(.caption).foregroundStyle(PulseColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        } else {
+            Text("Not enough of a trend to estimate runtime yet — it appears after a few hours of discharge.")
+                .font(.caption).foregroundStyle(PulseColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func reload() {

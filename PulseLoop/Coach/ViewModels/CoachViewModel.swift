@@ -12,6 +12,9 @@ final class CoachViewModel {
 
     var traceEvents: [CoachTraceEvent] = []
     var isSending = false
+    /// The conversation the in-flight turn belongs to, so the live trace shows only
+    /// on that thread — not on one the user switched to (or started) mid-turn.
+    var sendingConversationId: UUID?
     var errorBanner: String?
 
     private let keyStore: APIKeyStore
@@ -48,9 +51,10 @@ final class CoachViewModel {
         // Allow image-only sends: require either text or an attachment.
         guard !(trimmed.isEmpty && attachments.isEmpty), !isSending else { return }
         isSending = true
+        sendingConversationId = conversationId
         traceEvents = []
         errorBanner = nil
-        defer { isSending = false }
+        defer { isSending = false; sendingConversationId = nil }
 
         // Optimistically persist the user message so the UI shows it immediately.
         let userMessage = CoachMessage(
@@ -136,6 +140,9 @@ final class CoachViewModel {
     // MARK: - Persistence
 
     private func persist(_ result: CoachOrchestrator.TurnResult, conversationId: UUID, context: ModelContext, flags: CoachFeatureFlags) {
+        // Deleted from history while the provider was answering: storing the reply
+        // would leave orphan rows (and half a turn) behind for a thread that's gone.
+        guard fetchConversation(conversationId, context: context) != nil else { return }
         // A failed turn surfaces as a red error bubble (role "error") carrying the
         // code + reason, instead of the generic assistant fallback. Failed turns
         // still burned tokens, so usage rides on the error message too.

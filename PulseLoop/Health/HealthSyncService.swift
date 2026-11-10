@@ -216,10 +216,26 @@ final class HealthSyncService {
         let rows = (try? context.fetch(descriptor)) ?? []
         guard !rows.isEmpty else { return }
 
+        // Estimates never leave PulseLoop: hourly SpO₂ the ring computed from heart rate, and the
+        // respiratory rate a YCBT ring derives from it. Skipped rows still advance the watermark — they
+        // are a verdict, not a failure, so there is nothing to retry.
+        var estimatedSpO2: Set<Date> = []
+        if kind == .spo2, let first = rows.map(\.timestamp).min(), let last = rows.map(\.timestamp).max() {
+            estimatedSpO2 = EstimatedSpO2.estimatedTimestamps(from: first, to: last, now: now, context: context)
+        }
+        let respiratoryRateDerived = kind == .respiratoryRate
+            && HealthKitTypeMappings.derivesRespiratoryRate(DeviceRepository.current(context: context)?.deviceType)
+
         // Chunk of 1,000 per save; advance the watermark after each successful chunk so an interrupted
         // backfill resumes and re-runs stay harmless (upsert).
         for chunk in rows.chunked(into: 1000) {
-            let samples = chunk.compactMap { vitalSample(row: $0, mapping: mapping, kindRaw: raw, now: now, device: device) }
+            let samples = chunk
+                .filter {
+                    HealthKitTypeMappings.shouldExport(kind: kind, value: $0.value, timestamp: $0.timestamp,
+                                                       estimatedSpO2: estimatedSpO2,
+                                                       respiratoryRateDerived: respiratoryRateDerived)
+                }
+                .compactMap { vitalSample(row: $0, mapping: mapping, kindRaw: raw, now: now, device: device) }
             if !samples.isEmpty {
                 try await save(samples)
                 counts.vitals += samples.count
@@ -529,6 +545,39 @@ final class HealthSyncService {
         guard isAvailable, !isRunningUnitTests else { return }
         let syncID = HealthKitTypeMappings.workoutSyncID(sessionID: sessionId)
         Task { await self.deleteWorkout(syncID: syncID) }
+    }
+
+    /// Fire-and-forget removal of one exported vital reading the user deleted locally. Every exported
+    /// reading carries a deterministic sync identifier (kind + instant), so the sample is found without
+    /// any local bookkeeping; a reading that was never exported simply matches nothing. Blood pressure
+    /// is a correlation (keyed by instant) whose two halves carry no metadata of their own, so those are
+    /// matched by type, source and their exact instant.
+    func deleteExportedVital(kind: MeasurementKind, timestamp: Date) {
+        guard isAvailable, !isRunningUnitTests else { return }
+        let sourcePredicate = HKQuery.predicateForObjects(from: HKSource.default())
+        func scoped(_ predicate: NSPredicate) -> NSPredicate {
+            NSCompoundPredicate(andPredicateWithSubpredicates: [sourcePredicate, predicate])
+        }
+        switch kind {
+        case .bloodPressureSystolic, .bloodPressureDiastolic:
+            guard let correlation = HKCorrelationType.correlationType(forIdentifier: .bloodPressure),
+                  let systolic = HKQuantityType.quantityType(forIdentifier: .bloodPressureSystolic),
+                  let diastolic = HKQuantityType.quantityType(forIdentifier: .bloodPressureDiastolic) else { return }
+            let syncID = HealthKitTypeMappings.bloodPressureSyncID(timestamp: timestamp)
+            let byID = scoped(HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [syncID]))
+            let atInstant = scoped(HKQuery.predicateForSamples(withStart: timestamp, end: timestamp,
+                                                               options: [.strictStartDate, .strictEndDate]))
+            Task {
+                await self.deleteOwnObjects(of: correlation, predicate: byID)
+                await self.deleteOwnObjects(of: systolic, predicate: atInstant)
+                await self.deleteOwnObjects(of: diastolic, predicate: atInstant)
+            }
+        default:
+            guard let mapping = HealthKitTypeMappings.quantityMapping(for: kind) else { return }
+            let syncID = HealthKitTypeMappings.vitalsSyncID(kindRaw: kind.rawValue, timestamp: timestamp)
+            let byID = scoped(HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [syncID]))
+            Task { await self.deleteOwnObjects(of: mapping.type, predicate: byID) }
+        }
     }
 
     private func deleteWorkout(syncID: String) async {

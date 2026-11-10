@@ -102,16 +102,27 @@ struct ZoneLineChart: View {
     /// Zone boundaries (y-values) where the line color may change. The line is split at each crossing
     /// so a piece never spans two zones. Empty = no splitting (whole-segment color).
     var thresholds: [Double] = []
+    /// Faint vertical rules at these instants (e.g. day boundaries on a week of battery history).
+    var verticalGridlines: [Date] = []
     /// Injected from the threshold engine: maps a value to the color its segment should take.
     let colorForValue: (Double) -> Color
+    /// A fixed x-axis span (a detail screen's whole calendar window, issue #102), so the hours the ring
+    /// wasn't worn read as gaps instead of the axis shrinking to first→last reading. Nil = fit the data.
+    var xDomain: ClosedRange<Date>? = nil
 
     private var timeDomain: ClosedRange<Date>? {
+        if let xDomain { return xDomain }
         guard let first = samples.first?.timestamp, let last = samples.last?.timestamp, first < last else { return nil }
         return first...last
     }
 
     var body: some View {
         Chart {
+            ForEach(verticalGridlines, id: \.self) { mark in
+                RuleMark(x: .value("Grid", mark))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .foregroundStyle(PulseColors.borderSubtle)
+            }
             ForEach(referenceBands) { band in
                 RectangleMark(
                     yStart: .value("Band low", band.lower),

@@ -131,13 +131,24 @@ private struct GroupedRowLayout: _VariadicView.MultiViewRoot {
 struct FormToggleRow: View {
     let title: String
     @Binding var isOn: Bool
+    /// Optional muted hint under the title (e.g. a provider caveat).
+    var hint: String? = nil
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            Text(title).font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
+                if let hint {
+                    Text(hint)
+                        .font(PulseFont.caption.weight(.regular))
+                        .foregroundStyle(PulseColors.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16)
+        .padding(.vertical, hint == nil ? 0 : 10)
         .frame(minHeight: 50)
     }
 }

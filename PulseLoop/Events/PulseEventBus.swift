@@ -216,7 +216,7 @@ final class EventPersistenceSubscriber {
                         $0.kindRaw == kind.rawValue && $0.timestamp == timestamp && $0.sourceRaw == MeasurementSource.history.rawValue
                     }) {
                         row.value = value
-                    } else {
+                    } else if !MeasurementDeletionService.isDeleted(kind: kind, timestamp: timestamp, context: context) {
                         let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: .history)
                         context.insert(row)
                         measurements.append(row)
@@ -232,7 +232,8 @@ final class EventPersistenceSubscriber {
                     // a swallowed fetch on the destructive-import path.
                     let sessions = try context.fetch(FetchDescriptor<SleepSession>())
                     let blocks = try context.fetch(FetchDescriptor<SleepStageBlock>())
-                    persistSleepTimeline(start: timestamp, stages: stages, sessions: sessions, blocks: blocks)
+                    let edits = try context.fetch(FetchDescriptor<SleepRecordEdit>())
+                    persistSleepTimeline(start: timestamp, stages: stages, sessions: sessions, blocks: blocks, edits: edits)
                 } else {
                     applyPersist(event)
                 }
@@ -485,6 +486,10 @@ final class EventPersistenceSubscriber {
     /// valid identity. Live samples keep append semantics (two readings a second apart are two events).
     private func persistMeasurement(kind: MeasurementKind, value: Double, timestamp: Date, source: MeasurementSource, kindLabel: String) {
         if source == .history, isDuplicateHistory(kind: kind, value: value, timestamp: timestamp) { return }
+        // A reading the user deleted (issue #60). The ring replays its log on every re-sync, so without
+        // this gate the next sync would restore exactly what was removed. Checked only for a row about
+        // to be inserted — a duplicate already returned above without touching the tombstones.
+        if MeasurementDeletionService.isDeleted(kind: kind, timestamp: timestamp, context: context) { return }
         let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: source)
         context.insert(row)
         context.insert(DerivedUpdateRow(kind: kindLabel, entityType: "measurement", entityId: row.id.uuidString))
@@ -574,14 +579,35 @@ final class EventPersistenceSubscriber {
     /// recomputing session bounds. The ring streams ~20 timeline packets (15 samples each) per
     /// night, so blocks must accumulate into one session rather than spawning a session per
     /// packet. Mirrors `persistence._on_sleep_timeline`.
+    ///
+    /// Each packet is one ring record: its blocks are stamped with `start` as their
+    /// `recordStartAt` so the Day view can recover the records behind a merged night, and the
+    /// wearer's deletions and edits (`SleepRecordEdit`) are applied before anything is written.
     private func persistSleepTimeline(start: Date, stages: [SleepStage],
-                                      sessions: [SleepSession]? = nil, blocks: [SleepStageBlock]? = nil) {
+                                      sessions: [SleepSession]? = nil, blocks: [SleepStageBlock]? = nil,
+                                      edits: [SleepRecordEdit]? = nil) {
         let calendar = Calendar.current
+
+        // Deletion gate (Android #78/#80): a record the wearer deleted comes back with the same
+        // start and the same block starts on every re-send, so drop it here or the delete lasts
+        // exactly one sync.
+        let tombstones = SleepRecordTombstones(edits ?? ((try? context.fetch(FetchDescriptor<SleepRecordEdit>())) ?? []))
+        guard !tombstones.isRecordDeleted(start) else { return }
+
+        // Quiet-hours gate (Android #79/#80), opt-in and off by default: the record is trimmed to the
+        // minutes inside the wearer's clock window before any write — the still-wrist/sofa case —
+        // rather than judged by its start, since the ring often runs the sofa hour and the real night
+        // as one record. Read per record, so a settings change applies from the next packet. Trimmed
+        // minutes are never written. The record keeps its declared start as its identity.
+        guard let kept = SleepQuietHours.load().keptMinutes(start: start, count: stages.count, calendar: calendar)
+        else { return }
+        let keptStart = start.addingTimeInterval(Double(kept.lowerBound) * 60)
+        let keptStages = Array(stages[kept])
 
         // Group packets by the waking-day boundary (sleep from 7 PM rolls to the next morning) so a
         // night that starts before midnight lands under the morning of waking. See
         // `Calendar.wakingDay(forSleepStart:)`.
-        let dateKey = calendar.wakingDay(forSleepStart: start)
+        let dateKey = calendar.wakingDay(forSleepStart: keptStart)
 
         // Attach this packet's per-minute blocks to the day's container session (create one if the
         // day is empty), deduping by block start across every session on the day. Then hand off to
@@ -589,9 +615,32 @@ final class EventPersistenceSubscriber {
         // (main night vs. naps separated by a >= 60 min gap) and recomputes each session's bounds.
         let allSessions = sessions ?? ((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
         let daySessions = allSessions.filter { calendar.isDate($0.date, inSameDayAs: dateKey) }
+        let daySessionIds = Set(daySessions.map { $0.id })
+        var existingDayBlocks = (blocks ?? ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []))
+            .filter { daySessionIds.contains($0.sessionId) }
+
+        var recordBlocks = SleepRecords.stageBlocks(start: keptStart, stages: keptStages, recordStartAt: start)
+        if let edit = tombstones.editedBounds(start) {
+            // Edit gate (Android #92/#130): the wearer's bounds for this record, re-applied through
+            // the same function the edit used, so this sync reproduces the edit's blocks exactly —
+            // trimming, and re-creating any minutes they added. Added minutes give way to any other
+            // record already stored: the ring's measurement beats an extension.
+            let ringEnd = keptStart.addingTimeInterval(Double(keptStages.count) * 60)
+            let bounds = SleepRecordExtension.clampToNeighbours(
+                editStart: edit.start, editEnd: edit.end, measuredStart: keptStart, measuredEnd: ringEnd,
+                others: existingDayBlocks.filter { $0.recordStartAt.map(SleepRecords.key) != SleepRecords.key(start) },
+                night: SleepRecordExtension.nightWindow(wakingDay: dateKey, calendar: calendar))
+            guard let edited = SleepRecordExtension.editedBlocks(recordBlocks, gridOrigin: start,
+                                                                 editStart: bounds.start, editEnd: bounds.end)
+            else { return }
+            recordBlocks = edited
+        }
+        recordBlocks = recordBlocks.filter { !tombstones.isBlockDeleted($0.startAt) }
+        guard !recordBlocks.isEmpty else { return }
+
         let container = daySessions.min { $0.startAt < $1.startAt }
             ?? {
-                let new = SleepSession(date: dateKey, startAt: start, endAt: start, totalMinutes: 0, syncedAt: Date())
+                let new = SleepSession(date: dateKey, startAt: keptStart, endAt: keptStart, totalMinutes: 0, syncedAt: Date())
                 context.insert(new)
                 return new
             }()
@@ -599,32 +648,44 @@ final class EventPersistenceSubscriber {
         // Rows to hand `reconcileWakingDay` (a just-created container isn't in `daySessions` yet).
         let sessionsForDay = daySessions.contains(where: { $0.id == container.id }) ? daySessions : daySessions + [container]
 
-        let daySessionIds = Set(sessionsForDay.map { $0.id })
-        let existingDayBlocks = (blocks ?? ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []))
-            .filter { daySessionIds.contains($0.sessionId) }
+        // The other direction of "the ring beats an extension": minutes another record had added
+        // over time this record measured are trimmed back to its edge.
+        let measured = recordBlocks.filter { $0.stage != .added }
+        if let measuredStart = measured.map(\.startAt).min(), let measuredEnd = measured.map(\.endAt).max() {
+            for block in existingDayBlocks where block.stage == .added
+                && block.recordStartAt.map(SleepRecords.key) != SleepRecords.key(start)
+                && block.startAt < measuredEnd && block.endAt > measuredStart {
+                let remainder = SleepRecordExtension.addedRemainder(of: block, outside: measuredStart, measuredEnd)
+                context.delete(block)
+                existingDayBlocks.removeAll { $0.id == block.id }
+                for piece in remainder {
+                    context.insert(piece)
+                    existingDayBlocks.append(piece)
+                }
+            }
+        }
         if mergingRWfitSleep {
             // A recovered journal may extend or overlap an already-imported session. Normalize by
             // minute so a shorter previously saved block cannot suppress the rest of a replay.
-            var minuteStages: [Date: SleepStage] = [:]
-            for block in existingDayBlocks {
+            struct Minute: Equatable { let stage: SleepStage; let recordStartAt: Date? }
+            var minutes: [Date: Minute] = [:]
+            for block in existingDayBlocks + recordBlocks {
                 for minute in 0..<max(0, block.durationMinutes) {
-                    minuteStages[block.startAt.addingTimeInterval(Double(minute) * 60)] = block.stage
+                    minutes[block.startAt.addingTimeInterval(Double(minute) * 60)] =
+                        Minute(stage: block.stage, recordStartAt: block.recordStartAt)
                 }
             }
-            for (minute, stage) in stages.enumerated() {
-                minuteStages[start.addingTimeInterval(Double(minute) * 60)] = stage
-            }
             for block in existingDayBlocks { context.delete(block) }
-            let dates = minuteStages.keys.sorted()
             var merged: [SleepStageBlock] = []
-            for date in dates {
-                guard let stage = minuteStages[date] else { continue }
-                if let last = merged.last, last.stage == stage,
-                   last.startAt.addingTimeInterval(Double(last.durationMinutes) * 60) == date {
+            for date in minutes.keys.sorted() {
+                guard let minute = minutes[date] else { continue }
+                if let last = merged.last, last.stage == minute.stage, last.recordStartAt == minute.recordStartAt,
+                   last.endAt == date {
                     last.durationMinutes += 1
                 } else {
-                    let block = SleepStageBlock(sessionId: container.id, startAt: date,
-                                                startMinute: 0, durationMinutes: 1, stage: stage)
+                    let block = SleepStageBlock(sessionId: container.id, startAt: date, startMinute: 0,
+                                                durationMinutes: 1, stage: minute.stage,
+                                                recordStartAt: minute.recordStartAt)
                     context.insert(block)
                     merged.append(block)
                 }
@@ -633,24 +694,12 @@ final class EventPersistenceSubscriber {
                                             daySessions: sessionsForDay, dayBlocks: merged)
             return
         }
-        var existingStarts = Set(existingDayBlocks.map { $0.startAt })
+        let existingStarts = Set(existingDayBlocks.map { $0.startAt })
         var newBlocks: [SleepStageBlock] = []
-
-        var offset = 0
-        while offset < stages.count {
-            let stage = stages[offset]
-            var duration = 1
-            while offset + duration < stages.count, stages[offset + duration] == stage {
-                duration += 1
-            }
-            let blockStart = calendar.date(byAdding: .minute, value: offset, to: start) ?? start
-            if !existingStarts.contains(blockStart) {
-                let block = SleepStageBlock(sessionId: container.id, startAt: blockStart, startMinute: 0, durationMinutes: duration, stage: stage)
-                context.insert(block)
-                newBlocks.append(block)
-                existingStarts.insert(blockStart)
-            }
-            offset += duration
+        for block in recordBlocks where !existingStarts.contains(block.startAt) {
+            block.sessionId = container.id
+            context.insert(block)
+            newBlocks.append(block)
         }
 
         // Hand the in-memory rows + blocks (incl. the ones just inserted, unsaved under the

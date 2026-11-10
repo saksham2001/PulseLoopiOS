@@ -66,6 +66,10 @@ struct PulseLoopApp: App {
         // future-dated rows that would otherwise permanently become "today").
         ActivityService.migrateGarbageActivityIfNeeded(context: container.mainContext)
 
+        // One-time repair of LuckRing days whose running-total sport records were summed as buckets.
+        // Waits for an identified ring, so it retries on later launches until one is paired.
+        ActivityService.repairLuckRingActivityIfNeeded(context: container.mainContext)
+
         // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
         SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
 

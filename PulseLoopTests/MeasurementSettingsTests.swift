@@ -41,6 +41,47 @@ final class MeasurementSettingsTests: XCTestCase {
         XCTAssertTrue(settings.hrvEnabled)
     }
 
+    /// The SpO₂ interval defaults to 0 ("follow heart rate") and rides the projection to the engine.
+    func testSpO2IntervalDefaultsToFollowHeartRateAndProjects() {
+        let config = DeviceMeasurementConfig(deviceId: UUID())
+        XCTAssertEqual(config.spo2IntervalMinutes, 0)
+        XCTAssertEqual(MeasurementSettings.allOnDefault.spo2IntervalMinutes, 0)
+        config.spo2IntervalMinutes = 45
+        XCTAssertEqual(config.asSettings.spo2IntervalMinutes, 45)
+    }
+
+    /// YCBT rings take 30–120 min heart-rate intervals (Android #103); every other family keeps 5–60.
+    /// The separate SpO₂ interval is offered where the ring's SpO₂ command carries its own byte.
+    func testIntervalBoundsFollowTheRingProtocol() {
+        for type in RingDeviceType.allCases {
+            let ycbt = [.tk5, .colmiSmartHealth, .ycbt].contains(type)
+            XCTAssertEqual(type.speaksYCBT, ycbt, "\(type)")
+            XCTAssertEqual(type.heartRateIntervalRange, ycbt ? 30...120 : 5...60, "\(type)")
+            XCTAssertEqual(type.supportsSeparateSpO2Interval, ycbt || type == .crp, "\(type)")
+        }
+    }
+
+    func testSettingsScreenClampSnapsToTheFiveMinuteGridInsideTheRange() {
+        XCTAssertEqual(MeasurementSettingsView.clamped(5, to: 30...120), 30)
+        XCTAssertEqual(MeasurementSettingsView.clamped(120, to: 30...120), 120)
+        XCTAssertEqual(MeasurementSettingsView.clamped(118, to: 30...120), 115)
+        XCTAssertEqual(MeasurementSettingsView.clamped(120, to: 5...60), 60)
+    }
+
+    func testArchivedConfigRoundTripsTheSpO2IntervalAndToleratesItsAbsence() throws {
+        let config = DeviceMeasurementConfig(deviceId: UUID())
+        config.spo2IntervalMinutes = 45
+        let data = try JSONEncoder().encode(ArchiveDeviceMeasurementConfig(config))
+        let decoded = try JSONDecoder().decode(ArchiveDeviceMeasurementConfig.self, from: data)
+        XCTAssertEqual(decoded.spo2IntervalMinutes, 45)
+
+        var legacy = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        legacy.removeValue(forKey: "spo2IntervalMinutes")
+        let old = try JSONDecoder().decode(ArchiveDeviceMeasurementConfig.self,
+                                           from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.spo2IntervalMinutes)
+    }
+
     func testConfigRepositoryUpsertsOnce() throws {
         let context = try TestSupport.makeContext()
         let deviceId = UUID()

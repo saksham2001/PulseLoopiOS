@@ -98,7 +98,8 @@ final class TodayStore {
             MetricsService.metricRange(metric: metric, range: .twentyFourHours, context: modelContext, scope: .today)
         }
         let hr = series(.heartRate)
-        let spo2 = series(.spo2)
+        let spo2Series = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext, scope: .today)
+        let spo2 = spo2Series.samples
         let hrv = series(.hrv)
         let stress = series(.stress)
         let fatigue = series(.fatigue)
@@ -118,6 +119,7 @@ final class TodayStore {
             hr: hr, spo2: spo2, hrv: hrv,
             stress: stress, fatigue: fatigue, temperature: temperature,
             systolic: systolic, diastolic: diastolic, glucose: glucose,
+            spo2Estimated: spo2Series.isEstimated,
             summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric
         )
         var result: [MetricKind: VitalCardViewModel] = [:]
@@ -162,7 +164,7 @@ final class TodayStore {
         // signature and the next refresh rebuilds — otherwise a hide/show or chart-detail change
         // wouldn't take effect on the tab until an unrelated sync bumped the signature.
         let p = MetricPrefsStore.shared.settings
-        let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)"
+        let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)/\(p.hideEstimatedSpO2)"
 
         // The daily goal targets feed the rings tile (via `goalsSummary`) but aren't otherwise
         // observed, so a goal edit must change the signature or the rings keep filling against the

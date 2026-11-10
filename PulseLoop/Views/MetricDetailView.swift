@@ -2,10 +2,10 @@ import SwiftUI
 import SwiftData
 import Charts
 
-/// Tap-through detail for one vitals metric: period selector, a full-axis zone chart, stat tiles,
-/// a threshold legend, an explainer, and a disclaimer for estimated metrics. Re-fetches through the
-/// existing `MetricsService.metricRange` (the same fetch path the dashboard uses) when the period
-/// changes — no new data plumbing.
+/// Tap-through detail for one vitals metric: period selector, a calendar-period stepper, a zone chart
+/// spanning the whole period, stat tiles, the deletable readings list, a threshold legend, an
+/// explainer, and a disclaimer for estimated metrics. Each period is a calendar window (`VitalPeriods`):
+/// a day is midnight→midnight, a week the 7 days ending on the shown day, a month the calendar month.
 struct MetricDetailView: View {
     let metric: MetricKind
     @Binding var path: NavigationPath
@@ -13,9 +13,24 @@ struct MetricDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [UserProfile]
 
-    @State private var period: DetailPeriod = .today
+    @State private var period: VitalPeriod = .day
+    /// Start of the shown window; see `VitalPeriods`. Reset to the latest window on a period change.
+    @State private var anchor: Date = VitalPeriods.latestAnchor(.day, now: Date())
+    @State private var earliestReading: Date?
+    /// HRV's baseline on a Day: the 24 h ending at the window's end (a calendar day holds too few
+    /// readings early on to establish one).
+    @State private var hrvBaselineSamples: [MetricSample] = []
+    /// The stress chart is derived from HRV: the ring has never reported stress (issue #67).
+    @State private var stressIsDerived = false
     @State private var primary: [MetricSample] = []
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
+    /// The SpO₂ window holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
+    @State private var spo2Estimated = false
+    /// The window's stored readings, newest first — the deletable list under the chart (issue #60).
+    @State private var readings: [VitalReading] = []
+    @State private var readingsExpanded = false
+    @State private var readingsVisible = Self.readingsPageSize
+    @State private var pendingDelete: VitalReading?
     /// Observed so the detail chart/tiles re-fetch when a background sync lands while this is open.
     @State private var dataChange = PulseDataChange.shared
 
@@ -48,48 +63,71 @@ struct MetricDetailView: View {
         }
     }
 
-    enum DetailPeriod: String, CaseIterable, Identifiable {
-        case today = "Today"
-        case week = "Week"
-        case month = "Month"
-        var id: String { rawValue }
-        var range: MetricRange {
-            switch self {
-            case .today: return .twentyFourHours
-            case .week: return .sevenDays
-            case .month: return .thirtyDays
-            }
-        }
+    private var window: DateInterval { VitalPeriods.window(period, anchor: anchor) }
+    private var latestAnchor: Date { VitalPeriods.latestAnchor(period, now: Date()) }
+    private var canGoNewer: Bool { anchor < latestAnchor }
+    /// Back while the previous window still reaches the earliest stored reading (one-year floor).
+    private var canGoOlder: Bool {
+        guard let earliestReading else { return false }
+        let floor = max(earliestReading, Calendar.current.date(byAdding: .day, value: -365, to: Date()) ?? earliestReading)
+        return window.start > floor
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 periodSelector
-                chartSection
-                statTiles
-                legend
-                explainer
-                if isEstimatedMetric { disclaimer }
+                // Outside the cards' glass container: merged into it, the chevrons' glass discs
+                // draw over their own glyphs.
+                PeriodNavigationHeader(
+                    labels: PeriodNavLabels.labels(period, anchor: anchor),
+                    canGoOlder: canGoOlder, canGoNewer: canGoNewer,
+                    olderLabel: "Previous \(period.rawValue.lowercased())",
+                    newerLabel: "Next \(period.rawValue.lowercased())",
+                    onOlder: { stepPeriod(-1) }, onNewer: { stepPeriod(1) },
+                    animationValue: anchor
+                )
+                VStack(alignment: .leading, spacing: 18) {
+                    chartSection
+                    statTiles
+                    readingsCard
+                    legend
+                    explainer
+                    if isEstimatedMetric { disclaimer }
+                }
+                // Stacked glass cards share one container so their glass renders/blends consistently.
+                .pulseGlassContainer(spacing: 18)
             }
             .padding(16)
             .padding(.bottom, 40)
-            // Stacked glass cards share one container so their glass renders/blends consistently.
-            .pulseGlassContainer(spacing: 18)
         }
         .background(PulseColors.background)
         // Shared glass chrome: centered title + glass back button, no system nav
         // bar (so the zoom transition doesn't reflow the content).
         .pageChrome(metric.title)
-        .task(id: period) { reload() }
+        .onChange(of: period) { _, newPeriod in anchor = VitalPeriods.latestAnchor(newPeriod, now: Date()) }
+        .task(id: "\(period.rawValue)-\(anchor.timeIntervalSince1970)") {
+            readingsVisible = Self.readingsPageSize
+            reload()
+        }
+        .sensoryFeedback(.selection, trigger: anchor)
         .onChange(of: dataChange.token) { _, _ in reload() }
+        .alert("Delete this reading?", isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
+        ), presenting: pendingDelete) { reading in
+            Button("Delete", role: .destructive) { delete(reading) }
+            Button("Cancel", role: .cancel) {}
+        } message: { reading in
+            Text("\(readingText(reading))\(unitLabel.isEmpty ? "" : " \(unitLabel)") at \(readingTime(reading.timestamp)).\n\n"
+                 + "This can't be undone, and the reading stays deleted the next time your ring syncs.")
+        }
     }
 
     // MARK: - Period selector
 
     private var periodSelector: some View {
         Picker("Period", selection: $period) {
-            ForEach(DetailPeriod.allCases) { Text($0.rawValue).tag($0) }
+            ForEach(VitalPeriod.allCases) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
     }
@@ -108,7 +146,9 @@ struct MetricDetailView: View {
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if chart.count < 2 {
+            // One reading is enough once the axis spans the whole period (issue #102) — a once-a-day
+            // metric's Day would otherwise never chart.
+            if chart.isEmpty {
                 Text("Not enough data for this period.")
                     .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
@@ -129,7 +169,9 @@ struct MetricDetailView: View {
                     colorForValue: { value in
                         // Samples are in display units; color lookup needs canonical units.
                         VitalsThresholdEngine.colorToken(forValue: toRaw(value), metric: metric, profile: profile, baseline: baseline).color
-                    }
+                    },
+                    // The whole period, so time the ring wasn't worn shows as a gap (issue #102).
+                    xDomain: window.start...window.end
                 )
             }
         }
@@ -156,8 +198,20 @@ struct MetricDetailView: View {
                     .foregroundStyle(PulseColors.bloodPressure.opacity(0.5))
                     .interpolationMethod(.monotone)
             }
+            // Points too: a lone reading in a sparse period has no line to draw.
+            if sys.count < 8 {
+                ForEach(sys) { s in
+                    PointMark(x: .value("Time", s.timestamp), y: .value("Systolic", s.value))
+                        .foregroundStyle(PulseColors.bloodPressure).symbolSize(30)
+                }
+                ForEach(dia) { s in
+                    PointMark(x: .value("Time", s.timestamp), y: .value("Diastolic", s.value))
+                        .foregroundStyle(PulseColors.bloodPressure.opacity(0.5)).symbolSize(30)
+                }
+            }
         }
         .chartYScale(domain: lo...hi)
+        .chartXScale(domain: window.start...window.end)
         .frame(height: 200)
     }
 
@@ -201,6 +255,113 @@ struct MetricDetailView: View {
 
     private var statDivider: some View {
         Rectangle().fill(PulseColors.borderSubtle).frame(width: 1, height: 34)
+    }
+
+    // MARK: - Readings
+
+    /// How many readings the list shows before asking for more — a Month of all-day history is
+    /// thousands of rows, and someone scanning for one bad measurement reads a page.
+    private static let readingsPageSize = 50
+
+    /// The window's individual readings with a delete per row (issue #60). Deletion only — a recorded
+    /// value can be removed, never edited — and always behind a confirmation.
+    private var readingsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(PulseMotion.spring) { readingsExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("READINGS").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                    Spacer()
+                    Text("\(readings.count)").font(PulseFont.caption).monospacedDigit().foregroundStyle(PulseColors.textMuted)
+                    Image(systemName: readingsExpanded ? "chevron.up" : "chevron.down")
+                        .font(PulseFont.caption.weight(.semibold))
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                .padding(16)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Readings, \(readings.count)")
+            .accessibilityHint(readingsExpanded ? "Hides the readings" : "Shows the readings")
+
+            if readingsExpanded {
+                if readings.isEmpty {
+                    Text(stressIsDerived
+                         ? "Estimated stress isn't stored — it's worked out from your HRV readings, so there's nothing here to delete."
+                         : "No readings in this period.")
+                        .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
+                        .padding(.horizontal, 16).padding(.bottom, 14)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(readings.prefix(readingsVisible)) { reading in
+                            readingRow(reading)
+                        }
+                    }
+                    if readings.count > readingsVisible {
+                        Button("Show \(min(Self.readingsPageSize, readings.count - readingsVisible)) more") {
+                            readingsVisible += Self.readingsPageSize
+                        }
+                        .font(PulseFont.footnote.weight(.semibold))
+                        .foregroundStyle(PulseColors.accent)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                    }
+                    Spacer().frame(height: 6)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+    }
+
+    private func readingRow(_ reading: VitalReading) -> some View {
+        HStack(spacing: 6) {
+            Text(readingTime(reading.timestamp))
+                .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(readingText(reading))
+                .font(PulseFont.footnote.weight(.semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+            if !unitLabel.isEmpty {
+                Text(unitLabel).font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted)
+            }
+            if reading.isEstimated {
+                Text("Estimated")
+                    .font(PulseFont.caption2.weight(.semibold))
+                    .foregroundStyle(PulseColors.warning)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(PulseColors.warning.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
+            Button { pendingDelete = reading } label: {
+                Image(systemName: "trash")
+                    .font(PulseFont.footnote)
+                    .foregroundStyle(PulseColors.textMuted)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete reading \(readingText(reading)) at \(readingTime(reading.timestamp))")
+        }
+        .padding(.leading, 16).padding(.trailing, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func readingText(_ reading: VitalReading) -> String {
+        let primary = fmt(toDisplay(reading.value))
+        guard let secondary = reading.secondary else { return primary }
+        return "\(primary)/\(fmt(toDisplay(secondary)))"
+    }
+
+    private func readingTime(_ date: Date) -> String {
+        period == .day
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+    }
+
+    private func delete(_ reading: VitalReading) {
+        VitalReadings.delete(reading, context: modelContext)
+        pendingDelete = nil
+        reload()
     }
 
     // MARK: - Legend
@@ -255,18 +416,51 @@ struct MetricDetailView: View {
     // MARK: - Data
 
     private func reload() {
-        if metric == .bloodPressure {
-            primary = MetricsService.metricRange(metric: .bloodPressureSystolic, range: period.range, context: modelContext)
-            secondary = MetricsService.metricRange(metric: .bloodPressureDiastolic, range: period.range, context: modelContext)
-        } else {
-            primary = MetricsService.metricRange(metric: metric.metricKey, range: period.range, context: modelContext)
-            secondary = []
+        let window = window
+        let kind = VitalReadings.primaryKind(for: metric)
+        func fetch(_ kind: MeasurementKind, _ start: Date, _ end: Date) -> [MetricSample] {
+            MetricsService.measurementWindow(kind: kind, start: start, end: end, range: period.range, context: modelContext)
         }
+        if metric == .spo2 {
+            // Estimated hourly SpO₂ is hidden or flagged by the same rule as the card (`EstimatedSpO2`).
+            let series = MetricsService.spo2Series(start: window.start, end: window.end, range: period.range,
+                                                   context: modelContext)
+            primary = series.samples
+            spo2Estimated = series.isEstimated
+        } else {
+            primary = fetch(kind, window.start, window.end)
+            spo2Estimated = false
+        }
+        // Same gate as the Vitals card, so a filled card never opens onto an empty chart.
+        stressIsDerived = false
+        let derivesStress = metric == .stress && MetricsService.mayDeriveStress(context: modelContext)
+        if derivesStress, primary.isEmpty {
+            let derived = MetricsService.derivedStress(start: window.start, end: window.end, context: modelContext)
+            primary = MetricsService.displaySamples(derived, range: period.range)
+            stressIsDerived = !primary.isEmpty
+        }
+        secondary = metric == .bloodPressure ? fetch(.bloodPressureDiastolic, window.start, window.end) : []
+        if metric == .hrv, period == .day {
+            let end = min(Date(), window.end)
+            hrvBaselineSamples = fetch(.hrv, end.addingTimeInterval(-86_400), end)
+        } else {
+            hrvBaselineSamples = primary
+        }
+        // Derived stress pages as far back as the HRV it comes from.
+        earliestReading = MetricsRepository.oldestMeasurementTimestamp(kind: derivesStress ? .hrv : kind, context: modelContext)
+        readings = VitalReadings.load(metric: metric, start: window.start, end: window.end, context: modelContext)
     }
 
-    /// HRV detail can compute a real baseline because Week/Month fetch enough history.
+    private func stepPeriod(_ steps: Int) {
+        let target = VitalPeriods.step(period, anchor: anchor, by: steps)
+        guard steps < 0 ? canGoOlder : canGoNewer else { return }
+        withAnimation(PulseMotion.spring) { anchor = min(target, latestAnchor) }
+    }
+
+    /// HRV detail can compute a real baseline because Week/Month fetch enough history (and a Day
+    /// borrows the 24 h ending at the shown day's end).
     private var baselineForChart: BaselineStats? {
-        metric == .hrv ? BaselineStats.compute(primary) : nil
+        metric == .hrv ? BaselineStats.compute(hrvBaselineSamples) : nil
     }
 
     private func detailBands(baseline: BaselineStats?) -> [ReferenceBand] {
@@ -290,7 +484,8 @@ struct MetricDetailView: View {
         if metric == .spo2 { return 88...100 }
         if metric == .stress || metric == .fatigue { return 0...100 }
         let values = samples.map(\.value).filter { $0 > 0 }
-        guard let lo = values.min(), let hi = values.max(), lo < hi else { return 0...100 }
+        guard let lo = values.min(), let hi = values.max() else { return 0...100 }
+        if lo == hi { return (lo - 10)...(hi + 10) }
         let pad = (hi - lo) * 0.1 + 1
         return (lo - pad)...(hi + pad)
     }
@@ -315,7 +510,7 @@ struct MetricDetailView: View {
     }
 
     private var isEstimatedMetric: Bool {
-        metric == .glucose
+        metric == .glucose || (metric == .spo2 && spo2Estimated) || stressIsDerived
     }
 
     private var explainerText: String {
@@ -353,6 +548,11 @@ struct MetricDetailView: View {
         case .glucose:
             return "Estimated wellness metric — not for dosing or diabetes decisions. No smart ring or watch is "
                 + "FDA-authorized to measure or estimate glucose on its own."
+        case .spo2:
+            return EstimatedSpO2.disclaimer
+        case .stress where stressIsDerived:
+            return "Estimated from HRV — your ring doesn't measure stress. Scored against your own recent HRV "
+                + "readings, so it says how this reading compares with your normal, not how you compare with anyone else."
         case .bloodPressure:
             return "Ring blood pressure is an estimate. Calibrate against a validated cuff in Settings → Calibration, "
                 + "and talk to a clinician about persistent high or low readings."
