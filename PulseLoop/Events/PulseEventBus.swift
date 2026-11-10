@@ -588,12 +588,22 @@ final class EventPersistenceSubscriber {
         // start and the same block starts on every re-send, so drop it here or the delete lasts
         // exactly one sync.
         let tombstones = SleepRecordTombstones(edits ?? ((try? context.fetch(FetchDescriptor<SleepRecordEdit>())) ?? []))
-        guard !tombstones.isRecordDeleted(start), !stages.isEmpty else { return }
+        guard !tombstones.isRecordDeleted(start) else { return }
+
+        // Quiet-hours gate (Android #79/#80), opt-in and off by default: the record is trimmed to the
+        // minutes inside the wearer's clock window before any write — the still-wrist/sofa case —
+        // rather than judged by its start, since the ring often runs the sofa hour and the real night
+        // as one record. Read per record, so a settings change applies from the next packet. Trimmed
+        // minutes are never written. The record keeps its declared start as its identity.
+        guard let kept = SleepQuietHours.load().keptMinutes(start: start, count: stages.count, calendar: calendar)
+        else { return }
+        let keptStart = start.addingTimeInterval(Double(kept.lowerBound) * 60)
+        let keptStages = Array(stages[kept])
 
         // Group packets by the waking-day boundary (sleep from 7 PM rolls to the next morning) so a
         // night that starts before midnight lands under the morning of waking. See
         // `Calendar.wakingDay(forSleepStart:)`.
-        let dateKey = calendar.wakingDay(forSleepStart: start)
+        let dateKey = calendar.wakingDay(forSleepStart: keptStart)
 
         // Attach this packet's per-minute blocks to the day's container session (create one if the
         // day is empty), deduping by block start across every session on the day. Then hand off to
@@ -605,15 +615,15 @@ final class EventPersistenceSubscriber {
         var existingDayBlocks = (blocks ?? ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []))
             .filter { daySessionIds.contains($0.sessionId) }
 
-        var recordBlocks = SleepRecords.stageBlocks(start: start, stages: stages)
+        var recordBlocks = SleepRecords.stageBlocks(start: keptStart, stages: keptStages, recordStartAt: start)
         if let edit = tombstones.editedBounds(start) {
             // Edit gate (Android #92/#130): the wearer's bounds for this record, re-applied through
             // the same function the edit used, so this sync reproduces the edit's blocks exactly —
             // trimming, and re-creating any minutes they added. Added minutes give way to any other
             // record already stored: the ring's measurement beats an extension.
-            let ringEnd = start.addingTimeInterval(Double(stages.count) * 60)
+            let ringEnd = keptStart.addingTimeInterval(Double(keptStages.count) * 60)
             let bounds = SleepRecordExtension.clampToNeighbours(
-                editStart: edit.start, editEnd: edit.end, measuredStart: start, measuredEnd: ringEnd,
+                editStart: edit.start, editEnd: edit.end, measuredStart: keptStart, measuredEnd: ringEnd,
                 others: existingDayBlocks.filter { $0.recordStartAt.map(SleepRecords.key) != SleepRecords.key(start) },
                 night: SleepRecordExtension.nightWindow(wakingDay: dateKey, calendar: calendar))
             guard let edited = SleepRecordExtension.editedBlocks(recordBlocks, gridOrigin: start,
@@ -626,7 +636,7 @@ final class EventPersistenceSubscriber {
 
         let container = daySessions.min { $0.startAt < $1.startAt }
             ?? {
-                let new = SleepSession(date: dateKey, startAt: start, endAt: start, totalMinutes: 0, syncedAt: Date())
+                let new = SleepSession(date: dateKey, startAt: keptStart, endAt: keptStart, totalMinutes: 0, syncedAt: Date())
                 context.insert(new)
                 return new
             }()

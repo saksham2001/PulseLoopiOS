@@ -12,9 +12,13 @@ enum SleepSegmentation {
     static let sessionGapMinutes = 60
 
     /// Group blocks into chronological sessions, splitting wherever the gap from one
-    /// block's end to the next block's start is >= `sessionGapMinutes`. Input need not
-    /// be sorted. Returns time-ordered groups; empty in -> empty out.
-    static func segment(_ blocks: [SleepStageBlock]) -> [[SleepStageBlock]] {
+    /// block's end to the next block's start is >= `sessionGapMinutes`, unless `bridge` says the
+    /// wearer's quiet-hours window spans it (Android #105). Input need not be sorted. Returns
+    /// time-ordered groups; empty in -> empty out.
+    ///
+    /// Every writer of sessions — the sync's reconcile and the record editor's restate — must pass
+    /// the same bridge, or an edit would split a night the next sync merges back.
+    static func segment(_ blocks: [SleepStageBlock], bridge: SleepGapBridge = .none) -> [[SleepStageBlock]] {
         let sorted = blocks.sorted { $0.startAt < $1.startAt }
         guard let firstBlock = sorted.first else { return [] }
         let gapSeconds = Double(sessionGapMinutes) * 60
@@ -22,7 +26,7 @@ enum SleepSegmentation {
         var current: [SleepStageBlock] = [firstBlock]
         var prevEnd = firstBlock.startAt.addingTimeInterval(Double(firstBlock.durationMinutes) * 60)
         for block in sorted.dropFirst() {
-            if block.startAt.timeIntervalSince(prevEnd) >= gapSeconds {
+            if block.startAt.timeIntervalSince(prevEnd) >= gapSeconds, !bridge.bridges(prevEnd, block.startAt) {
                 groups.append(current)
                 current = [block]
             } else {
@@ -34,6 +38,65 @@ enum SleepSegmentation {
         }
         groups.append(current)
         return groups
+    }
+}
+
+/// Whether a gap of `SleepSegmentation.sessionGapMinutes` or more between two runs of sleep is still
+/// one night (Android #105, `SleepGapBridge`).
+///
+/// The hour-gap rule keeps a nap apart from the night, but it also split a night whose wearer lay
+/// awake for 72 minutes between two ring records, both inside their quiet hours. The wearer's own
+/// window is better evidence than the gap's length, so a gap wholly inside it is bridged: the two
+/// parts stay one session and the gap reads as "Awake Xm between" records.
+struct SleepGapBridge {
+    let bridges: (_ gapStart: Date, _ gapEnd: Date) -> Bool
+
+    static let none = SleepGapBridge { _, _ in false }
+
+    /// The bridge for the stored quiet-hours schedule. Reads it once.
+    static func fromSettings(calendar: Calendar = .current) -> SleepGapBridge {
+        forSchedule(SleepQuietHours.load(), calendar: calendar)
+    }
+
+    /// Bridges a gap whose every minute lies inside the clock window — only while the schedule is on.
+    /// A window whose start equals its end means "trimming off", not "asleep all day": bridging under
+    /// it would merge an afternoon nap into the night, so it bridges nothing. Nor does a gap of a day
+    /// or more.
+    static func forSchedule(_ quiet: SleepQuietHours, calendar: Calendar = .current) -> SleepGapBridge {
+        let (start, end) = (quiet.startMinutes, quiet.endMinutes)
+        guard quiet.enabled, start != end, !(start == 0 && end >= 24 * 60) else { return .none }
+        func covered(_ date: Date) -> Bool {
+            SleepQuietHours.covers(start: start, end: end, minuteOfDay: SleepQuietHours.minuteOfDay(date, calendar: calendar))
+        }
+        return SleepGapBridge { gapStart, gapEnd in
+            guard gapEnd > gapStart, gapEnd.timeIntervalSince(gapStart) < 24 * 3600 else { return false }
+            var t = gapStart
+            while t < gapEnd {
+                if !covered(t) { return false }
+                t = t.addingTimeInterval(60)
+            }
+            return covered(gapEnd.addingTimeInterval(-0.001))
+        }
+    }
+
+    /// This bridge, plus every gap a stored session already holds open. A session holds an hour-plus
+    /// gap only because a bridge allowed it when the night was written, so re-segmenting after a
+    /// delete or edit must keep it whole even if the schedule changed since (no re-sync can re-merge
+    /// a night the ring no longer has). `sessions` are the stored sessions' blocks, one group each:
+    /// a gap is kept when it lies inside one session's span and none of its blocks overlaps it — so
+    /// a gap a deleted record leaves behind is judged afresh, and the gap to a separate nap isn't kept.
+    func keepingGaps(of sessions: [[SleepStageBlock]]) -> SleepGapBridge {
+        // Snapshot the intervals now: the caller may delete some of these blocks before segmenting.
+        let spans: [(start: Date, end: Date, blocks: [(start: Date, end: Date)])] = sessions.compactMap { blocks in
+            guard let start = blocks.map(\.startAt).min(), let end = blocks.map(\.endAt).max() else { return nil }
+            return (start, end, blocks.map { ($0.startAt, $0.endAt) })
+        }
+        return SleepGapBridge { gapStart, gapEnd in
+            bridges(gapStart, gapEnd) || spans.contains { span in
+                span.start <= gapStart && gapEnd <= span.end
+                    && !span.blocks.contains { $0.start < gapEnd && $0.end > gapStart }
+            }
+        }
     }
 }
 
@@ -54,9 +117,13 @@ extension SleepService {
     /// hot path (it holds the objects already, including its just-inserted blocks — which a
     /// predicated re-fetch couldn't see before the coalesced `save()`); the migration passes
     /// per-day slices of a single up-front fetch. When omitted, both are fetched here.
+    ///
+    /// `bridge` decides which hour-plus gaps still belong to one night; it defaults to the stored
+    /// quiet-hours schedule (`SleepGapBridge.fromSettings`).
     static func reconcileWakingDay(dateKey: Date, context: ModelContext,
                                    daySessions injectedSessions: [SleepSession]? = nil,
-                                   dayBlocks injectedBlocks: [SleepStageBlock]? = nil) {
+                                   dayBlocks injectedBlocks: [SleepStageBlock]? = nil,
+                                   bridge: SleepGapBridge? = nil) {
         let calendar = Calendar.current
         let day = calendar.startOfDay(for: dateKey)
         let now = Date()
@@ -74,7 +141,7 @@ extension SleepService {
                 .filter { daySessionIds.contains($0.sessionId) }
         }
 
-        let rawSegments = SleepSegmentation.segment(dayBlocks)
+        let rawSegments = SleepSegmentation.segment(dayBlocks, bridge: bridge ?? .fromSettings())
 
         // No blocks left on this day — drop the empty rows entirely.
         guard !rawSegments.isEmpty else {

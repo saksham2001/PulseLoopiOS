@@ -40,7 +40,8 @@ enum DataArchiveService {
         "pulseloop.workoutprefs.v1",
         "pulseloop.calibration.v1",
         "pulseloop.coach.settings.v1",
-        "pulseloop.applehealth.prefs.v1"
+        "pulseloop.applehealth.prefs.v1",
+        SleepQuietHours.storageKey
     ]
 
     /// Rows processed between `Task.yield()`s while mapping models to DTOs during export.

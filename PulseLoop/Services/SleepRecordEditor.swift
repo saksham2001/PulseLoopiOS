@@ -73,9 +73,7 @@ enum SleepRecordEditor {
         remember(.recordDeleted, run.recordStartAt)
         for block in run.blocks { remember(.blockDeleted, block.startAt) }
 
-        let removed = Set(run.blocks.map(\.id))
-        for block in run.blocks { context.delete(block) }
-        restate(day: day, removing: removed, context: context)
+        restate(day: day, removing: run.blocks, context: context)
         return true
     }
 
@@ -119,13 +117,8 @@ enum SleepRecordEditor {
         context.insert(SleepRecordEdit(wakingDay: day, recordStartAt: run.recordStartAt, kind: .edited,
                                        newStartAt: bounds.start, newEndAt: bounds.end))
 
-        let removed = Set(run.blocks.map(\.id))
-        for block in run.blocks { context.delete(block) }
-        for block in edited {
-            block.sessionId = sessionId
-            context.insert(block)
-        }
-        restate(day: day, removing: removed, adding: edited, context: context)
+        for block in edited { block.sessionId = sessionId }
+        restate(day: day, removing: run.blocks, adding: edited, context: context)
         return true
     }
 
@@ -135,20 +128,29 @@ enum SleepRecordEditor {
         }
     }
 
-    /// Re-derive waking day `day` from its blocks less `removing` (plus `adding`), then stamp the surviving rows as
-    /// changed (a deleted middle record leaves the bounds where they were, which reconcile alone
-    /// would treat as no change) and recompute any stored score. Saves and signals the UI.
-    static func restate(day: Date, removing: Set<UUID>, adding: [SleepStageBlock] = [], context: ModelContext) {
+    /// Replace `removing` with `adding` and re-derive waking day `day` from the result, then stamp
+    /// the surviving rows as changed (a deleted middle record leaves the bounds where they were,
+    /// which reconcile alone would treat as no change) and recompute any stored score. Saves and
+    /// signals the UI.
+    static func restate(day: Date, removing: [SleepStageBlock], adding: [SleepStageBlock] = [], context: ModelContext) {
         let calendar = Calendar.current
         let daySessions = ((try? context.fetch(FetchDescriptor<SleepSession>())) ?? [])
             .filter { calendar.isDate($0.date, inSameDayAs: day) }
         let ids = Set(daySessions.map(\.id))
-        // `adding` is passed explicitly: a fetch need not see blocks inserted since the last save.
-        let added = Set(adding.map(\.id))
-        let dayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
-            .filter { ids.contains($0.sessionId) && !removing.contains($0.id) && !added.contains($0.id) } + adding
+        let stored = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? []).filter { ids.contains($0.sessionId) }
+        // Segment with the sync's own bridge, plus every gap the stored nights already hold: a gap a
+        // quiet-hours window bridged when the night was written stays bridged whatever the schedule
+        // says today, or this restate would split a night no re-sync can merge back.
+        let bridge = SleepGapBridge.fromSettings()
+            .keepingGaps(of: Array(Dictionary(grouping: stored, by: \.sessionId).values))
+
+        let removed = Set(removing.map(\.id))
+        for block in removing { context.delete(block) }
+        for block in adding { context.insert(block) }
+        // `adding` is passed on explicitly: a fetch need not see blocks inserted since the last save.
+        let dayBlocks = stored.filter { !removed.contains($0.id) } + adding
         SleepService.reconcileWakingDay(dateKey: day, context: context,
-                                        daySessions: daySessions, dayBlocks: dayBlocks)
+                                        daySessions: daySessions, dayBlocks: dayBlocks, bridge: bridge)
         try? context.save()
 
         let now = Date()
