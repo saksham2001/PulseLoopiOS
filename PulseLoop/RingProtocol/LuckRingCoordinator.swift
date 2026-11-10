@@ -39,8 +39,18 @@ final class LuckRingCoordinator: WearableCoordinator {
     }
 
     /// The baseline the LuckRing driver can decode: live + history HR, live + history SpO₂ (with the all-day
-    /// log), day steps, sleep, HRV, temperature, blood pressure, stress, and the in-band battery, plus the
+    /// log), day steps, sleep, temperature, blood pressure, stress, and the in-band battery, plus the
     /// find-device buzz. All are unconditional promises — every metric maps onto a `LuckRing*` decoder path.
+    ///
+    /// **HRV is deliberately omitted.** The ring does send one HRV byte per reading (types 45 live / 42
+    /// history), and the decoder reads it exactly as the vendor SDK's `K6_HeartStruct` does — but nothing
+    /// shows it is HRV in milliseconds. A TK18 sent 107–168 across one evening (masking the top bit didn't
+    /// help), and no packet carries beat-to-beat intervals to compute HRV from. The official LuckRing app
+    /// (1.6.3) stores the byte without ever displaying it: every HRV screen there shows
+    /// `AppUtils.getRomHrv()`, a random number from the user's age band. So `LuckRingDriver` drops the byte,
+    /// the history pass no longer requests it, and without `.hrv` the HRV card and everything keyed on it
+    /// stay hidden for this family. Capabilities are re-stamped on every connect, so no migration is needed;
+    /// HRV rows already stored are kept.
     ///
     /// **`bitmapGatedCapabilities` is empty on purpose.** The K6 `FUNCTION_CONTROL` (dataType 22) bitmap is
     /// obfuscated in the decompile, so no capability can yet be deferred to the connected unit; the whole
@@ -52,7 +62,6 @@ final class LuckRingCoordinator: WearableCoordinator {
         .spo2, .manualSpo2, .spo2History,
         .steps, .realtimeSteps,
         .sleep, .battery,
-        .hrv, .manualHrv,
         .temperature,
         .bloodPressure, .manualBloodPressure,
         .stress,

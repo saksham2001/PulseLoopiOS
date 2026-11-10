@@ -47,6 +47,41 @@ final class LuckRingDriverTests: XCTestCase {
         XCTAssertEqual(percent, 90)
     }
 
+    // MARK: HRV omitted
+
+    /// The ring's HRV byte isn't HRV in any usable sense (`LuckRingCoordinator.capabilities`): live (45)
+    /// and history (42) frames are still ACKed and still decodable, but never surface as readings.
+    func testHrvFramesAreAckedButNeverSurfaceAsReadings() {
+        let writer = FakeWriter()
+        let driver = LuckRingDriver(writer: writer)
+        // One `[time u32 LE][value u8]` record behind the `[total u16][items u8]` envelope; 141 is one of
+        // the TK18 readings that prompted this.
+        let record: [UInt8] = [5, 0, 1, 0x80, 0x4F, 0x09, 0x69, 141]
+
+        for (seq, type) in [LuckRingDataType.realHRV, LuckRingDataType.historyHRV].enumerated() {
+            let frame = LuckRingFrame(cmdType: .send, dataType: type, payload: record, seq: UInt8(seq), devType: 2)
+            let decoded = LuckRingDecoder().decode(frame, now: Date(timeIntervalSince1970: 1_762_217_000))
+            XCTAssertTrue(decoded.contains { Self.isHrv($0) }, "the decoder still reads type \(type)")
+            let events = driver.ingest(packets(frame)[0], from: notify)
+            XCTAssertFalse(events.contains { Self.isHrv($0) }, "type \(type) must not yield HRV, got \(events)")
+        }
+        XCTAssertEqual(writer.sent.count, 2, "each HRV SEND is still ACKed")
+    }
+
+    func testLuckRingDeclaresNoHrvCapability() {
+        let caps = LuckRingCoordinator().capabilities
+        XCTAssertFalse(caps.contains(.hrv))
+        XCTAssertFalse(caps.contains(.manualHrv))
+    }
+
+    private static func isHrv(_ event: RingDecodedEvent) -> Bool {
+        switch event {
+        case .hrvSample: return true
+        case let .historyMeasurement(kind, _, _): return kind == .hrv
+        default: return false
+        }
+    }
+
     func testDeviceAckIsNotAcked() {
         let writer = FakeWriter()
         let driver = LuckRingDriver(writer: writer)

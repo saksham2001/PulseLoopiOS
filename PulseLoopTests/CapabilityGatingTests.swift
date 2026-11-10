@@ -23,18 +23,18 @@ final class CapabilityGatingTests: XCTestCase {
 
     /// The LuckRing / TK18 baseline surfaces its metric cards — but deliberately not blood sugar, REM
     /// staging, fatigue, or a combined-vitals sweep (the K6 protocol has no command or record for any
-    /// of them).
+    /// of them), nor HRV (the ring's byte isn't HRV in ms; see `LuckRingCoordinator.capabilities`).
     func testLuckRingSurfacesItsBaselineButNotTheExcludedMetrics() throws {
         let context = try TestSupport.makeContext()
         let ring = Device(deviceType: .luckRing, capabilities: LuckRingCoordinator().capabilities)
         context.insert(ring)
         try context.save()
 
-        for metric: MetricKey in [.heartRate, .spo2, .hrv, .temperature, .bloodPressureSystolic, .stress] {
+        for metric: MetricKey in [.heartRate, .spo2, .temperature, .bloodPressureSystolic, .stress] {
             XCTAssertTrue(MetricsService.supports(metric, context: context), metric.rawValue)
         }
-        // Blood sugar and fatigue are the two vital *metrics* the family deliberately does not claim.
-        for metric: MetricKey in [.bloodSugar, .fatigue] {
+        // Blood sugar, fatigue and HRV are the vital *metrics* the family deliberately does not claim.
+        for metric: MetricKey in [.bloodSugar, .fatigue, .hrv] {
             XCTAssertFalse(MetricsService.supports(metric, context: context), metric.rawValue)
         }
     }
@@ -47,7 +47,7 @@ final class CapabilityGatingTests: XCTestCase {
         let coordinator = LuckRingCoordinator()
         XCTAssertTrue(coordinator.bitmapGatedCapabilities.isEmpty)
         XCTAssertTrue(coordinator.capabilities.contains(.measurementInterval))
-        for cap: WearableCapability in [.bloodSugar, .remSleep, .fatigue, .combinedVitalsMeasurement, .powerOff, .factoryReset] {
+        for cap: WearableCapability in [.bloodSugar, .remSleep, .fatigue, .hrv, .manualHrv, .combinedVitalsMeasurement, .powerOff, .factoryReset] {
             XCTAssertFalse(coordinator.capabilities.contains(cap), cap.rawValue)
         }
     }

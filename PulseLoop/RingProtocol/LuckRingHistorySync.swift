@@ -13,14 +13,14 @@ import Foundation
 final class LuckRingHistorySync {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
-    /// The full catalog, in request order. `mixSport` (10 — workout records) is skipped in v1.
+    /// The full catalog, in request order. `mixSport` (10 — workout records) is skipped in v1, and HRV (42)
+    /// is never requested: its byte isn't HRV in any usable sense (see `LuckRingCoordinator.capabilities`).
     static let catalog: [UInt8] = [
         LuckRingDataType.historySport,   // 5
         LuckRingDataType.sleep,          // 6
         LuckRingDataType.historyHeart,   // 8
         LuckRingDataType.historyO2,      // 40
         LuckRingDataType.historyBP,      // 41
-        LuckRingDataType.historyHRV,     // 42
         LuckRingDataType.historyTemp,    // 47
         LuckRingDataType.stressHistory,  // 53
     ]

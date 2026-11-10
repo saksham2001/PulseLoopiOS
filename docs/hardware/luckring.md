@@ -3,7 +3,7 @@ title: TK18 / LuckRing
 description: >-
   The ~$10 LuckRing-app ring family (Shenzhen Coolwear/Kewo OEM, "K6" protocol,
   company ID 0xFF64), sold as TK18/TK18A and white-labeled under SIMSONLAB and
-  other brands. HR, SpO₂, HRV, temperature, BP trend, sleep, steps.
+  other brands. HR, SpO₂, temperature, BP trend, sleep, steps.
 ---
 
 # LuckRing / TK18
@@ -103,7 +103,6 @@ art and a fallback name.
 |---|:---:|---|
 | Heart rate — spot / live / history | ✅ | BPM |
 | SpO₂ — spot / history | ✅ | |
-| HRV — spot / history | ✅ | ms |
 | Steps / distance | ✅ | Each sport record is the day's running total (the day keeps the latest), not an interval. Distance/calorie units unverified; calories dropped |
 | Sleep (light / deep / awake) | ✅ | No REM; "movement" entries render as light sleep |
 | Battery level | ✅ | In-band, with charging flag |
@@ -112,6 +111,7 @@ art and a fallback name.
 | Skin temperature | 🧪 | `value/10 °C` — awaiting a confirmed on-device reading |
 | Blood pressure | 🧪 | The ring accepts the command but streamed no reading in testing — possibly unsupported on this SKU. No cuff calibration — treat as a trend |
 | Stress | 🧪 | Record layout unconfirmed; range-gated |
+| HRV | ❌ | The ring sends an "HRV" byte (types 45 / 42), but it doesn't behave like HRV in ms (107–168 in one evening) and no packet carries beat intervals. The LuckRing app never shows it either (its HRV screens display a random age-band value), so PulseLoop doesn't request, store or show it |
 | REM sleep | ❌ | Protocol has no REM stage |
 | Blood sugar | ❌ | The vendor opcode is a placeholder — the app's value is an estimate, not a sensor |
 | Menstrual cycle | ❌ | User-entered calendar data in the vendor app, not a sensor |

@@ -85,7 +85,7 @@ final class LuckRingHistorySyncTests: XCTestCase {
     }
 
     func testCatalogAndVitalsSubsetsAreWhatWeExpect() {
-        XCTAssertEqual(LuckRingHistorySync.catalog, [5, 6, 8, 40, 41, 42, 47, 53])
+        XCTAssertEqual(LuckRingHistorySync.catalog, [5, 6, 8, 40, 41, 47, 53], "HRV (42) is never requested")
         XCTAssertEqual(LuckRingHistorySync.vitalsTypes, [8, 40])
     }
 }
