@@ -216,7 +216,7 @@ final class EventPersistenceSubscriber {
                         $0.kindRaw == kind.rawValue && $0.timestamp == timestamp && $0.sourceRaw == MeasurementSource.history.rawValue
                     }) {
                         row.value = value
-                    } else {
+                    } else if !MeasurementDeletionService.isDeleted(kind: kind, timestamp: timestamp, context: context) {
                         let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: .history)
                         context.insert(row)
                         measurements.append(row)
@@ -486,6 +486,10 @@ final class EventPersistenceSubscriber {
     /// valid identity. Live samples keep append semantics (two readings a second apart are two events).
     private func persistMeasurement(kind: MeasurementKind, value: Double, timestamp: Date, source: MeasurementSource, kindLabel: String) {
         if source == .history, isDuplicateHistory(kind: kind, value: value, timestamp: timestamp) { return }
+        // A reading the user deleted (issue #60). The ring replays its log on every re-sync, so without
+        // this gate the next sync would restore exactly what was removed. Checked only for a row about
+        // to be inserted — a duplicate already returned above without touching the tombstones.
+        if MeasurementDeletionService.isDeleted(kind: kind, timestamp: timestamp, context: context) { return }
         let row = Measurement(kind: kind, value: value, unit: kind.unit, timestamp: timestamp, source: source)
         context.insert(row)
         context.insert(DerivedUpdateRow(kind: kindLabel, entityType: "measurement", entityId: row.id.uuidString))

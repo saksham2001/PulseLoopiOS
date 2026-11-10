@@ -18,6 +18,11 @@ struct MetricDetailView: View {
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
     /// The SpO₂ window holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
     @State private var spo2Estimated = false
+    /// The window's stored readings, newest first — the deletable list under the chart (issue #60).
+    @State private var readings: [VitalReading] = []
+    @State private var readingsExpanded = false
+    @State private var readingsVisible = Self.readingsPageSize
+    @State private var pendingDelete: VitalReading?
     /// Observed so the detail chart/tiles re-fetch when a background sync lands while this is open.
     @State private var dataChange = PulseDataChange.shared
 
@@ -70,6 +75,7 @@ struct MetricDetailView: View {
                 periodSelector
                 chartSection
                 statTiles
+                readingsCard
                 legend
                 explainer
                 if isEstimatedMetric { disclaimer }
@@ -83,8 +89,17 @@ struct MetricDetailView: View {
         // Shared glass chrome: centered title + glass back button, no system nav
         // bar (so the zoom transition doesn't reflow the content).
         .pageChrome(metric.title)
-        .task(id: period) { reload() }
+        .task(id: period) { readingsVisible = Self.readingsPageSize; reload() }
         .onChange(of: dataChange.token) { _, _ in reload() }
+        .alert("Delete this reading?", isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
+        ), presenting: pendingDelete) { reading in
+            Button("Delete", role: .destructive) { delete(reading) }
+            Button("Cancel", role: .cancel) {}
+        } message: { reading in
+            Text("\(readingText(reading))\(unitLabel.isEmpty ? "" : " \(unitLabel)") at \(readingTime(reading.timestamp)).\n\n"
+                 + "This can't be undone, and the reading stays deleted the next time your ring syncs.")
+        }
     }
 
     // MARK: - Period selector
@@ -205,6 +220,111 @@ struct MetricDetailView: View {
         Rectangle().fill(PulseColors.borderSubtle).frame(width: 1, height: 34)
     }
 
+    // MARK: - Readings
+
+    /// How many readings the list shows before asking for more — a Month of all-day history is
+    /// thousands of rows, and someone scanning for one bad measurement reads a page.
+    private static let readingsPageSize = 50
+
+    /// The window's individual readings with a delete per row (issue #60). Deletion only — a recorded
+    /// value can be removed, never edited — and always behind a confirmation.
+    private var readingsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(PulseMotion.spring) { readingsExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("READINGS").font(PulseFont.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                    Spacer()
+                    Text("\(readings.count)").font(PulseFont.caption).monospacedDigit().foregroundStyle(PulseColors.textMuted)
+                    Image(systemName: readingsExpanded ? "chevron.up" : "chevron.down")
+                        .font(PulseFont.caption.weight(.semibold))
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                .padding(16)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Readings, \(readings.count)")
+            .accessibilityHint(readingsExpanded ? "Hides the readings" : "Shows the readings")
+
+            if readingsExpanded {
+                if readings.isEmpty {
+                    Text("No readings in this period.")
+                        .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textMuted)
+                        .padding(.horizontal, 16).padding(.bottom, 14)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(readings.prefix(readingsVisible)) { reading in
+                            readingRow(reading)
+                        }
+                    }
+                    if readings.count > readingsVisible {
+                        Button("Show \(min(Self.readingsPageSize, readings.count - readingsVisible)) more") {
+                            readingsVisible += Self.readingsPageSize
+                        }
+                        .font(PulseFont.footnote.weight(.semibold))
+                        .foregroundStyle(PulseColors.accent)
+                        .padding(.horizontal, 16).padding(.vertical, 10)
+                    }
+                    Spacer().frame(height: 6)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .pulseGlass(RoundedRectangle(cornerRadius: PulseRadius.card, style: .continuous))
+    }
+
+    private func readingRow(_ reading: VitalReading) -> some View {
+        HStack(spacing: 6) {
+            Text(readingTime(reading.timestamp))
+                .font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(readingText(reading))
+                .font(PulseFont.footnote.weight(.semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+            if !unitLabel.isEmpty {
+                Text(unitLabel).font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted)
+            }
+            if reading.isEstimated {
+                Text("Estimated")
+                    .font(PulseFont.caption2.weight(.semibold))
+                    .foregroundStyle(PulseColors.warning)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(PulseColors.warning.opacity(0.14), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
+            Button { pendingDelete = reading } label: {
+                Image(systemName: "trash")
+                    .font(PulseFont.footnote)
+                    .foregroundStyle(PulseColors.textMuted)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete reading \(readingText(reading)) at \(readingTime(reading.timestamp))")
+        }
+        .padding(.leading, 16).padding(.trailing, 6)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func readingText(_ reading: VitalReading) -> String {
+        let primary = fmt(toDisplay(reading.value))
+        guard let secondary = reading.secondary else { return primary }
+        return "\(primary)/\(fmt(toDisplay(secondary)))"
+    }
+
+    private func readingTime(_ date: Date) -> String {
+        period == .today
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+    }
+
+    private func delete(_ reading: VitalReading) {
+        VitalReadings.delete(reading, context: modelContext)
+        pendingDelete = nil
+        reload()
+    }
+
     // MARK: - Legend
 
     private var legend: some View {
@@ -269,6 +389,20 @@ struct MetricDetailView: View {
             primary = MetricsService.metricRange(metric: metric.metricKey, range: period.range, context: modelContext)
             secondary = []
         }
+        let window = readingsWindow
+        readings = VitalReadings.load(metric: metric, start: window.start, end: window.end, context: modelContext)
+    }
+
+    /// The span the readings list covers — the same rolling window the chart fetches.
+    private var readingsWindow: DateInterval {
+        let now = Date()
+        let seconds: TimeInterval
+        switch period {
+        case .today: seconds = 86_400
+        case .week: seconds = 7 * 86_400
+        case .month: seconds = 30 * 86_400
+        }
+        return DateInterval(start: now.addingTimeInterval(-seconds), end: now.addingTimeInterval(1))
     }
 
     /// HRV detail can compute a real baseline because Week/Month fetch enough history.

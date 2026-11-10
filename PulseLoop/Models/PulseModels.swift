@@ -253,6 +253,29 @@ final class Measurement {
     var kind: MeasurementKind { MeasurementKind(rawValue: kindRaw) ?? .heartRate }
 }
 
+/// A tombstone for a reading the user deleted, so the next sync of that day can't write it back.
+///
+/// Ring history is replayed on every re-sync with deterministic timestamps, and the persistence gate
+/// upserts by `(kind, timestamp)` — without this row a deleted reading would simply reappear. Keyed by
+/// what a re-sync can reproduce (the kind and the whole-second instant), never by the row's UUID.
+/// Activity buckets reuse the table with an `activity:` key (see `MeasurementDeletionService`).
+@Model
+final class MeasurementDeletion {
+    /// `"<kindRaw>:<epochSeconds>"` for a vital, `"activity:<startEpoch>"` for an activity bucket.
+    @Attribute(.unique) var key: String
+    /// A `MeasurementKind` raw value, or `MeasurementDeletionService.activityKindRaw`.
+    var kindRaw: String
+    var timestamp: Date
+    var deletedAt: Date
+
+    init(key: String, kindRaw: String, timestamp: Date, deletedAt: Date = Date()) {
+        self.key = key
+        self.kindRaw = kindRaw
+        self.timestamp = timestamp
+        self.deletedAt = deletedAt
+    }
+}
+
 /// A single historical battery reading, kept so the Wearable screen can chart drainage over time.
 /// Battery is stored separately from `Measurement` (it isn't a health vital) but follows the same
 /// timestamped-sample shape. Writes are throttled (on-change or a 30-min floor) so the table stays

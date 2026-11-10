@@ -120,6 +120,7 @@ enum DataArchiveService {
         let coachNotificationRecords = try await collect(CoachNotificationRecord.self, context) { ArchiveCoachNotificationRecord($0) }
         let coachSummaries = try await collect(CoachSummary.self, context) { ArchiveCoachSummary($0) }
         let wearableLogs = try await collect(WearableLog.self, context) { ArchiveWearableLog($0) }
+        let measurementDeletions = try await collect(MeasurementDeletion.self, context) { ArchiveMeasurementDeletion($0) }
 
         var settings: [String: String] = [:]
         for key in settingsKeys {
@@ -153,7 +154,8 @@ enum DataArchiveService {
             "coachToolCalls": coachToolCalls.count,
             "coachNotificationRecords": coachNotificationRecords.count,
             "coachSummaries": coachSummaries.count,
-            "wearableLogs": wearableLogs.count
+            "wearableLogs": wearableLogs.count,
+            "measurementDeletions": measurementDeletions.count
         ]
 
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
@@ -188,6 +190,7 @@ enum DataArchiveService {
             coachNotificationRecords: coachNotificationRecords,
             coachSummaries: coachSummaries,
             wearableLogs: wearableLogs,
+            measurementDeletions: measurementDeletions,
             settings: settings,
             attachments: collectAttachments(from: attachmentsDirectory)
         )
@@ -307,6 +310,7 @@ enum DataArchiveService {
             || has(ActivityEvent.self) || has(ActivitySensorPollEvent.self) || has(CoachConversation.self)
             || has(CoachMessage.self) || has(CoachMemory.self) || has(CoachToolCall.self)
             || has(CoachNotificationRecord.self) || has(CoachSummary.self) || has(WearableLog.self)
+            || has(MeasurementDeletion.self)
     }
 
     /// Deletes every row of every model in the schema — all 25 types, unlike `SeedData.clearAll`
@@ -338,6 +342,7 @@ enum DataArchiveService {
         try deleteAll(CoachNotificationRecord.self, context)
         try deleteAll(CoachSummary.self, context)
         try deleteAll(WearableLog.self, context)
+        try deleteAll(MeasurementDeletion.self, context)
     }
 
     private static func deleteAll<T: PersistentModel>(_ type: T.Type, _ context: ModelContext) throws {
@@ -372,6 +377,7 @@ enum DataArchiveService {
         insert(archive.coachNotificationRecords, context)
         insert(archive.coachSummaries, context)
         insert(archive.wearableLogs, context)
+        insert(archive.measurementDeletions ?? [], context)
     }
 
     private static func insert(_ rows: [some ArchiveInsertable], _ context: ModelContext) {
@@ -406,6 +412,7 @@ enum DataArchiveService {
         try requireUnique(archive.coachMemories.map(\.id), entity: "coach memory")
         try requireUnique(archive.coachToolCalls.map(\.id), entity: "tool call")
         try requireUnique(archive.coachNotificationRecords.map(\.id), entity: "notification record")
+        try requireUnique((archive.measurementDeletions ?? []).map(\.key), entity: "deleted reading")
         try requireUnique(archive.coachSummaries.map(\.id), entity: "coach summary")
         try requireUnique(archive.wearableLogs.map(\.id), entity: "wearable log")
 
@@ -512,3 +519,4 @@ extension ArchiveCoachToolCall: ArchiveInsertable {}
 extension ArchiveCoachNotificationRecord: ArchiveInsertable {}
 extension ArchiveCoachSummary: ArchiveInsertable {}
 extension ArchiveWearableLog: ArchiveInsertable {}
+extension ArchiveMeasurementDeletion: ArchiveInsertable {}

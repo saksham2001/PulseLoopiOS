@@ -56,6 +56,10 @@ nonisolated struct PulseArchive: Codable, Sendable {
     var coachNotificationRecords: [ArchiveCoachNotificationRecord]
     var coachSummaries: [ArchiveCoachSummary]
     var wearableLogs: [ArchiveWearableLog]
+    /// Deleted-reading tombstones (issue #60). Optional so archives written before tombstones existed
+    /// still decode; a restore must carry them, or the first sync after it resurrects every reading
+    /// the user deleted.
+    var measurementDeletions: [ArchiveMeasurementDeletion]? = nil
 
     /// Raw UserDefaults JSON blobs keyed by their storage key (metric prefs, workout prefs,
     /// calibration, coach settings, Apple Health prefs). Opaque pass-through — never re-encoded.
@@ -260,6 +264,24 @@ nonisolated struct ArchiveMeasurement: Codable, Sendable {
         m.rawPacketId = rawPacketId
         m.createdAt = createdAt
         context.insert(m)
+    }
+}
+
+nonisolated struct ArchiveMeasurementDeletion: Codable, Sendable {
+    var key: String
+    var kindRaw: String
+    var timestamp: Date
+    var deletedAt: Date
+
+    @MainActor init(_ m: MeasurementDeletion) {
+        key = m.key
+        kindRaw = m.kindRaw
+        timestamp = m.timestamp
+        deletedAt = m.deletedAt
+    }
+
+    @MainActor func insert(into context: ModelContext) {
+        context.insert(MeasurementDeletion(key: key, kindRaw: kindRaw, timestamp: timestamp, deletedAt: deletedAt))
     }
 }
 

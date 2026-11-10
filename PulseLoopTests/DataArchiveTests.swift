@@ -36,6 +36,7 @@ final class DataArchiveTests: XCTestCase {
         context.insert(WearableLog(category: .sync, level: .info, message: "sync done", metadataJSON: #"{"n":1}"#))
         context.insert(SleepRecordEdit(wakingDay: Date(timeIntervalSince1970: 1_750_000_000),
                                        recordStartAt: Date(timeIntervalSince1970: 1_749_990_000), kind: .blockDeleted))
+        context.insert(MeasurementDeletion(key: "hr:1750000000", kindRaw: "hr", timestamp: Date(timeIntervalSince1970: 1_750_000_000)))
         try? context.save()
     }
 
@@ -52,6 +53,7 @@ final class DataArchiveTests: XCTestCase {
         check(ActivityEvent.self); check(ActivitySensorPollEvent.self); check(CoachConversation.self)
         check(CoachMessage.self); check(CoachMemory.self); check(CoachToolCall.self)
         check(CoachNotificationRecord.self); check(CoachSummary.self); check(WearableLog.self)
+        check(MeasurementDeletion.self)
     }
 
     private func makeSuiteDefaults(_ name: String) -> UserDefaults {
@@ -159,6 +161,7 @@ final class DataArchiveTests: XCTestCase {
         assertEmpty(ActivityEvent.self); assertEmpty(ActivitySensorPollEvent.self); assertEmpty(CoachConversation.self)
         assertEmpty(CoachMessage.self); assertEmpty(CoachMemory.self); assertEmpty(CoachToolCall.self)
         assertEmpty(CoachNotificationRecord.self); assertEmpty(CoachSummary.self); assertEmpty(WearableLog.self)
+        assertEmpty(MeasurementDeletion.self)
     }
 
     // MARK: - Rejection without data loss

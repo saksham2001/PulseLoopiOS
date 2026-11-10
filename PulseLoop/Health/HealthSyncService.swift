@@ -547,6 +547,39 @@ final class HealthSyncService {
         Task { await self.deleteWorkout(syncID: syncID) }
     }
 
+    /// Fire-and-forget removal of one exported vital reading the user deleted locally. Every exported
+    /// reading carries a deterministic sync identifier (kind + instant), so the sample is found without
+    /// any local bookkeeping; a reading that was never exported simply matches nothing. Blood pressure
+    /// is a correlation (keyed by instant) whose two halves carry no metadata of their own, so those are
+    /// matched by type, source and their exact instant.
+    func deleteExportedVital(kind: MeasurementKind, timestamp: Date) {
+        guard isAvailable, !isRunningUnitTests else { return }
+        let sourcePredicate = HKQuery.predicateForObjects(from: HKSource.default())
+        func scoped(_ predicate: NSPredicate) -> NSPredicate {
+            NSCompoundPredicate(andPredicateWithSubpredicates: [sourcePredicate, predicate])
+        }
+        switch kind {
+        case .bloodPressureSystolic, .bloodPressureDiastolic:
+            guard let correlation = HKCorrelationType.correlationType(forIdentifier: .bloodPressure),
+                  let systolic = HKQuantityType.quantityType(forIdentifier: .bloodPressureSystolic),
+                  let diastolic = HKQuantityType.quantityType(forIdentifier: .bloodPressureDiastolic) else { return }
+            let syncID = HealthKitTypeMappings.bloodPressureSyncID(timestamp: timestamp)
+            let byID = scoped(HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [syncID]))
+            let atInstant = scoped(HKQuery.predicateForSamples(withStart: timestamp, end: timestamp,
+                                                               options: [.strictStartDate, .strictEndDate]))
+            Task {
+                await self.deleteOwnObjects(of: correlation, predicate: byID)
+                await self.deleteOwnObjects(of: systolic, predicate: atInstant)
+                await self.deleteOwnObjects(of: diastolic, predicate: atInstant)
+            }
+        default:
+            guard let mapping = HealthKitTypeMappings.quantityMapping(for: kind) else { return }
+            let syncID = HealthKitTypeMappings.vitalsSyncID(kindRaw: kind.rawValue, timestamp: timestamp)
+            let byID = scoped(HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [syncID]))
+            Task { await self.deleteOwnObjects(of: mapping.type, predicate: byID) }
+        }
+    }
+
     private func deleteWorkout(syncID: String) async {
         let metaPredicate = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeySyncIdentifier, allowedValues: [syncID])
         let sourcePredicate = HKQuery.predicateForObjects(from: HKSource.default())

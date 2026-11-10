@@ -346,6 +346,7 @@ enum SeedData {
         deleteAll(ActivitySession.self, context)
         deleteAll(ActivitySample.self, context)
         deleteAll(ActivityBucketSample.self, context)
+        deleteAll(MeasurementDeletion.self, context)
         deleteAll(ActivityGpsPoint.self, context)
         deleteAll(ActivityEvent.self, context)
         deleteAll(CoachConversation.self, context)
