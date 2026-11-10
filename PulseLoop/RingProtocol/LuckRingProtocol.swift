@@ -38,9 +38,8 @@ enum LuckRingUUIDs {
     static let deviceType: UInt8 = 1
 }
 
-/// The `cmdType` byte (`CEBC.K6.CMD_TYPE_*`). The app ACKs a device-initiated **SEND**; it never ACKs an
-/// ACK or a SEND_NO_ACK (which by definition expects none), so ACKing only `.send` can neither stall the
-/// ring nor spam the wire.
+/// The `cmdType` byte (`CEBC.K6.CMD_TYPE_*`). Despite the name, the vendor app ACKs every completed
+/// device frame except an ACK (and dataType 144) — SEND_NO_ACK included (`CEProtocolB.Analysis`).
 enum LuckRingCmdType: UInt8, Sendable {
     case send = 1
     case sendNoAck = 2
@@ -76,6 +75,8 @@ enum LuckRingDataType {
     static let stressHistory: UInt8 = 53   // body-recovery / stress (stored)
     static let userInfo: UInt8 = 102       // 9B profile
     static let language: UInt8 = 103
+    /// The one dataType the vendor never ACKs (`CEProtocolB.Analysis` → `CMD_APP_NO_ACK_TYPE`).
+    static let noAckData: UInt8 = 144
     static let time: UInt8 = 104           // 9B clock
     static let dataSwitch: UInt8 = 109     // 1 enables the real-time pushes
     static let mixInfo: UInt8 = 110        // the binding / startup TLV bundle

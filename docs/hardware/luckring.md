@@ -119,10 +119,13 @@ art and a fallback name.
 | FW update via app | ❌ | Out of scope |
 
 !!! info "PulseLoop never wipes the ring"
-    The vendor SDK has a destructive clear-history opcode; PulseLoop never sends
-    it. The ring replays its whole log on every sync, and PulseLoop dedupes
-    app-side (upserts by kind + timestamp / bucket / night), so re-syncs never
-    duplicate.
+    The vendor SDK has a destructive clear-history opcode (`207`), but the Luck
+    Ring app only sends it from a manual, confirmed "Clear data" button — never
+    after a sync — so PulseLoop never sends it either. Like the vendor app,
+    PulseLoop ACKs every completed frame the ring sends (including the
+    SEND_NO_ACK frames history arrives in), which is how the ring learns its
+    records were delivered. Any replay is still deduped app-side (upserts by
+    kind + timestamp / bucket / night), so re-syncs never duplicate.
 
 ### What the TK18 CANNOT do
 

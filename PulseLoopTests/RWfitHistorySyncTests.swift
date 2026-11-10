@@ -36,7 +36,7 @@ final class RWfitHistorySyncTests: XCTestCase {
         var reads = 0
         var order: [String] = []
         sync.persist = { events in
-            XCTAssertEqual(events.count, 2)
+            XCTAssertEqual(events.count, 1)
             order.append("save")
         }
         writer.onWrite = { payload in
@@ -51,7 +51,93 @@ final class RWfitHistorySyncTests: XCTestCase {
         }
         let outcome = await sync.run(types: [.heartRate])
         XCTAssertEqual(outcome, .success(records: 2))
-        XCTAssertEqual(order, ["get", "get", "get", "save", "delete"])
+        // Vendor order (`blesdk/service/p.java:62-79`): each page with records is consumed before the
+        // next request; the empty page ends the stream unconsumed. Each save precedes its delete.
+        XCTAssertEqual(order, ["get", "save", "delete", "get", "save", "delete", "get"])
+        gate.cancel()
+    }
+
+    func testEmptyStreamIsNeverDeleted() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        RWfitHistoryPersistence.journalDirectoryOverride = directory
+        defer {
+            RWfitHistoryPersistence.journalDirectoryOverride = nil
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let writer = Writer()
+        let (sync, gate) = setup(writer)
+        writer.onWrite = { self.respond($0, gate: gate) }
+        let outcome = await sync.run(types: [.sleep, .heartRate])
+        XCTAssertEqual(outcome, .success(records: 0))
+        XCTAssertEqual(writer.payloads, [[5, 5, 0x10], [5, 3, 0x10]])
+        gate.cancel()
+    }
+
+    func testSaveFailureOnLaterPageConsumesOnlyEarlierPage() async {
+        let writer = Writer()
+        let (sync, gate) = setup(writer)
+        var reads = 0
+        var saves = 0
+        var order: [String] = []
+        sync.persist = { _ in
+            saves += 1
+            if saves == 2 { throw RWfitSessionError.persistence }
+            order.append("save")
+        }
+        writer.onWrite = { payload in
+            if payload[2] == 0x10 {
+                reads += 1
+                order.append("get")
+                self.respond(reads < 3 ? [5, 3, 0x10, 0, 0, 0, UInt8(reads), 70, 0] : [5, 3, 0x10], gate: gate)
+            } else {
+                order.append("delete")
+                self.respond(payload, gate: gate)
+            }
+        }
+        let outcome = await sync.run(types: [.heartRate])
+        guard case let .partial(records, _) = outcome else { return XCTFail("Expected partial import, got \(outcome)") }
+        XCTAssertEqual(records, 1)
+        XCTAssertEqual(order, ["get", "save", "delete", "get"], "The unsaved page must stay on the ring")
+        gate.cancel()
+    }
+
+    func testTodayStepsLaterPagesAreBareHourlyRecords() async {
+        let writer = Writer()
+        let (sync, gate) = setup(writer)
+        var reads = 0
+        var saved: [[RingDecodedEvent]] = []
+        sync.persist = { saved.append($0) }
+        let record: [UInt8] = [0x30, 0, 0, 0, 0, 0, 0, 100] + RWfitBytes.packU32BE(100) + RWfitBytes.packU32BE(500)
+        writer.onWrite = { payload in
+            guard payload[2] == 0x10 else { return self.respond(payload, gate: gate) }
+            reads += 1
+            switch reads {
+            case 1: self.respond([5, 0x1a, 0x10] + record + record, gate: gate)
+            case 2: self.respond([5, 0x1a, 0x10] + record, gate: gate)
+            default: self.respond(payload, gate: gate)
+            }
+        }
+        let outcome = await sync.run(types: [.todaySteps])
+        XCTAssertEqual(outcome, .success(records: 3))
+        XCTAssertEqual(saved.count, 2)
+        guard saved.count == 2, case .activityBucket = saved[1].first, saved[1].count == 1 else {
+            return XCTFail("A continuation page holds hourly records only, got \(saved)")
+        }
+        XCTAssertEqual(writer.payloads.filter { $0[2] == 0x30 }.count, 2)
+        gate.cancel()
+    }
+
+    func testTodayStepsTotalWithoutHourlyRecordsIsImportedButNotConsumed() async {
+        let writer = Writer()
+        let (sync, gate) = setup(writer)
+        var saved: [RingDecodedEvent] = []
+        sync.persist = { saved += $0 }
+        let header: [UInt8] = [0x30, 0, 0, 0, 0, 0, 0x03, 0xe8] + RWfitBytes.packU32BE(1250) + RWfitBytes.packU32BE(5000)
+        writer.onWrite = { _ in self.respond([5, 0x1a, 0x10] + header, gate: gate) }
+        let outcome = await sync.run(types: [.todaySteps])
+        XCTAssertEqual(outcome, .success(records: 1))
+        guard case .activityUpdate? = saved.first else { return XCTFail("Daily total must still be imported") }
+        XCTAssertEqual(writer.payloads, [[5, 0x1a, 0x10]], "Vendor ends on an empty item list without deleting")
         gate.cancel()
     }
 
@@ -181,7 +267,9 @@ final class RWfitHistorySyncTests: XCTestCase {
         XCTAssertEqual(saved, 1)
         guard case let .partial(records, _) = outcome else { return XCTFail("Saved records must remain visible in partial outcome") }
         XCTAssertEqual(records, 1)
+        // The lost delete reply is never retried and ends the stream: no further page is requested.
         XCTAssertEqual(writer.payloads.filter { $0[2] == 0x30 }.count, 1)
+        XCTAssertEqual(reads, 1)
         gate.cancel()
     }
 

@@ -2,9 +2,10 @@ import XCTest
 import CoreBluetooth
 @testable import PulseLoop
 
-/// The driver's inbound routing, and the one thing no decoder can do: **acknowledging a device-initiated
-/// SEND**. The ring retransmits an un-ACKed SEND until the app answers, so a missing ACK wedges the link;
-/// an ACK for an ACK, or for a SEND_NO_ACK, is wrong the other way.
+/// The driver's inbound routing, and the one thing no decoder can do: **acknowledging device frames**
+/// the way the vendor SDK does — every completed non-ACK frame except dataType 144. The ring retransmits
+/// an un-ACKed SEND until the app answers, so a missing ACK wedges the link; an ACK for an ACK is wrong
+/// the other way.
 @MainActor
 final class LuckRingDriverTests: XCTestCase {
     private final class FakeWriter: RingCommandWriter {
@@ -57,16 +58,46 @@ final class LuckRingDriverTests: XCTestCase {
         XCTAssertTrue(writer.sent.isEmpty, "an ACK must never be ACKed")
     }
 
-    func testSendNoAckIsNotAcked() {
+    /// The vendor's `CEProtocolB.Analysis` ACKs SEND_NO_ACK frames too — history arrives that way, and
+    /// the ACK is what tells the ring the records were delivered.
+    func testSendNoAckIsAckedLikeTheVendor() {
         let writer = FakeWriter()
         let driver = LuckRingDriver(writer: writer)
 
-        let frame = LuckRingFrame(cmdType: .sendNoAck, dataType: LuckRingDataType.realHeart,
+        let frame = LuckRingFrame(cmdType: .sendNoAck, dataType: LuckRingDataType.historyHeart,
                                   payload: cat(LuckRingBytes.le16(1), [1], LuckRingBytes.le32(1_700_000_000), [70]),
+                                  seq: 7, devType: 1)
+        _ = driver.ingest(packets(frame)[0], from: notify)
+
+        XCTAssertEqual(writer.sent.count, 1, "a completed SEND_NO_ACK frame is ACKed")
+        let ack = [UInt8](writer.sent[0])
+        XCTAssertEqual(ack[4], 4, "ACK cmdType")
+        XCTAssertEqual(ack[5], LuckRingDataType.historyHeart, "ACK echoes the frame's dataType")
+        XCTAssertEqual(ack[3], 7, "ACK echoes the frame's seq")
+    }
+
+    func testDataType144IsNeverAcked() {
+        let writer = FakeWriter()
+        let driver = LuckRingDriver(writer: writer)
+
+        let frame = LuckRingFrame(cmdType: .send, dataType: LuckRingDataType.noAckData, payload: [1],
                                   seq: 0, devType: 1)
         _ = driver.ingest(packets(frame)[0], from: notify)
 
-        XCTAssertTrue(writer.sent.isEmpty, "a SEND_NO_ACK expects no reply")
+        XCTAssertTrue(writer.sent.isEmpty, "the vendor tags dataType 144 CMD_APP_NO_ACK_TYPE")
+    }
+
+    /// Clearing the ring is a manual, confirmed action in the vendor app (`MyRingActivity` → "Clear
+    /// data?"), never part of a sync — so nothing we ever write may carry `cleanData` (207).
+    func testHistoryPassNeverSendsCleanData() {
+        let writer = FakeWriter()
+        let driver = LuckRingDriver(writer: writer)
+        let engine = driver.makeSyncEngine()
+        engine.runStartup()
+        engine.syncHistory()
+        XCTAssertFalse(writer.sent.isEmpty)
+        XCTAssertFalse(writer.sent.contains { $0.count > 5 && $0[0] == 0 && $0[5] == 207 },
+                       "a sync must never send the destructive cleanData opcode")
     }
 
     // MARK: Reassembly

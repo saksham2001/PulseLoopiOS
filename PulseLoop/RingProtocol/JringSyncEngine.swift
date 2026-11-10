@@ -1,16 +1,25 @@
 import Foundation
 
-/// jring sync engine. The jring is fire-and-forget: the startup sequence enqueues all commands up
-/// front and the device streams replies, so `handle(_:)` is a no-op (no response-driven machine).
-///
-/// Command construction is lifted verbatim from the old `RingSyncCoordinator.runStartupSequence`
-/// and the measurement helpers, via the existing `RingEncoder` — behavior is unchanged.
+/// jring sync engine. The connect handshake is fire-and-forget (every command is enqueued up front),
+/// but the history that follows is a response-driven per-day loop, as in the vendor app: steps/sleep
+/// (`10 dd`) then heart rate (`16 dd`) for each day from the oldest unsynced one down to today. See
+/// "Per-day history" below.
 @MainActor
 final class JringSyncEngine: RingSyncEngine {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
     private weak var writer: RingCommandWriter?
     private let encoder = RingEncoder()
+    /// Where each ring's last *finished* full history sync is remembered (see `lastSyncKey`).
+    private let defaults: UserDefaults
+    private let now: () -> Date
+    /// Quiet window that ends a `10 dd` transfer: vendor `h1 = 2000` ms (`bad.java:212`).
+    private let activityQuietSeconds: TimeInterval
+    /// Safety net for a step the ring never finishes. The vendor's own (`checkGetDataByDayTask`,
+    /// `UPDATE_INTERVAL_IN_MILLISECONDS = 10000`) abandons the sync if no history arrives at all; we
+    /// use the same 10 s per silent step, and also below the coordinator's 20 s stall timeout so the
+    /// progress bar never drops mid-loop.
+    private let stepWatchdogSeconds: TimeInterval
     /// Shared with the driver's `RingDecoder`: latched when we send 0x01, read back when decoding
     /// ring-stamped history timestamps.
     private let clock: JringClock
@@ -29,9 +38,26 @@ final class JringSyncEngine: RingSyncEngine {
     /// per-day queries once the bit ordering is confirmed against real hardware.
     private(set) var bandCapabilities: JringBandCapabilities?
 
-    init(writer: RingCommandWriter?, clock: JringClock) {
+    init(writer: RingCommandWriter?, clock: JringClock,
+         defaults: UserDefaults = .standard, now: @escaping () -> Date = { Date() },
+         activityQuietSeconds: TimeInterval = 2, stepWatchdogSeconds: TimeInterval = 10) {
         self.writer = writer
         self.clock = clock
+        self.defaults = defaults
+        self.now = now
+        self.activityQuietSeconds = activityQuietSeconds
+        self.stepWatchdogSeconds = stepWatchdogSeconds
+    }
+
+    /// Auto-reconnect reuses this engine: a loop from the dropped link must not survive into the new one.
+    func connectionDidStart() {
+        resetHistory()
+    }
+
+    /// The loop's timers would otherwise keep firing across the reconnect gap and enqueue `16 dd` /
+    /// `10 dd` ahead of the next handshake.
+    func connectionDidEnd() {
+        resetHistory()
     }
 
     func runStartup() {
@@ -54,20 +80,175 @@ final class JringSyncEngine: RingSyncEngine {
         // had to initialise with the vendor app first.
         enqueueMeasurementCommands(measurementSettings)
         writer?.enqueue(encoder.makeBandFunctionCommand())
-        writer?.enqueue(encoder.makeHistoryQueryCommand())
-        writer?.enqueue(encoder.makeHistoryMeasurementQueryCommand())
+        startFullHistory()
     }
 
     func handle(_ event: RingDecodedEvent) {
         switch event {
-        // Bind handshake is the one response-driven flow: the ring may initiate a claim on connect.
+        // The ring may initiate a claim on connect.
         case let .bind(action, _):
             respondToBind(action: action)
         case let .bandFunction(caps):
             bandCapabilities = caps
+        case let .jringHistoryFrame(frame):
+            handleHistoryFrame(frame)
         default:
             break
         }
+    }
+
+    // MARK: - Per-day history (10 dd → 16 dd → next day)
+
+    /// One pass of the vendor's day loop. `DupMainActivity.autoSync` (:3172-3207) starts it at
+    /// `iMax` = whole days since the last finished sync (capped at 6); FragmentMain chains each day's
+    /// requests on the previous transfer's end (`fm.java:1074-1120`); `onGetMultipleSportData`
+    /// (`DupMainActivity.java:1096-1127`) then steps `day -= 1`, and below 0 saves the sync-finish time.
+    private struct HistoryRun {
+        enum Phase { case activity, measurement }
+        /// Saved as the ring's last-finished time when the run completes — the *start*, like the
+        /// vendor's `timeSyncEnd`, so records logged while the loop ran are re-read next time.
+        let startedAt: Date
+        /// The post-workout `16 00` (`syncVitalsHistory`): reports "done" but is not a full sync.
+        let vitalsOnly: Bool
+        var day: Int
+        var phase: Phase
+        /// A step ended on the watchdog rather than the ring's own terminator: still move on, but don't
+        /// record the run as finished, so the next sync re-reads the same days.
+        var incomplete = false
+        // `16 dd` end-by-count bookkeeping (vendor `a1`/`b1`/`c1`, `bad.java:3865-3884`).
+        var segments: Int?
+        var segment: Int?
+        var segmentBlocks: Int?
+    }
+
+    private var history: HistoryRun?
+    private var stepTimer: Task<Void, Never>?
+
+    /// Start the loop at the oldest day this ring hasn't finished syncing. No-op while a loop is already
+    /// running (a manual sync mid-loop): that loop still reaches today and reports "done".
+    ///
+    /// The vendor also skips a sync started under 300 s after the last one. We don't: `runStartup` only
+    /// runs on connect or an explicit sync, which must end in "done" to clear the progress bar, and
+    /// re-reading today is idempotent (buckets upsert by start time; history samples dedupe).
+    private func startFullHistory() {
+        guard history == nil else { return }
+        let startedAt = now()
+        history = HistoryRun(startedAt: startedAt, vitalsOnly: false,
+                             day: daysToSync(asOf: startedAt), phase: .activity)
+        requestCurrentStep()
+    }
+
+    /// `iMax` from `autoSync`: calendar days between the last finished sync and today, clamped to 0...6.
+    /// A ring never synced here gets the full 6 (vendor default `"0"` → epoch → capped).
+    private func daysToSync(asOf date: Date) -> Int {
+        guard let key = lastSyncKey, let last = defaults.object(forKey: key) as? Date else { return 6 }
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: last),
+                                           to: calendar.startOfDay(for: date)).day ?? 6
+        return min(max(days, 0), 6)
+    }
+
+    /// Per ring: a different ring (or a re-pair after Forget) must not inherit another's sync point.
+    private var lastSyncKey: String? {
+        writer?.deviceIdentifier.map { "jring.lastHistorySyncFinishedAt.\($0)" }
+    }
+
+    private func requestCurrentStep() {
+        guard let run = history else { return }
+        switch run.phase {
+        case .activity:
+            emitProgress("activity", day: run.day)
+            writer?.enqueue(encoder.makeHistoryQueryCommand(day: run.day))
+        case .measurement:
+            if !run.vitalsOnly { emitProgress("heart rate", day: run.day) }
+            writer?.enqueue(encoder.makeHistoryMeasurementQueryCommand(day: run.day))
+        }
+        armStepTimer(seconds: stepWatchdogSeconds, timedOut: true)
+    }
+
+    /// Each step re-arms the coordinator's stall timeout, which only progress stages reset.
+    private func emitProgress(_ what: String, day: Int) {
+        let when: String
+        switch day {
+        case 0: when = "today"
+        case 1: when = "yesterday"
+        default: when = "\(day) days ago"
+        }
+        writer?.emit(.historySyncProgress(stage: "Syncing \(what) (\(when))…"))
+    }
+
+    private func handleHistoryFrame(_ frame: JringHistoryFrame) {
+        guard let run = history else { return }
+        switch (run.phase, frame) {
+        case (.activity, .activity):
+            armStepTimer(seconds: activityQuietSeconds, timedOut: false)
+        case (.activity, .activityFailed), (.measurement, .measurementEnd), (.measurement, .measurementFailed):
+            advanceHistory()
+        case let (.measurement, .measurementHeader(segments)):
+            history?.segments = segments
+            armStepTimer(seconds: stepWatchdogSeconds, timedOut: true)
+        case let (.measurement, .measurementSegment(index, blocks)):
+            history?.segment = index
+            history?.segmentBlocks = blocks
+            armStepTimer(seconds: stepWatchdogSeconds, timedOut: true)
+        case let (.measurement, .measurementBlock(index)):
+            // Vendor end-by-count: the last segment's last block (`b1 == a1 && c1 == index + 1`).
+            if let segments = run.segments, run.segment == segments, run.segmentBlocks == index + 1 {
+                advanceHistory()
+            } else {
+                armStepTimer(seconds: stepWatchdogSeconds, timedOut: true)
+            }
+        default:
+            // A late frame from the step before (e.g. an `FF` after an end-by-count) is not ours.
+            break
+        }
+    }
+
+    /// 10 dd → 16 dd of the same day → 10 dd of the next-newer day; after day 0's 16, finish.
+    private func advanceHistory() {
+        stepTimer?.cancel()
+        stepTimer = nil
+        guard var run = history else { return }
+        switch run.phase {
+        case .activity:
+            run.phase = .measurement
+        case .measurement:
+            guard !run.vitalsOnly, run.day > 0 else { return finishHistory() }
+            run.day -= 1
+            run.phase = .activity
+        }
+        run.segments = nil
+        run.segment = nil
+        run.segmentBlocks = nil
+        history = run
+        requestCurrentStep()
+    }
+
+    /// The only place `.historySyncFinished` (→ "done") comes from, so it fires once per pass.
+    private func finishHistory() {
+        guard let run = history else { return }
+        history = nil
+        if !run.vitalsOnly, !run.incomplete, let key = lastSyncKey {
+            defaults.set(run.startedAt, forKey: key)
+        }
+        writer?.emit(.historySyncFinished)
+    }
+
+    /// One timer per step: the quiet window that ends a `10 dd`, or the watchdog for a silent step.
+    private func armStepTimer(seconds: TimeInterval, timedOut: Bool) {
+        stepTimer?.cancel()
+        stepTimer = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            if timedOut { self.history?.incomplete = true }
+            self.advanceHistory()
+        }
+    }
+
+    private func resetHistory() {
+        stepTimer?.cancel()
+        stepTimer = nil
+        history = nil
     }
 
     // MARK: - Time (0x01)
@@ -158,8 +339,10 @@ final class JringSyncEngine: RingSyncEngine {
     }
 
     /// Release the ring on Forget: send UNBOND (0x4B action 5) so the ring re-advertises for other apps.
+    /// Its sync point goes too, so pairing it again re-reads the full week.
     func unbind() {
         writer?.enqueue(encoder.makeBindCommand(action: 5))
+        if let key = lastSyncKey { defaults.removeObject(forKey: key) }
     }
 
     func startHeartRate() {
@@ -220,10 +403,14 @@ final class JringSyncEngine: RingSyncEngine {
         writer?.enqueue(encoder.makeFindRingCommand())
     }
 
-    /// Post-workout backfill: re-request the 0x16 measurement history stream (1-min HR blocks) so
-    /// readings taken while the phone was away land in the just-finished session.
+    /// Post-workout backfill: re-request today's 0x16 measurement history (`16 00`, 1-min HR blocks)
+    /// so readings taken while the phone was away land in the just-finished session. Its end reports
+    /// "done" (the coordinator waits on it) but is not a full sync. Skipped while a full loop runs —
+    /// that loop reads today's heart rate anyway, and a second `16` would interleave with it.
     func syncVitalsHistory() {
-        writer?.enqueue(encoder.makeHistoryMeasurementQueryCommand())
+        guard history == nil else { return }
+        history = HistoryRun(startedAt: now(), vitalsOnly: true, day: 0, phase: .measurement)
+        requestCurrentStep()
     }
 
     func setGoal(steps: Int) {

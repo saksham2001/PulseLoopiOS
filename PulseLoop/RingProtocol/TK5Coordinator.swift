@@ -55,7 +55,8 @@ final class TK5Coordinator: WearableCoordinator {
     ///
     /// - `.spo2History` — the all-day `05 1A` log. No bit names it: it is one of the SpO₂ sources
     ///   `ISHASBLOODOXYGEN` already grants, not a separate sensor. A ring without the log answers the
-    ///   query with a no-data header or `0xFC`, which `YCBTHistoryTransfer` skips permanently.
+    ///   query with a no-data header or `0xFC`, which `YCBTHistoryTransfer` skips permanently — or with
+    ///   nothing at all (the R99), which costs one watchdog per connection.
     /// - `.remSleep` — a stage tag (`3`) *inside* the `05 04` timeline `ISHASSLEEP` grants. Same shape.
     ///   Gating either would not defer the decision, it would make them permanently unreachable, because
     ///   no bit can ever satisfy the gate (`PairingMatchingTests`).

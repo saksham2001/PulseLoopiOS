@@ -215,21 +215,40 @@ struct YCBTHistoryType: Equatable, Hashable, Sendable {
     let recordStride: Int?
     /// Human label for the sync-progress UI ("Syncing sleep…").
     let label: String
+    /// `05 <deleteKey> {02}` erases every stored record of this type (`YCBTClient.deleteHealthHistoryData`).
+    /// Sent **only** by `YCBTHistoryTransfer`'s erase phase, after `RingCommandWriter.commitDeliveredHistory`
+    /// has proved this type's records are on disk. `nil` ⇒ never deleted.
+    ///
+    /// The keys are `Constants.DATATYPE.Health_Delete*` (`Constants.java:265-286`) minus the `0x0500` group
+    /// prefix. They are *not* a fixed offset from the query key, and two neighbours are traps: `0x46` is
+    /// temperature-**and-humidity** (`05 1c`, a log we never fetch) — plain temperature (`05 1e`) is `0x47`
+    /// — and `0x4D` is the background-reminder log, not body data (`0x4E`).
+    let deleteKey: UInt8?
 
-    static let sport = YCBTHistoryType(queryKey: 0x02, ackKey: 0x11, recordStride: 14, label: "activity")
-    static let sleep = YCBTHistoryType(queryKey: 0x04, ackKey: 0x13, recordStride: nil, label: "sleep")
-    static let heart = YCBTHistoryType(queryKey: 0x06, ackKey: 0x15, recordStride: 6, label: "heart rate")
-    static let blood = YCBTHistoryType(queryKey: 0x08, ackKey: 0x17, recordStride: 8, label: "blood pressure")
-    static let all = YCBTHistoryType(queryKey: 0x09, ackKey: 0x18, recordStride: 20, label: "vitals")
-    static let spo2 = YCBTHistoryType(queryKey: 0x1a, ackKey: 0x22, recordStride: 6, label: "blood oxygen")
-    static let temperature = YCBTHistoryType(queryKey: 0x1e, ackKey: 0x26, recordStride: 7, label: "temperature")
-    static let comprehensive = YCBTHistoryType(queryKey: 0x2f, ackKey: 0x30, recordStride: 44, label: "metabolic")
-    static let bodyData = YCBTHistoryType(queryKey: 0x33, ackKey: 0x34, recordStride: 28, label: "body data")
+    init(queryKey: UInt8, ackKey: UInt8, recordStride: Int?, label: String, deleteKey: UInt8? = nil) {
+        self.queryKey = queryKey
+        self.ackKey = ackKey
+        self.recordStride = recordStride
+        self.label = label
+        self.deleteKey = deleteKey
+    }
+
+    static let sport = YCBTHistoryType(queryKey: 0x02, ackKey: 0x11, recordStride: 14, label: "activity", deleteKey: 0x40)
+    static let sleep = YCBTHistoryType(queryKey: 0x04, ackKey: 0x13, recordStride: nil, label: "sleep", deleteKey: 0x41)
+    static let heart = YCBTHistoryType(queryKey: 0x06, ackKey: 0x15, recordStride: 6, label: "heart rate", deleteKey: 0x42)
+    static let blood = YCBTHistoryType(queryKey: 0x08, ackKey: 0x17, recordStride: 8, label: "blood pressure", deleteKey: 0x43)
+    static let all = YCBTHistoryType(queryKey: 0x09, ackKey: 0x18, recordStride: 20, label: "vitals", deleteKey: 0x44)
+    static let spo2 = YCBTHistoryType(queryKey: 0x1a, ackKey: 0x22, recordStride: 6, label: "blood oxygen", deleteKey: 0x45)
+    static let temperature = YCBTHistoryType(queryKey: 0x1e, ackKey: 0x26, recordStride: 7, label: "temperature", deleteKey: 0x47)
+    static let comprehensive = YCBTHistoryType(queryKey: 0x2f, ackKey: 0x30, recordStride: 44, label: "metabolic", deleteKey: 0x4c)
+    static let bodyData = YCBTHistoryType(queryKey: 0x33, ackKey: 0x34, recordStride: 28, label: "body data", deleteKey: 0x4e)
 
     /// Every type the SDK's `DataSyncUtils` can request, in its own ascending-key sync order — and every
     /// type `YCBTHealthRecords` decodes. Both YCBT families query the whole catalog, whatever their
     /// capability set says: a type the ring doesn't implement answers with a no-data header or a `0xFC`
-    /// (unsupported key), which `YCBTHistoryTransfer` skips — permanently, for `0xFC`. Asking is
+    /// (unsupported key), which `YCBTHistoryTransfer` skips — permanently, for `0xFC` — or, on some
+    /// firmware, with nothing at all, which costs one watchdog per connection (see
+    /// `YCBTHistoryTransfer.silent`). Asking is
     /// therefore cheaper than keeping a second, capability-derived list that could disagree with the
     /// ring's own answer.
     ///
@@ -313,6 +332,8 @@ enum YCBTHealth {
     static let headerPayloadLength = 10
     /// The terminal block's payload length.
     static let terminalPayloadLength = 6
+    /// The single payload byte of every Health-Delete command (`deleteHealthHistoryData` sends `{2}`).
+    static let deletePayload: UInt8 = 0x02
 }
 
 /// Logical (unframed) Health-group commands. Shared so the transfer machine and a family's encoder
@@ -328,6 +349,14 @@ enum YCBTHealthCommand {
     /// next type (`YCBTClientImpl.packetHealthHandle` sends `1408 = 0x0580` before it even parses).
     static func historyBlockAck(status: UInt8) -> [UInt8] {
         [YCBTGroup.health, YCBTHealth.terminalBlock, status]
+    }
+
+    /// Erase every stored record of one type: `05 <deleteKey> {02}` (`YCBTClient.deleteHealthHistoryData`,
+    /// `YCBTClient.java:949-951`). **Destructive** — the only caller is `YCBTHistoryTransfer`'s erase phase,
+    /// which sends it only after a durable commit. `nil` for a type with no delete opcode.
+    static func historyDelete(_ type: YCBTHistoryType) -> [UInt8]? {
+        guard let key = type.deleteKey else { return nil }
+        return [YCBTGroup.health, key, YCBTHealth.deletePayload]
     }
 }
 

@@ -294,14 +294,20 @@ struct RWfitDecoder {
     }
 
     /// Validate the whole page before allowing destructive history consumption.
-    func validatedJieliHistory(key: UInt8, payload: [UInt8]) throws -> [RingDecodedEvent] {
+    ///
+    /// `continuation` marks a later page of the same stream. Only `051A` differs: the vendor reads
+    /// the 16-byte daily-total header only until an hourly record has arrived this sync
+    /// (`x5/b.java:3514`, counter reset per sync at `service/u1.java:488`), so later pages are bare
+    /// hourly records with the `0502` layout.
+    func validatedJieliHistory(key: UInt8, payload: [UInt8], continuation: Bool = false) throws -> [RingDecodedEvent] {
         guard payload.count >= 3, payload[0] == 0x05, payload[1] == key else {
             throw HistoryDecodeError.malformedPage
         }
         if payload.count == 3 { return [] }
         var payload = payload
         let bodyCount = payload.count - 3
-        switch key {
+        let layout = key == 0x1a && continuation ? RWfitJLDataType.steps : key
+        switch layout {
         case 0x1a:
             guard bodyCount >= 16, (bodyCount - 16).isMultiple(of: 16) else {
                 throw HistoryDecodeError.malformedPage
@@ -316,7 +322,7 @@ struct RWfitDecoder {
             guard bodyCount.isMultiple(of: 6) else { throw HistoryDecodeError.malformedPage }
         default: throw HistoryDecodeError.unsupportedType
         }
-        return (decodeJieliHistory(key: key, payload: payload) ?? []).filter {
+        return (decodeJieliHistory(key: layout, payload: payload) ?? []).filter {
             if case .commandAck = $0 { return false }
             return true
         }

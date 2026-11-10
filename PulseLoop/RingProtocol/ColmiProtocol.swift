@@ -64,6 +64,9 @@ enum ColmiCommandID {
     // big-data types
     static let bigDataTemperature: UInt8 = 0x25
     static let bigDataSleep: UInt8 = 0x27
+    /// Nap ("lunch") sleep, QRing big-data action 62. Rings with nap support file sessions of
+    /// 180 minutes or less here, unsolicited alongside the `0x27` reply; same day-record layout.
+    static let bigDataSleepNap: UInt8 = 0x3e
     static let bigDataSpo2: UInt8 = 0x2a
 
     // `0x69`/`0x6A` reading types for on-demand `SpotVital`s (QRing `StartHeartRateReq.getSimpleReq`).

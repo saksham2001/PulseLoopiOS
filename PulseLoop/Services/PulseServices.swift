@@ -797,7 +797,9 @@ enum ActivityService {
             row.distanceMeters = max(row.distanceMeters, totalDistance)
         } else {
             row.steps = totalSteps
-            row.distanceMeters = totalDistance
+            // A bucket stream with no distance channel (jring `0x10` carries steps only) must not wipe
+            // the distance the ring reported live for that day.
+            if totalDistance > 0 { row.distanceMeters = totalDistance }
             row.source = ringHistorySource
         }
         row.syncedAt = syncedAt

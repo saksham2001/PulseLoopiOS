@@ -12,10 +12,16 @@ protocol RingCommandWriter: AnyObject {
     func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void)
     /// Deliver a synthetic decoded event without inventing a received packet.
     func emit(_ event: RingDecodedEvent)
+    /// Completes `true` once every history event delivered before this call has been durably saved —
+    /// the precondition for erasing that history from the ring (see `RingHistoryCommit`). Any failure
+    /// or timeout completes `false`; callers must then leave the ring's data in place.
+    func commitDeliveredHistory(_ completion: @escaping @MainActor (Bool) -> Void)
 }
 
 extension RingCommandWriter {
     var deviceIdentifier: String? { nil }
+    /// Fail closed: a writer that cannot prove persistence never authorizes an erase.
+    func commitDeliveredHistory(_ completion: @escaping @MainActor (Bool) -> Void) { completion(false) }
     func enqueueTracked(_ command: Data, completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
         enqueue(command)
         completion(.success(()))
@@ -172,8 +178,9 @@ struct UserProfileValues: Sendable, Equatable {
     }
 }
 
-/// Per-device orchestration of command flows. The jring engine is fire-and-forget (`handle` is a
-/// no-op); the Colmi engine advances a 7-stage response-driven history machine inside `handle`.
+/// Per-device orchestration of command flows. The jring engine fires its handshake up front, then
+/// chains a per-day history loop in `handle`; the Colmi engine advances a 7-stage response-driven
+/// history machine inside `handle`.
 /// Lives behind the driver so `RingBLEClient` / `RingSyncCoordinator` stay clean.
 @MainActor
 protocol RingSyncEngine: AnyObject {

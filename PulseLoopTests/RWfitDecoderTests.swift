@@ -353,6 +353,22 @@ final class RWfitDecoderTests: XCTestCase {
         }
     }
 
+    /// `x5/b.java:3514`: only the first `051A` page carries the daily total; later pages are bare
+    /// hourly records and must not have their first record mistaken for a header.
+    func testTodayStepsContinuationPageIsBareHourlyRecords() throws {
+        let hour = cat([5, 0x1a, 0x10], jieliEpoch(3600), [1, 0, 0, 100],
+                       RWfitBytes.packU32BE(100), RWfitBytes.packU32BE(500))
+        let events = try decoder.validatedJieliHistory(key: 0x1a, payload: hour, continuation: true)
+        XCTAssertEqual(events.count, 1)
+        guard case let .activityBucket(timestamp, steps, meters)? = events.first else {
+            return XCTFail("expected hourly bucket, never a cumulative total")
+        }
+        XCTAssertEqual(timestamp, utc.addingTimeInterval(3600))
+        XCTAssertEqual(steps, 100)
+        XCTAssertEqual(meters, 50)
+        XCTAssertThrowsError(try decoder.validatedJieliHistory(key: 0x1a, payload: hour + [0], continuation: true))
+    }
+
     func testValidatedHistoryRejectsPartialRecordsAndIncompleteSleep() throws {
         XCTAssertThrowsError(try decoder.validatedJieliHistory(key: 3, payload: [5, 3, 0x10, 1]))
         XCTAssertTrue(try decoder.validatedJieliHistory(key: 3, payload: [5, 3, 0x10]).isEmpty)

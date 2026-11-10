@@ -85,7 +85,7 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | Heart rate — live | 🧪 | — | verified against the capture (climbed 82→86) |
 | Heart rate — history | 🧪 | — | `05 06` query, 6-byte records |
 | SpO₂ — spot | 🧪 | — | red/IR LED, `03 2f` mode `02` |
-| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants |
+| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants. A ring that never answers the `05 1A` query is asked once per connection (see [below](#how-pulseloop-diverges-from-smarthealth)) |
 | Steps / distance / calories | 🧪 | distance & calories byte offsets in the `06 00` live push | live push + `05 02` history buckets + the All record's cumulative counter |
 | Sleep (light / deep / awake) | 🧪 | — | `05 04` timeline; stage = `tag & 0x0F` |
 | REM sleep | 🧪 | — | stage tag `3` — a stage *inside* the timeline `ISHASSLEEP` grants, so no bit names it and it is not gated |
@@ -143,15 +143,43 @@ exchange at all**. PulseLoop implements none of RCSP, and doesn't need to.
 
 ## How PulseLoop diverges from SmartHealth
 
-**We never delete records off the ring.** SmartHealth issues the Health-Delete opcodes (`05 40…4E`)
-after a sync, so its next sync is small. PulseLoop doesn't: a delete that races a failed decode
-destroys data that exists nowhere else, and it makes the vendor app and PulseLoop mutually
-destructive on the same ring.
+**We erase the ring's log only after it is safely on disk.** Like SmartHealth, PulseLoop deletes each
+history type off the ring once it has been imported, so the next sync is small. The vendor deletes as
+soon as its database insert succeeds; PulseLoop is stricter, because a delete destroys data that
+exists nowhere else:
 
-The consequence is that **the ring replays its entire log on every sync**, so deduplication is
-app-side: every history sample upserts on `(kind, timestamp)`, activity buckets upsert by start
-epoch, and the cumulative step counter is a per-day `max` ratchet. All three are idempotent under
-replay, so a double-sync produces no duplicates. The cost is a longer sync as the ring's log fills.
+- A type is erased only if its transfer ended in a CRC-verified terminal block and carried at least
+  one record. A "no data" reply, a rejection, a CRC failure or a stalled transfer leaves it alone.
+- Deletes (`05 40` sport, `05 41` sleep, `05 42` heart, `05 43` blood pressure, `05 44` combined,
+  `05 45` SpO₂, `05 47` temperature, `05 4C` metabolic, `05 4E` body data, each with payload `02`)
+  go out only after the **last** query of the pass, and only once a durable save of everything
+  received has succeeded. A failed or timed-out save sends none.
+- One delete at a time: PulseLoop waits for the ring's reply (or an error, or a 10 s timeout) and
+  moves on. There is no retry; a type that wasn't erased is simply read again next sync.
+- Nothing is erased until the ring's capability bitmap (`02 01`) has arrived on this connection, and
+  a type re-fetched because that bitmap unlocked more of its fields is erased only after the re-fetch.
+- The pass doesn't count as finished until its deletes are done, and a disconnect abandons them.
+
+Records PulseLoop deliberately doesn't import are erased with the rest of their type: samples
+outside the ~8-day history window (see below; they are treated as mis-stamped) and fields for
+sensors the ring doesn't claim.
+
+Deduplication is still app-side, because a sync whose erase was skipped replays the whole log: every
+history sample upserts on `(kind, timestamp)`, activity buckets upsert by start epoch (replacing the
+stored bucket, as SmartHealth's `INSERT OR REPLACE` does), and the cumulative step counter is a
+per-day `max` ratchet.
+
+**We also ask for two logs SmartHealth never reads.** SmartHealth's sync list doesn't include the
+dedicated SpO₂ log (`05 1A`) or the temperature log (`05 1E`). PulseLoop asks for both (temperature only
+if the ring claims the sensor), because the SDK defines both and asking is the only way to learn
+whether a ring keeps them: no capability bit names either log. A ring that lacks one may reply "no
+data", reject it (`0xFC`, after which PulseLoop stops asking for the rest of the session), or — like
+the R99 on `05 1A` — not reply at all. That last case costs one 10-second timeout. PulseLoop then
+stops asking for that log until the ring reconnects, so the 30-minute passes and post-workout
+backfills on the same connection don't wait on it. A log that was never answered is never erased.
+
+**Using SmartHealth and PulseLoop on the same ring:** each app erases what it has imported, so
+whichever syncs first gets the records and the other never sees them.
 
 ## Known limitations
 - **~8-day history horizon.** `RingEventBridge` drops any history sample, sleep session or activity

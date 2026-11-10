@@ -39,9 +39,21 @@ enum YCBTHealthRecords {
     ///
     /// These are **interval** buckets (each covers start→end), not a running total, so they ride
     /// `.activityBucket`: upsert by start epoch, day total = sum of distinct buckets — idempotent across
-    /// re-syncs even though we never delete records from the ring. The All record's step field is the
-    /// opposite (a cumulative daily counter → `.activityUpdate`, a per-day `max` ratchet); the queue asks
-    /// for sport *before* all, so the cumulative counter always has the last word on a day's total.
+    /// re-syncs, whether the ring replays its log (a sync whose erase was skipped) or not.
+    ///
+    /// A re-reported bucket **replaces** the stored one, which is exactly what SmartHealth does: its
+    /// `step_data` table has a unique `(start_timestamp, device_mac_address)` index and `StepDao` writes
+    /// with `INSERT OR REPLACE` (`AppDatabase_Impl.java:133`, `StepDao_Impl.java:29`), and it erases the
+    /// sport log after every sync (`DataSyncUtils.java:255-256`). The vendor's whole step history therefore
+    /// rests on the firmware never re-reporting an erased bucket's start with a smaller count — if it did,
+    /// SmartHealth's own totals would drop on every sync. We match it rather than diverge (a per-bucket
+    /// `max` would also change the Colmi path, which shares `applyActivityBucket`), and today's visible
+    /// total is floored regardless, by `applyActivityBucket`'s same-day `max` and by the cumulative
+    /// counter below. (Unverified on hardware: whether an *open* bucket is stored before it closes.)
+    ///
+    /// The All record's step field is the opposite (a cumulative daily counter → `.activityUpdate`, a
+    /// per-day `max` ratchet); the queue asks for sport *before* all, so the cumulative counter always
+    /// has the last word on a day's total.
     ///
     /// Calories are deliberately dropped: `.activityBucket` has no calorie channel (the ring's estimate
     /// is unverified, and the live status stream already feeds the day's calorie ratchet).
@@ -72,9 +84,10 @@ enum YCBTHealthRecords {
     /// `[ts:u32][isInflated@4][systolic@5][diastolic@6][heartRate@7]` (`DataUnpack` case 8).
     ///
     /// Emitted as two `.historyMeasurement`s rather than a `.bloodPressureSample`: history rows **upsert**
-    /// on (kind, timestamp) while live samples **append**, and the ring replays its whole log on every
-    /// sync (we never send the Health-Delete opcodes). A `.bloodPressureSample` here would therefore
-    /// duplicate every stored reading on every re-sync. Live/spot BP keeps `.bloodPressureSample`.
+    /// on (kind, timestamp) while live samples **append**, and the ring replays its whole log on any sync
+    /// whose Health-Delete was skipped (no durable commit, no bitmap yet, an unanswered delete). A
+    /// `.bloodPressureSample` here would therefore duplicate every stored reading on each such replay.
+    /// Live/spot BP keeps `.bloodPressureSample`.
     ///
     /// `isInflated` flags the ring's own cuff-style sweep; it doesn't gate validity, so it isn't read.
     static func bloodPressure(_ buffer: [UInt8]) -> [RingDecodedEvent] {

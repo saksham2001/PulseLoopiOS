@@ -15,6 +15,9 @@ enum PulseEvent: Sendable {
     case batteryLevel(percent: Int)
     case decodedPacket(RingDecodedEvent)
     case rwfitSyncOutcome(RWfitSyncOutcome)
+    /// Durable-commit barrier: the persistence subscriber saves everything published before it and
+    /// resolves `RingHistoryCommit` with the outcome. Gates erasing history from the ring.
+    case historyCommitBarrier(UUID)
     case rwfitInitialization(RWfitInitializationState)
     case rwfitDiagnostic(message: String, metadata: [String: String])
     case rwfitMeasurementOutcome(RWfitMeasurementOutcome)
@@ -246,8 +249,27 @@ final class EventPersistenceSubscriber {
     }
 
     func persist(_ event: PulseEvent) {
+        if case let .historyCommitBarrier(id) = event {
+            commitBarrier(id)
+            return
+        }
         applyPersist(event)
         scheduleFlush()
+    }
+
+    /// Every event published before the barrier has been applied by now (the stream is ordered), so a
+    /// successful throwing save here proves that history is durable and may be erased from the ring.
+    func commitBarrier(_ id: UUID) {
+        flushTask?.cancel()
+        flushTask = nil
+        do {
+            if context.hasChanges { try context.save() }
+            if pendingWrites > 0 { PulseDataChange.shared.notify() }
+            pendingWrites = 0
+            RingHistoryCommit.resolve(id, committed: true)
+        } catch {
+            RingHistoryCommit.resolve(id, committed: false)
+        }
     }
 
     /// Debounced batch flush: reset the idle timer each event; flush immediately if too many writes
@@ -443,6 +465,8 @@ final class EventPersistenceSubscriber {
             }
             seenHistoryKeys.removeAll(keepingCapacity: true)
             DailyCalorieEstimator.flushDirty(context: context)
+        case .historyCommitBarrier:
+            break   // handled in `persist` before `applyPersist` (it must save, not batch)
         case .decodedPacket, .rwfitInitialization, .rwfitDiagnostic, .rwfitMeasurement, .rwfitMeasurementOutcome:
             break
         // `.wearState` is a live condition the measurement flow reacts to, not data — nothing to store.

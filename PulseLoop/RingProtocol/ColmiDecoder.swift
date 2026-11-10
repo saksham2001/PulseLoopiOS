@@ -248,6 +248,10 @@ struct ColmiDecoder {
             return decodeSpo2(v, calendar: calendar)
         case ColmiCommandID.bigDataSleep:
             return decodeSleep(v, calendar: calendar)
+        case ColmiCommandID.bigDataSleepNap:
+            // QRing's `parseDaySleepLunch` reads the same `[daysAgo][len][start][end][pairs…]` record
+            // as the main-sleep action (PulseLoopAndroid `ColmiDecoder.kt:337-341`).
+            return decodeSleep(v, calendar: calendar)
         case ColmiCommandID.bigDataTemperature:
             return decodeTemperature(v, calendar: calendar)
         default:

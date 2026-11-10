@@ -66,8 +66,13 @@ final class LuckRingDriver: WearableDriver {
     func ingest(_ data: Data, from characteristic: CBUUID) -> [RingDecodedEvent] {
         guard let frame = assembler.append(data) else { return [] }
 
-        // ACK a device-initiated SEND before decoding — the ring retransmits until we do.
-        if frame.cmdType == .send {
+        // ACK every completed device frame before decoding, exactly as the vendor SDK does: the K6 proxy's
+        // `CEProtocolB.Analysis` tags each reassembled non-ACK frame `CMD_APP_ACK_TYPE` whatever its
+        // cmdType (SEND *and* SEND_NO_ACK/REQUEST — history arrives as SEND_NO_ACK), except dataType 144,
+        // and `CEDevQueue` pushes the ACK. The ring retransmits an un-ACKed SEND and treats an ACKed
+        // history frame as delivered — this is how the vendor app lets the ring move past data it has
+        // already handed over (it never sends the destructive `cleanData` 207 after a sync).
+        if frame.cmdType != .ack, frame.dataType != LuckRingDataType.noAckData {
             writer?.enqueue(packetizer.ack(dataType: frame.dataType, seq: frame.seq, devType: frame.devType))
         }
 

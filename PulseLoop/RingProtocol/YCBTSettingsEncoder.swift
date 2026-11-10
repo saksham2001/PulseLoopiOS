@@ -82,7 +82,7 @@ struct YCBTSettingsEncoder {
 
     /// The five background samplers, each `{enable, intervalMinutes}`. **These — not the `05 4x` burst
     /// PulseLoop used to send — are what make the ring record anything between syncs.** `05 40…4E` are
-    /// the Health *Delete* opcodes.
+    /// the Health *Delete* opcodes; only `YCBTHistoryTransfer` sends them, after a durable commit.
     ///
     /// `MeasurementSettings` has no blood-pressure flag (no other family has an all-day BP sampler), and
     /// the ring derives BP from the same PPG sweep as heart rate, so BP rides the HR toggle.

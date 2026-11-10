@@ -524,4 +524,134 @@ final class YCBTHistoryTransferTests: XCTestCase {
         XCTAssertTrue(writer.sent.isEmpty, "a cancelled transfer must not keep querying")
         XCTAssertFalse(transfer.isActive)
     }
+
+    // MARK: Silent types (session memory)
+
+    private let spo2Query = Data([0x05, 0x1a])
+
+    /// Walk whatever the engine queued: every query is answered "no data", except `silentKey`, which
+    /// gets nothing at all — the watchdog has to skip it. Returns the query keys in the order asked.
+    private func walk(_ transfer: YCBTHistoryTransfer, _ writer: FakeWriter,
+                      silentOn silentKey: UInt8? = nil) async throws -> [UInt8] {
+        let isQuery: (Data) -> Bool = { $0.count == 2 && $0[0] == 0x05 }
+        var requested: [UInt8] = []
+        while let query = writer.sent.last(where: isQuery) {
+            requested.append(query[1])
+            writer.sent.removeAll()
+            if query[1] == silentKey {
+                for _ in 0..<500 where !writer.sent.contains(where: isQuery) && transfer.isActive {
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                }
+                XCTAssertFalse(writer.sent.contains { $0.starts(with: [0x05, 0x80]) }, "a skip never ACKs")
+            } else {
+                _ = transfer.handle(cmd: query[1], payload: [0x00])
+            }
+        }
+        XCTAssertFalse(transfer.isActive, "the walk must finish")
+        return requested
+    }
+
+    /// The R99 never answers `05 1a` — no header, no error, nothing. That costs the watchdog once; after
+    /// that, neither a vitals backfill nor the 30-minute pass on the same connection asks again.
+    func testASilentTypeIsSkippedOnceThenNotAskedAgainOnTheSameConnection() async throws {
+        let writer = FakeWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+        let engine = YCBTSyncEngine(writer: writer, transfer: transfer, profile: .permissiveTestProfile)
+
+        engine.syncVitalsHistory()
+        let first = try await walk(transfer, writer, silentOn: 0x1a)
+        XCTAssertEqual(first, [0x06, 0x09, 0x1a], "the first pass asks, and the watchdog skips it")
+
+        engine.syncVitalsHistory()
+        let backfill = try await walk(transfer, writer)
+        XCTAssertEqual(backfill, [0x06, 0x09], "the next backfill no longer waits on the silent log")
+
+        engine.syncHistory()
+        let periodic = try await walk(transfer, writer)
+        XCTAssertEqual(periodic, [0x02, 0x04, 0x06, 0x08, 0x09, 0x1e, 0x2f, 0x33],
+                       "nor does the periodic full pass")
+    }
+
+    /// The memory belongs to one link: after a disconnect (`cancel()`, which the driver calls on both
+    /// `connectionDidEnd` and `connectionDidStart`) a silent type is asked again. A `0xFC` rejection, by
+    /// contrast, is a firmware fact and outlives the reconnect.
+    func testASilentTypeIsAskedAgainAfterAReconnect() async throws {
+        let writer = FakeWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+
+        transfer.start(types: [.heart, .spo2])
+        _ = transfer.handle(cmd: 0x06, payload: [0xfc])   // heart: unsupported key
+        try await waitForWrite(spo2Query, by: writer)     // spo2: asked…
+        for _ in 0..<500 where transfer.isActive { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertFalse(transfer.isActive, "…and skipped by the watchdog")
+
+        writer.sent.removeAll()
+        transfer.start(types: [.heart, .spo2])
+        XCTAssertTrue(writer.sent.isEmpty, "both are remembered on this connection")
+
+        transfer.cancel()
+        transfer.start(types: [.heart, .spo2])
+        XCTAssertEqual(writer.sent, [spo2Query], "a new link asks the silent type again, not the rejected one")
+    }
+
+    /// A ring that *answered* — a header, or even just a data frame — and then stalled has a transfer
+    /// that went wrong, not a log it lacks. The next pass must try it again.
+    func testATypeThatAnsweredThenStalledIsNotRememberedAsSilent() async throws {
+        for firstFrame in [(cmd: UInt8(0x1a), payload: header(records: 2, packets: 1, bytes: heartBuffer.count)),
+                           (cmd: UInt8(0x22), payload: heartBuffer)] {
+            let writer = FakeWriter()
+            let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+
+            transfer.start(types: [.spo2])
+            _ = transfer.handle(cmd: firstFrame.cmd, payload: firstFrame.payload)
+            for _ in 0..<500 where transfer.isActive { try await Task.sleep(nanoseconds: 1_000_000) }
+            XCTAssertFalse(transfer.isActive, "the watchdog skips the stalled type")
+
+            writer.sent.removeAll()
+            transfer.start(types: [.spo2])
+            XCTAssertEqual(writer.sent, [spo2Query], "a type that replied on 0x\(String(firstFrame.cmd, radix: 16)) is asked again")
+        }
+    }
+
+    /// `05 80` carries no type identity, so a late terminal for the previous type is not an answer from
+    /// this one: a type that saw nothing else is still silent.
+    func testALateTerminalForThePreviousTypeDoesNotCountAsAnAnswer() async throws {
+        let writer = FakeWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+
+        transfer.start(types: [.spo2])
+        _ = transfer.handle(cmd: 0x80, payload: terminal(packets: 1, buffer: heartBuffer))
+        for _ in 0..<500 where transfer.isActive { try await Task.sleep(nanoseconds: 1_000_000) }
+
+        writer.sent.removeAll()
+        transfer.start(types: [.spo2])
+        XCTAssertTrue(writer.sent.isEmpty)
+    }
+
+    /// Only the vendor-unqueried logs (`05 1a`, `05 1e`) may be remembered as silent. A core log that
+    /// misses one reply is asked again on the very next pass — skipping it until a reconnect could let it
+    /// fill up unread on a ring that stays connected for days.
+    func testACoreLogThatMissedOneReplyIsAskedAgainNextPass() async throws {
+        let writer = FakeWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+        transfer.start(types: [.all])
+        for _ in 0..<500 where transfer.isActive { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertFalse(transfer.isActive, "the watchdog skips the unanswered pass")
+
+        writer.sent.removeAll()
+        transfer.start(types: [.all])
+        XCTAssertEqual(writer.sent, [allQuery], "the All log is never remembered as silent")
+    }
+
+    /// The bitmap path (`append`) must not re-ask a silent type either.
+    func testAppendSkipsASilentType() async throws {
+        let writer = FakeWriter()
+        let transfer = YCBTHistoryTransfer(writer: writer, inactivitySeconds: 0.05, absoluteCapSeconds: 5)
+        transfer.start(types: [.spo2])
+        for _ in 0..<500 where transfer.isActive { try await Task.sleep(nanoseconds: 1_000_000) }
+
+        writer.sent.removeAll()
+        transfer.append(types: [.spo2, .all])
+        XCTAssertEqual(writer.sent, [allQuery])
+    }
 }

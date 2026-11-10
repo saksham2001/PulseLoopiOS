@@ -170,6 +170,8 @@ final class YCBTDriver: WearableDriver {
     /// catalog while we're disconnected — one `05 xx` query every 10 s — into the write queue, and the
     /// reconnect would flush those stale queries before the handshake, desyncing the fresh transfer
     /// against dumps it never asked for. Killing it at disconnect is the only place that can't race.
+    /// The same goes for the erase phase: its delete watchdog stops here, and a commit verdict that
+    /// lands after the drop is ignored, so nothing is deleted on behalf of a link that's gone.
     func connectionDidEnd() {
         assembler.reset()
         transfer.cancel()
@@ -212,9 +214,13 @@ final class YCBTDriver: WearableDriver {
     /// Fold the ring's own `02 01` reply into what we believe it has. Additive only, exactly as the
     /// coordinator does for the UI-facing set — the bitmap can grant a gated capability, never revoke a
     /// baseline one.
+    ///
+    /// The transfer is told too: from here on `isSupported` filters with the ring's real set, which is
+    /// what makes a saved history log complete enough to erase (`YCBTHistoryTransfer`'s erase phase).
     private func updateCapabilities(from events: [RingDecodedEvent]) {
         for case let .supportFunctions(derived) in events {
             capabilities = profile.refined(bitmapDerived: derived)
+            transfer.noteCapabilityBitmapReceived()
         }
     }
 

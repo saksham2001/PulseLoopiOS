@@ -43,6 +43,29 @@ final class CRPSyncEngine: RingSyncEngine {
     private var historySyncInFlight = false
     private var historyCompletionTask: Task<Void, Never>?
 
+    /// How long a timing vital gets to return its *first* frame before it stops holding the pass
+    /// open. A vital that never answers (stress `2/47` on zaggash's R11 and on the issue-#58 R100,
+    /// which ignore its state read-back `2/45` too) used to keep every pass waiting out the whole
+    /// `historyWatchdogNanos`. A vital that does answer within the window stays pending until its
+    /// terminal frame, bounded only by that watchdog, so this drops no data the ring offers.
+    ///
+    /// Why a timeout and not the connect read-backs (`2/6` HR, `2/7` HRV, `2/8` SpO2, `2/45` stress,
+    /// `2/21` temperature): the vendor ring SDK (`com.crrepa.ble`) gates nothing on them. Its history
+    /// calls are fire-and-forget writes (`k/f` paces on write completion, not on a reply), each
+    /// parser walks its own frames (`h/c.d`: `index + 1` until the terminal one), and there is no
+    /// "pass complete" at all; the Android port likewise only advances the cursor. The read-backs
+    /// can't stand in for the timeout either: the ring that leaves `2/47` silent leaves `2/45`
+    /// silent as well, a monitor that is on can still go unanswered, and they describe the state
+    /// *before* `applyTimingSettings` re-enables everything.
+    ///
+    /// Five seconds covers the connect handshake queued ahead of the history queries on the single
+    /// write channel plus a stored-frame reply; the ring answers the frame-0 queries in send order,
+    /// ahead of any follow-up frame.
+    private let timingFirstFrameWindowNanos: UInt64
+    /// Timing vitals that have not returned any frame yet in the current pass.
+    private var awaitingFirstTimingFrame: Set<Int> = []
+    private var timingFirstFrameTask: Task<Void, Never>?
+
     /// User-chosen all-day measurement config. Applied in the connect handshake and updatable
     /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one, and a fresh R11
     /// ships with every all-day monitor OFF, so it records nothing to sync. We therefore fall back to
@@ -75,12 +98,14 @@ final class CRPSyncEngine: RingSyncEngine {
         writer: RingCommandWriter?,
         // Below RingSyncCoordinator's 20-second stall deadline so this engine's explicit `done` wins.
         historyWatchdogNanos: UInt64 = 15_000_000_000,
+        timingFirstFrameWindowNanos: UInt64 = 5_000_000_000,
         eventSink: @escaping @MainActor (PulseEvent) -> Void = { event in
             Task { PulseEventBus.shared.publish(event) }
         }
     ) {
         self.writer = writer
         self.historyWatchdogNanos = historyWatchdogNanos
+        self.timingFirstFrameWindowNanos = timingFirstFrameWindowNanos
         self.eventSink = eventSink
     }
 
@@ -184,9 +209,14 @@ final class CRPSyncEngine: RingSyncEngine {
         guard !historySyncInFlight else { return }
         historySyncInFlight = true
         pendingTimingHistoryCommands = Self.timingHistoryCommands
+        awaitingFirstTimingFrame = Self.timingHistoryCommands
         eventSink(.syncProgress(stage: "Syncing ring history…"))
         queryAllHistory(includeSleepBackfill: includeSleepBackfill)
-        armHistoryCompletionWatchdog()
+        // Unsupported/disabled streams are allowed to stay silent. A vital silent past the
+        // first-frame window stops holding the pass; the watchdog bounds one that answers and stalls.
+        // Either way the pass completes with whatever the ring did return instead of wedging sync.
+        timingFirstFrameTask = deadline(after: timingFirstFrameWindowNanos) { $0.dropSilentTimingStreams() }
+        historyCompletionTask = deadline(after: historyWatchdogNanos) { $0.finishHistorySync() }
     }
 
     /// CRP history is a standalone query set, so it participates in the coordinator's periodic and
@@ -195,33 +225,44 @@ final class CRPSyncEngine: RingSyncEngine {
         startHistorySync(includeSleepBackfill: false)
     }
 
-    private func armHistoryCompletionWatchdog() {
-        historyCompletionTask?.cancel()
-        let delay = historyWatchdogNanos
-        historyCompletionTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: delay)
+    private func deadline(
+        after nanos: UInt64,
+        _ action: @escaping @MainActor (CRPSyncEngine) -> Void
+    ) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanos)
             guard let self, !Task.isCancelled else { return }
-            // Unsupported/disabled streams are allowed to stay silent. Reaching the bounded deadline
-            // completes the poll with whatever the ring did return instead of wedging sync forever.
-            self.finishHistorySync()
+            action(self)
+        }
+    }
+
+    /// Stop waiting on every timing vital that hasn't returned a single frame by the end of the
+    /// first-frame window (see `timingFirstFrameWindowNanos`). A late reply from a dropped vital is
+    /// still decoded and persisted by the bridge, and `handle` still walks it while the pass is open.
+    private func dropSilentTimingStreams() {
+        guard historySyncInFlight else { return }
+        pendingTimingHistoryCommands.subtract(awaitingFirstTimingFrame)
+        awaitingFirstTimingFrame.removeAll()
+        if pendingTimingHistoryCommands.isEmpty {
+            finishHistorySync()
         }
     }
 
     private func finishHistorySync() {
         guard historySyncInFlight else { return }
-        historySyncInFlight = false
-        pendingTimingHistoryCommands.removeAll()
+        cancelHistorySync()
         requestedTimingFrames.removeAll()
-        historyCompletionTask?.cancel()
-        historyCompletionTask = nil
         eventSink(.syncProgress(stage: "done"))
     }
 
     private func cancelHistorySync() {
         historySyncInFlight = false
         pendingTimingHistoryCommands.removeAll()
+        awaitingFirstTimingFrame.removeAll()
         historyCompletionTask?.cancel()
         historyCompletionTask = nil
+        timingFirstFrameTask?.cancel()
+        timingFirstFrameTask = nil
     }
 
     /// Whether older nights have already been backfilled on this GATT link.
@@ -283,6 +324,8 @@ final class CRPSyncEngine: RingSyncEngine {
         guard historySyncInFlight,
               case let .timingHistoryFrame(cmd, day, frameIndex) = event,
               Self.timingHistoryCommands.contains(cmd) else { return }
+        // Any frame proves the vital answers, so the first-frame window no longer applies to it.
+        awaitingFirstTimingFrame.remove(cmd)
         if day == CRPCommands.historyDayToday,
            frameIndex >= terminalFrameIndex(cmd: cmd) {
             pendingTimingHistoryCommands.remove(cmd)

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Response-driven history transfer. Modern history is consumed only after a durable save;
+/// Response-driven history transfer. Each modern page is consumed only after a durable save;
 /// sleep pages are journaled because a single session can span multiple ring pages.
 @MainActor
 final class RWfitHistorySync {
@@ -134,11 +134,17 @@ final class RWfitHistorySync {
         return outcome
     }
 
+    /// Mirrors the vendor pager (`blesdk/service/p.java:62-79` HR; `v.java` steps, `t.java` sleep,
+    /// `o.java` BP, `n.java` SpO2, `x.java` temperature, `q.java` HRV, `s.java` stress, `m.java`
+    /// blood sugar, `w.java:96-118` today's steps): request `05 xx 10`; a page with records is
+    /// consumed with `05 xx 30` before the next request; a page without records ends the stream and
+    /// is never deleted. Unlike the vendor, which deletes before handing the page to its listeners,
+    /// every page is durable (saved, or journaled for sleep) before its delete is sent.
     private func modern(type: RWfitHistoryType, token: UUID) async throws -> Int {
         guard let key = type.jlType, let request = encoder.historyRequest(framing: .jieli, type: type),
               let deviceIdentifier else { throw RWfitSessionError.unavailable }
-        var combined = RWfitJLTriple.historySync(type: key).bytes
         var pages = 0
+        var saved = 0
         let deadline = Date().addingTimeInterval(180)
         while true {
             try await boundary(token)
@@ -148,37 +154,46 @@ final class RWfitHistorySync {
             guard payload.count >= 3 else { throw RWfitSessionError.invalidResponse }
             pages += 1
             // A broken device must not keep the UI alive by replaying pages forever.
-            guard pages <= 4096, combined.count <= 8 * 1024 * 1024 else { throw RWfitSessionError.invalidResponse }
-            let terminal = payload.count == 3
+            guard pages <= 4096 else { throw RWfitSessionError.invalidResponse }
+            // `051A`'s first page leads with the 16-byte daily total; one carrying no hourly records
+            // is the vendor's empty list too (`x5/b.java:3514-3571`, `w.java:66-92`): import the
+            // total, but end the stream without consuming it.
+            let terminal = payload.count == 3 || (key == 0x1a && pages == 1 && payload.count == 3 + 16)
             if type == .sleep {
                 if !terminal {
                     try RWfitDecoder.validateJieliSleepPage(payload)
+                    // A session can span pages, so the raw page is journaled rather than imported;
+                    // the journal survives disconnection, failed saves, and app restart.
                     try RWfitHistoryPersistence.stageSleepPage(payload, deviceID: deviceIdentifier, pageID: UUID())
                 }
-                // Deleting advances this stream. The raw page is durable even if the session has
-                // not ended yet; the journal survives disconnection, failed saves, and app restart.
+            } else if payload.count > 3 {
+                let events = try decoder.validatedJieliHistory(key: key, payload: payload, continuation: pages > 1)
+                try persist(events)
+                importedRecords += events.count
+                saved += events.count
+                try check(token)
+            }
+            if !terminal {
+                // Deleting advances the stream. A lost reply fails the type (the gate never repeats
+                // a delete); the ring then re-sends at most this already-saved page next sync.
                 _ = try await gate.execute(encoder.historyDelete(type: key), needsPayload: false)
                 try check(token)
-            } else if !terminal {
-                _ = try decoder.validatedJieliHistory(key: key, payload: payload)
-                combined.append(contentsOf: payload.dropFirst(3))
             }
             publish(.syncProgress(stage: "Syncing \(type.label)…"))
             rwfitDiagnostic("History page received", ["type": type.label, "page": String(pages), "bytes": String(payload.count)])
             if terminal { break }
         }
-        let payload = type == .sleep ? try RWfitHistoryPersistence.sleepPayload(deviceID: deviceIdentifier) : combined
-        let events = payload.isEmpty ? [] : try decoder.validatedJieliHistory(key: key, payload: payload)
-        try persist(events)
-        importedRecords += events.count
-        try check(token)
         if type == .sleep {
+            let payload = try RWfitHistoryPersistence.sleepPayload(deviceID: deviceIdentifier)
+            let events = payload.isEmpty ? [] : try decoder.validatedJieliHistory(key: key, payload: payload)
+            try persist(events)
+            importedRecords += events.count
+            saved = events.count
+            try check(token)
             try RWfitHistoryPersistence.clearSleepPages(deviceID: deviceIdentifier)
-        } else {
-            _ = try await gate.execute(encoder.historyDelete(type: key), needsPayload: false)
         }
-        rwfitDiagnostic("History saved", ["type": type.label, "records": String(events.count)])
-        return events.count
+        rwfitDiagnostic("History saved", ["type": type.label, "records": String(saved)])
+        return saved
     }
 
     private func legacy(type: RWfitHistoryType, token: UUID) async throws -> Int {
