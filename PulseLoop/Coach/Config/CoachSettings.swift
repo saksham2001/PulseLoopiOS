@@ -321,12 +321,16 @@ struct CoachSettings: Codable, Equatable {
         return trimmed.isEmpty ? MiniMaxModel.default.rawValue : trimmed
     }
 
-    /// The effort levels the selected preset accepts; `nil` when unknown (a Custom
+    /// The effort levels the selected model accepts; `nil` when unknown (a Custom
     /// slug, a non-preset stored model) or when the provider takes no effort hint.
+    /// A non-preset OpenRouter model uses the levels OpenRouter's live listing gives
+    /// it (`CoachModelCatalog`), once that has been fetched.
     var knownReasoningEfforts: [ReasoningEffort]? {
         switch providerMode {
         case .userOpenAIKey: return CoachModel(rawValue: model)?.reasoningEfforts
-        case .userOpenRouterKey: return OpenRouterModel(rawValue: model)?.reasoningEfforts
+        case .userOpenRouterKey:
+            return OpenRouterModel(rawValue: model)?.reasoningEfforts
+                ?? CoachModelCatalog.cachedEntry(.userOpenRouterKey, model: model)?.reasoningEfforts
         // A non-preset Gemini model may be a 2.5 model, which rejects `thinkingLevel`.
         case .userGeminiKey: return GeminiModel(rawValue: model)?.reasoningEfforts ?? []
         default: return nil

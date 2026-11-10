@@ -49,6 +49,12 @@ struct CoachSettingsSection: View {
         }
     }
 
+    /// The active cloud provider's live model list (advisory; the stored model stays free text).
+    @State private var modelList = CoachModelListLoader()
+    @State private var showAllModels = false
+    /// Bumped whenever the stored keys are re-read, so the model list reloads for a new key.
+    @State private var keyRevision = 0
+
     // OpenAI key state
     @State private var keyDraft: String = ""
     @State private var hasSavedKey: Bool = false
@@ -181,11 +187,23 @@ struct CoachSettingsSection: View {
                                 }
                             }
                         }
+                        if let listing = modelList.listing, modelList.provider == store.settings.providerMode {
+                            Divider()
+                            Button("All models from \(store.settings.providerMode.label) (\(listing.entries.count))…") {
+                                showAllModels = true
+                            }
+                        }
                     }
                 }
 
                 if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
                     customModelField
+                }
+
+                if CoachModelCatalog.supports(store.settings.providerMode) {
+                    CoachModelListStatus(
+                        loader: modelList, provider: store.settings.providerMode, selected: store.settings.model,
+                        keyRevision: keyRevision, showAll: $showAllModels, onPick: { modelPickerBinding.wrappedValue = $0 })
                 }
 
                 // Reasoning effort / Gemini thinking level. The levels differ per model
@@ -612,6 +630,7 @@ struct CoachSettingsSection: View {
     // MARK: - Key actions
 
     private func refreshKeyState() {
+        keyRevision += 1
         hasSavedKey = ((try? openAIKeyStore.readKey()) ?? nil) != nil
         hasGeminiKey = ((try? geminiKeyStore.readKey()) ?? nil) != nil
         hasOpenRouterKey = ((try? openRouterKeyStore.readKey()) ?? nil) != nil
