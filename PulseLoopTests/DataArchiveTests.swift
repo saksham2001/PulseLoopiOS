@@ -14,7 +14,8 @@ final class DataArchiveTests: XCTestCase {
         (try? context.fetchCount(FetchDescriptor<T>())) ?? -1
     }
 
-    /// One row of every model type `SeedData.seedDemo` does NOT create, so seed + these = all 25.
+    /// One row of every model type `SeedData.seedDemo` does NOT create (plus a fixture activity
+    /// bucket alongside the seeded ones), so seed + these = all of them.
     private func insertModelsMissingFromSeed(_ context: ModelContext, deviceId: UUID) {
         context.insert(BatterySample(percent: 57, timestamp: Date(timeIntervalSince1970: 1_750_000_000)))
         context.insert(DeviceMeasurementConfig(deviceId: deviceId))
@@ -87,7 +88,9 @@ final class DataArchiveTests: XCTestCase {
         let refValue = referenceMeasurement.value
         let refTimestamp = referenceMeasurement.timestamp
         let refCapabilities = device.capabilitiesRaw
-        let refBucketEpoch = try XCTUnwrap(try source.fetch(FetchDescriptor<ActivityBucketSample>()).first).startEpoch
+        // The fixture bucket (123 steps / 88 m) — seeded demo buckets sit alongside it.
+        let fixtureBucket = FetchDescriptor<ActivityBucketSample>(predicate: #Predicate { $0.steps == 123 && $0.distanceMeters == 88 })
+        let refBucketEpoch = try XCTUnwrap(try source.fetch(fixtureBucket).first).startEpoch
 
         let defaults = makeSuiteDefaults(#function)
         let attachmentsDir = try makeTempDirectory()
@@ -116,7 +119,7 @@ final class DataArchiveTests: XCTestCase {
         // startEpoch is the bucket's unique upsert key. The fixture deliberately stores a value
         // that differs from what the init would re-derive from the timestamp, so this fails if
         // the importer ever drops the explicit restore.
-        let importedBucket = try XCTUnwrap(try target.fetch(FetchDescriptor<ActivityBucketSample>()).first)
+        let importedBucket = try XCTUnwrap(try target.fetch(fixtureBucket).first)
         XCTAssertEqual(importedBucket.startEpoch, refBucketEpoch)
         XCTAssertNotEqual(importedBucket.startEpoch, Int(importedBucket.timestamp.timeIntervalSince1970))
 

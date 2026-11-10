@@ -189,6 +189,11 @@ final class ActivityDaily {
     /// total adds the BMR baseline at read. Optional/defaulted for additive lightweight migration —
     /// same pattern as `UserProfile`'s physiology fields.
     var estimatedActiveCalories: Double? = nil
+    /// Steps / metres of activity buckets the user deleted from this day (issue #70). The ring's live
+    /// cumulative counter still includes them, so every later live reading is reduced by this much
+    /// before it ratchets the day — see `ActivityBucketDeletion.ratchet`. Defaulted (additive migration).
+    var deletedSteps: Int = 0
+    var deletedDistanceMeters: Double = 0
 
     init(
         id: UUID = UUID(),

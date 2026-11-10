@@ -77,6 +77,9 @@ enum SeedData {
                     activeMinutes: max(8, steps / 230)
                 )
             )
+            // The last week also gets the intraday blocks behind each total, so the Activity
+            // RECORDS card (issue #70) has something to list and delete.
+            if offset >= -6 { seedDemoBuckets(context, day: date, steps: steps, isToday: offset == 0, calendar: calendar, now: now) }
         }
 
         seedVitals(context, now: now, calendar: calendar)
@@ -234,6 +237,23 @@ enum SeedData {
     /// zone-colored charts show their full color range. HR/SpO₂ are dense over the last 24h (the
     /// dashboard's window); the slow vitals span ~30 days so the detail screen's baseline/trend fills.
     @MainActor
+    /// Hourly demo buckets that sum exactly to the day's `steps` (waking hours; today only up to now).
+    private static func seedDemoBuckets(_ context: ModelContext, day: Date, steps: Int, isToday: Bool,
+                                        calendar: Calendar, now: Date) {
+        let lastHour = isToday ? Swift.min(21, calendar.component(.hour, from: now)) : 21
+        let hours = Array(7...Swift.max(7, lastHour))
+        let weights = hours.map { 1.2 + sin(Double($0) * 0.9) + ($0 == 18 ? 2.5 : 0) }
+        let total = weights.reduce(0, +)
+        var remaining = steps
+        for (i, hour) in hours.enumerated() {
+            guard let start = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day) else { continue }
+            let share = i == hours.count - 1 ? remaining : Int(Double(steps) * weights[i] / total)
+            remaining -= share
+            context.insert(ActivityBucketSample(timestamp: start, steps: share,
+                                                distanceMeters: Double(share) * 0.72, source: "mock"))
+        }
+    }
+
     private static func seedVitals(_ context: ModelContext, now: Date, calendar: Calendar) {
         func add(_ kind: MeasurementKind, _ value: Double, _ ts: Date) {
             context.insert(Measurement(kind: kind, value: value, unit: kind.unit, timestamp: ts, source: .mock))

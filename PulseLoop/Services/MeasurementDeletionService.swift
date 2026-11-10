@@ -29,6 +29,16 @@ enum MeasurementDeletionService {
         isTombstoned(key(kind: kind, timestamp: timestamp), context: context)
     }
 
+    /// The `kindRaw` an activity-bucket tombstone carries (issue #70).
+    static let activityKindRaw = "activity_bucket"
+
+    /// The tombstone key for the activity bucket starting at `startEpoch`.
+    static func activityKey(startEpoch: Int) -> String { "activity:\(startEpoch)" }
+
+    static func isActivityBucketDeleted(startEpoch: Int, context: ModelContext) -> Bool {
+        isTombstoned(activityKey(startEpoch: startEpoch), context: context)
+    }
+
     static func isTombstoned(_ key: String, context: ModelContext) -> Bool {
         var descriptor = FetchDescriptor<MeasurementDeletion>(predicate: #Predicate { $0.key == key })
         descriptor.fetchLimit = 1

@@ -828,9 +828,18 @@ enum ActivityService {
             row = ActivityDaily(date: update.date, source: update.source)
             context.insert(row)
         }
-        if let steps = update.steps { row.steps = max(row.steps, steps) }
-        if let calories = update.calories { row.calories = max(row.calories, calories) }
-        if let distanceMeters = update.distanceMeters { row.distanceMeters = max(row.distanceMeters, distanceMeters) }
+        // The ring's cumulative counter still includes any bucket the user deleted from this day
+        // (issue #70); it ratchets only after that deficit is taken off. A day with a deletion keeps
+        // its calories cleared — the ring's figure counts the deleted block and can't be corrected.
+        let hasDeletion = row.deletedSteps > 0 || row.deletedDistanceMeters > 0
+        if let steps = update.steps {
+            row.steps = ActivityBucketDeletion.ratchet(stored: row.steps, ring: steps, deleted: row.deletedSteps)
+        }
+        if let calories = update.calories, !hasDeletion { row.calories = max(row.calories, calories) }
+        if let distanceMeters = update.distanceMeters {
+            row.distanceMeters = ActivityBucketDeletion.ratchet(stored: row.distanceMeters, ring: distanceMeters,
+                                                                deleted: row.deletedDistanceMeters)
+        }
         if let activeMinutes = update.activeMinutes { row.activeMinutes = max(row.activeMinutes, activeMinutes) }
         row.source = update.source
         row.syncedAt = update.syncedAt
@@ -852,8 +861,11 @@ enum ActivityService {
         let dayStart = Calendar.current.startOfDay(for: timestamp)
         let epoch = Int(timestamp.timeIntervalSince1970)
 
-        // Upsert the bucket sample by its unique start epoch (replace on re-sync).
-        if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+        // Upsert the bucket sample by its unique start epoch (replace on re-sync) — unless the user
+        // deleted it (issue #70), in which case the day is recomputed without it.
+        if MeasurementDeletionService.isActivityBucketDeleted(startEpoch: epoch, context: context) {
+            // Tombstoned: nothing to write.
+        } else if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
             predicate: #Predicate { $0.startEpoch == epoch }
         )))?.first {
             existing.steps = steps

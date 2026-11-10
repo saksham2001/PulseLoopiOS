@@ -199,6 +199,9 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
     var syncedAt: Date?
     var createdAt: Date
     var updatedAt: Date
+    /// Issue #70 deletion deficit. Optional so older archives decode.
+    var deletedSteps: Int?
+    var deletedDistanceMeters: Double?
 
     @MainActor init(_ m: ActivityDaily) {
         id = m.id
@@ -211,6 +214,8 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
         syncedAt = m.syncedAt
         createdAt = m.createdAt
         updatedAt = m.updatedAt
+        deletedSteps = m.deletedSteps
+        deletedDistanceMeters = m.deletedDistanceMeters
     }
 
     @MainActor func insert(into context: ModelContext) {
@@ -225,6 +230,8 @@ nonisolated struct ArchiveActivityDaily: Codable, Sendable {
         m.syncedAt = syncedAt
         m.createdAt = createdAt
         m.updatedAt = updatedAt
+        m.deletedSteps = deletedSteps ?? 0
+        m.deletedDistanceMeters = deletedDistanceMeters ?? 0
         context.insert(m)
     }
 }

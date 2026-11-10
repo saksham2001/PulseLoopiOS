@@ -21,11 +21,43 @@ struct ActivityView: View {
     @State private var summary: TodaySummary?
     @State private var stale: [ActivitySession] = []
     @State private var caloriesAvailable = false
+    // Day navigation (issue #76, Sleep's pattern): 0 = today, N = N days earlier. The summary and
+    // RECORDS cards follow the shown day; the weekly widget and today's workouts stay on today.
+    @State private var dayOffset = 0
+    @State private var maxDayOffset = 0
+    @State private var showDayPicker = false
+    @State private var dayTotals = ActivityDayTotals.empty
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var shownDay: Date {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .day, value: -dayOffset, to: today) ?? today
+    }
 
     private func reload() {
         summary = MetricsService.buildTodaySummary(context: modelContext)
         stale = ActivityRecorderService.recoverStaleSession(context: modelContext)
         caloriesAvailable = MetricsService.isVisible(.calories, context: modelContext)
+        maxDayOffset = Self.maxDayOffset(context: modelContext)
+        dayTotals = ActivityDayTotals.load(day: shownDay, context: modelContext)
+    }
+
+    /// How far back the stepper may page: a week before the earliest stored day, one-year floor,
+    /// 0 (locked to today) with nothing stored — the same bound Sleep uses.
+    private static func maxDayOffset(context: ModelContext) -> Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let earliest = MetricsRepository.activityRows(context: context).first?.date else { return 0 }
+        let earliestMinus7 = calendar.date(byAdding: .day, value: -7, to: calendar.startOfDay(for: earliest)) ?? earliest
+        let yearAgo = calendar.date(byAdding: .day, value: -365, to: today) ?? today
+        return max(0, calendar.dateComponents([.day], from: max(earliestMinus7, yearAgo), to: today).day ?? 0)
+    }
+
+    private func setOffset(_ offset: Int) {
+        let clamped = min(maxDayOffset, max(0, offset))
+        guard clamped != dayOffset else { return }
+        withAnimation(reduceMotion ? nil : PulseMotion.spring) { dayOffset = clamped }
     }
 
     var body: some View {
@@ -43,8 +75,17 @@ struct ActivityView: View {
                         StaleSessionRecoveryCard(sessions: stale)
                     }
 
+                    PeriodNavigationHeader(
+                        labels: PeriodNavLabels.day(shownDay),
+                        canGoOlder: dayOffset < maxDayOffset, canGoNewer: dayOffset > 0,
+                        onOlder: { setOffset(dayOffset + 1) }, onNewer: { setOffset(dayOffset - 1) },
+                        onLabelTap: { showDayPicker = true },
+                        animationValue: dayOffset
+                    )
+
                     DailyActivitySummaryCard(
-                        summary: summary,
+                        totals: dayTotals,
+                        goals: summary.goals,
                         units: units,
                         caloriesAvailable: caloriesAvailable
                     ) {
@@ -53,7 +94,8 @@ struct ActivityView: View {
 
                     // Calorie-intake sibling of the daily summary. `summary.nutrition` is only
                     // populated while the nutrition feature is enabled — nothing renders otherwise.
-                    if let nutrition = summary.nutrition {
+                    // Intake is today's only, so it stays off a past day.
+                    if dayOffset == 0, let nutrition = summary.nutrition {
                         NutritionSummaryCard(
                             totals: nutrition,
                             goals: summary.goals,
@@ -159,6 +201,10 @@ struct ActivityView: View {
                     .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 .buttonStyle(.plain)
+
+                // The blocks behind the shown day's total, each removable (issue #70). Below the
+                // summary: it answers "why is that number wrong", asked only after reading it.
+                ActivityRecordsCard(day: shownDay, units: units)
                 }   // if let summary
             }
             .padding(.horizontal, 16)
@@ -171,6 +217,9 @@ struct ActivityView: View {
         .pulseScrollEdges()
         .task(id: dataChange.token) { reload() }
         .onChange(of: sessions.count) { _, _ in reload() }
+        .onChange(of: dayOffset) { _, _ in dayTotals = ActivityDayTotals.load(day: shownDay, context: modelContext) }
+        .sensoryFeedback(.selection, trigger: dayOffset)
+        .sheet(isPresented: $showDayPicker) { dayPickerSheet }
         .sheet(isPresented: $goalsOpen) { GoalEditorSheet() }
         .sheet(isPresented: $historyOpen) {
             WorkoutHistorySheet(units: units) { id in
@@ -178,6 +227,31 @@ struct ActivityView: View {
                 path.append(AppRoute.activityDetail(id))
             }
         }
+    }
+
+    /// Graphical date picker bounded to [oldest browsable day ... today].
+    private var dayPickerSheet: some View {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let floor = calendar.date(byAdding: .day, value: -maxDayOffset, to: today) ?? today
+        let selection = Binding<Date>(
+            get: { shownDay },
+            set: { date in
+                setOffset(calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: today).day ?? 0)
+                showDayPicker = false
+            }
+        )
+        return NavigationStack {
+            DatePicker("Day", selection: selection, in: floor...today, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .padding()
+                .navigationTitle("Choose a day")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { showDayPicker = false } }
+                }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: data
@@ -203,11 +277,12 @@ struct ActivityView: View {
 // MARK: - Daily activity summary widget
 
 /// Full-width Apple-Fitness-style daily summary: colored Steps / Distance / Calories metrics on the
-/// left, three concentric progress rings on the right (outer→inner: steps, distance, calories). Reads
-/// the same daily totals and goals the page already uses; tapping opens the Activity Trends detail.
-/// Missing (nil) metrics render an em dash and an inactive ring — the ring math is nil/zero-safe.
+/// left, three concentric progress rings on the right (outer→inner: steps, distance, calories). Shows
+/// the day the Activity header is on; tapping opens the Activity Trends detail. Missing (nil) metrics
+/// render an em dash and an inactive ring — the ring math is nil/zero-safe.
 struct DailyActivitySummaryCard: View {
-    let summary: TodaySummary
+    let totals: ActivityDayTotals
+    let goals: GoalsSummary
     let units: UnitsPreference
     /// Whether the paired ring supports active-energy tracking. When false, calories are treated as
     /// unavailable (em dash + inactive ring) rather than showing whatever raw value the ring reports.
@@ -216,19 +291,19 @@ struct DailyActivitySummaryCard: View {
 
     /// Calories only when the device actually tracks them; otherwise nil so text shows "—" and the
     /// ring stays a muted track (matches the Today page's `isVisible(.calories)` gating).
-    private var effectiveCalories: Double? { caloriesAvailable ? summary.calories : nil }
+    private var effectiveCalories: Double? { caloriesAvailable ? totals.calories : nil }
     /// The goal ring measures active energy (`UserGoal.calories` is an active-energy goal), even
     /// when the displayed number is an estimated total that includes the BMR baseline.
-    private var effectiveActiveCalories: Double? { caloriesAvailable ? summary.activeCalories : nil }
+    private var effectiveActiveCalories: Double? { caloriesAvailable ? totals.activeCalories : nil }
 
     private var distanceUnit: String { UnitsFormatter.distance(meters: 0, units: units).unit }
-    private var distanceValue: String? { summary.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value } }
+    private var distanceValue: String? { totals.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value } }
     /// Goal distance converted to the display unit, matching `distanceValue`, so the ring and text agree.
     private var distanceGoalDisplay: Double {
-        Double(UnitsFormatter.distance(meters: summary.goals.distanceMetersDaily, units: units).value) ?? 0
+        Double(UnitsFormatter.distance(meters: goals.distanceMetersDaily, units: units).value) ?? 0
     }
     private var distanceDisplay: Double? {
-        summary.distanceMeters.flatMap { Double(UnitsFormatter.distance(meters: $0, units: units).value) }
+        totals.distanceMeters.flatMap { Double(UnitsFormatter.distance(meters: $0, units: units).value) }
     }
 
     var body: some View {
@@ -237,7 +312,7 @@ struct DailyActivitySummaryCard: View {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 18) {
                         HStack(alignment: .top, spacing: 12) {
-                            metric(label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
+                            metric(label: "Steps", value: totals.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
                             metric(label: "Distance", value: distanceValue ?? "—", unit: distanceValue == nil ? nil : distanceUnit, color: PulseColors.distance)
                         }
                         metric(label: "Calories", value: effectiveCalories.map { Int($0).formatted() } ?? "—", unit: effectiveCalories == nil ? nil : "cal", color: PulseColors.calories)
@@ -245,9 +320,9 @@ struct DailyActivitySummaryCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     ActivityRingsView(rings: [
-                        ActivityRing(value: summary.steps.map(Double.init), goal: Double(summary.goals.stepsDaily), color: PulseColors.steps),
+                        ActivityRing(value: totals.steps.map(Double.init), goal: Double(goals.stepsDaily), color: PulseColors.steps),
                         ActivityRing(value: distanceDisplay, goal: distanceGoalDisplay, color: PulseColors.distance),
-                        ActivityRing(value: effectiveActiveCalories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
+                        ActivityRing(value: effectiveActiveCalories, goal: Double(goals.caloriesDaily), color: PulseColors.calories)
                     ], size: 112, stroke: 11, spacing: 5)
                     .frame(width: 112, height: 112)
                 }
