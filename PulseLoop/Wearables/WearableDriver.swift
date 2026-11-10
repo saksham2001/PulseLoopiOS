@@ -135,6 +135,10 @@ struct MeasurementSettings: Sendable, Equatable {
     /// All-day HR sampling interval in minutes (Colmi clamps to 5…60 in 5-min steps).
     var hrIntervalMinutes: Int
     var spo2Enabled: Bool
+    /// All-day SpO₂ interval in minutes; `0` follows `hrIntervalMinutes`, which is what every family
+    /// did before this existed. Only rings whose SpO₂ monitor takes its own interval byte act on it
+    /// (`RingDeviceType.supportsSeparateSpO2Interval`).
+    var spo2IntervalMinutes: Int = 0
     var stressEnabled: Bool
     var hrvEnabled: Bool
     var temperatureEnabled: Bool

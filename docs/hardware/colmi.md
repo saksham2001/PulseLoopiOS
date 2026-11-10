@@ -261,6 +261,14 @@ SmartHealth itself never requests. The R99 never answers that query at all — n
 PulseLoop gives up after its 10-second timeout and doesn't ask again until the ring reconnects. Each
 connection costs one 10-second wait, not one per sync.
 
+### Measurement intervals
+
+The SmartHealth-Colmi takes the same five `01 xx {enable, interval}` monitor writes as the TK5: heart rate
+every **30–120 minutes** (120 is past SmartHealth's own 60-minute menu, but a ring ACKed `01 0c 01 78` and
+logged at 10:00 and 12:00), every other monitor at most hourly. Blood oxygen can run on its **own** 30–60
+minute interval or follow heart rate — on at least one ring the interval byte is accepted and ignored, so
+SpO₂ stays on the heart-rate cadence. There is no stress toggle: YCBT has no stress monitor command.
+
 ### Hourly SpO₂ estimated from heart rate
 
 On at least one SmartHealth-Colmi the **hourly** SpO₂ in the combined record is not a measurement: across

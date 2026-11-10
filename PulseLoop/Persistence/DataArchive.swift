@@ -509,6 +509,8 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
     var hrIntervalMinutes: Int
     var hrEnabled: Bool
     var spo2Enabled: Bool
+    /// Optional so archives written before the SpO₂ interval existed still decode (as "follow HR").
+    var spo2IntervalMinutes: Int?
     var stressEnabled: Bool
     var hrvEnabled: Bool
     var temperatureEnabled: Bool
@@ -519,6 +521,7 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
         hrIntervalMinutes = m.hrIntervalMinutes
         hrEnabled = m.hrEnabled
         spo2Enabled = m.spo2Enabled
+        spo2IntervalMinutes = m.spo2IntervalMinutes
         stressEnabled = m.stressEnabled
         hrvEnabled = m.hrvEnabled
         temperatureEnabled = m.temperatureEnabled
@@ -530,6 +533,7 @@ nonisolated struct ArchiveDeviceMeasurementConfig: Codable, Sendable {
         m.hrIntervalMinutes = hrIntervalMinutes
         m.hrEnabled = hrEnabled
         m.spo2Enabled = spo2Enabled
+        m.spo2IntervalMinutes = spo2IntervalMinutes ?? 0
         m.stressEnabled = stressEnabled
         m.hrvEnabled = hrvEnabled
         m.temperatureEnabled = temperatureEnabled

@@ -534,10 +534,14 @@ final class UserGoal {
 @Model
 final class DeviceMeasurementConfig {
     @Attribute(.unique) var deviceId: UUID
-    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps.
+    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps; YCBT rings 30…120
+    /// (`RingDeviceType.heartRateIntervalRange`).
     var hrIntervalMinutes: Int = 5
     var hrEnabled: Bool = true
     var spo2Enabled: Bool = true
+    /// All-day SpO₂ interval, minutes; `0` = follow the heart-rate interval (what every row did before
+    /// this existed, so the additive default is lossless).
+    var spo2IntervalMinutes: Int = 0
     var stressEnabled: Bool = true
     var hrvEnabled: Bool = true
     var temperatureEnabled: Bool = true
@@ -553,6 +557,7 @@ final class DeviceMeasurementConfig {
             hrEnabled: hrEnabled,
             hrIntervalMinutes: hrIntervalMinutes,
             spo2Enabled: spo2Enabled,
+            spo2IntervalMinutes: spo2IntervalMinutes,
             stressEnabled: stressEnabled,
             hrvEnabled: hrvEnabled,
             temperatureEnabled: temperatureEnabled

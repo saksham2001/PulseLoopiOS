@@ -165,6 +165,22 @@ final class CRPSyncEngineTests: XCTestCase {
         XCTAssertEqual(w.payloadByte(index, 6), 0, "a disabled vital sends interval 0, not the default")
     }
 
+    /// The SpO₂ timing command carries blood oxygen's own interval when one is set (Android #66), and
+    /// the heart-rate interval when it is 0.
+    func testSpO2TimingCarriesItsOwnIntervalWhenSet() {
+        func spo2Interval(_ settings: MeasurementSettings) -> Int? {
+            let w = FakeWriter()
+            let engine = CRPSyncEngine(writer: w)
+            engine.applyMeasurementSettings(settings)
+            return w.opcodes.firstIndex(of: [1, 8]).map { w.payloadByte($0, 6) }
+        }
+        var settings = MeasurementSettings.allOnDefault
+        settings.hrIntervalMinutes = 10
+        XCTAssertEqual(spo2Interval(settings), 10)
+        settings.spo2IntervalMinutes = 30
+        XCTAssertEqual(spo2Interval(settings), 30)
+    }
+
     /// The history pull uses the group-2 opcodes. Temperature is cmd **22** (`b1/i0.b`) — cmd 48 is
     /// the vendor's `querySleepState`, which is why the ring never answered the old query.
     func testRunStartupQueriesHistoryOnGroupTwo() {

@@ -22,6 +22,11 @@ struct YCBTSettingsEncoder {
     /// for rings: `if (isRing() && interval < 30) interval = 30`). The vendor default is 60.
     static let minimumIntervalMinutes = 30
     static let defaultIntervalMinutes = 60
+    /// Every monitor but heart rate stays at most hourly. 120 minutes is evidenced on the heart-rate key
+    /// alone (a ring ACKed `01 0c 01 78` and read at 10:00 and 12:00, Android #103); the other samplers
+    /// keep the 60-minute ceiling the settings screen always had, so their on-air bytes are unchanged
+    /// by a longer heart-rate interval.
+    static let monitorIntervalCeilingMinutes = 60
 
     /// Clamp a user-chosen cadence into what the firmware will actually accept. PulseLoop's shared
     /// `MeasurementSettings` default is 5 minutes (a Colmi cadence), which this floors to 30 rather
@@ -88,13 +93,21 @@ struct YCBTSettingsEncoder {
     /// the ring derives BP from the same PPG sweep as heart rate, so BP rides the HR toggle.
     /// `stressEnabled` has no YCBT monitor command — the ring stores stress in the body-data history
     /// record (`05 33`), it doesn't sample it on its own schedule.
+    ///
+    /// Heart rate carries its own interval (up to 120 min); the rest are capped at
+    /// `monitorIntervalCeilingMinutes`. Blood oxygen carries `spo2IntervalMinutes` where the user set one
+    /// (Android #66) — `0` follows the (capped) heart-rate interval, which is what it always did.
     func monitorCommands(_ settings: MeasurementSettings) -> [[UInt8]] {
-        let interval = Self.clampInterval(settings.hrIntervalMinutes)
+        let heartRateInterval = Self.clampInterval(settings.hrIntervalMinutes)
+        let interval = min(heartRateInterval, UInt8(Self.monitorIntervalCeilingMinutes))
+        let spo2Interval = settings.spo2IntervalMinutes > 0
+            ? min(Self.clampInterval(settings.spo2IntervalMinutes), UInt8(Self.monitorIntervalCeilingMinutes))
+            : interval
         return [
-            heartMonitor(enabled: settings.hrEnabled, intervalMinutes: interval),
+            heartMonitor(enabled: settings.hrEnabled, intervalMinutes: heartRateInterval),
             bloodPressureMonitor(enabled: settings.hrEnabled, intervalMinutes: interval),
             temperatureMonitor(enabled: settings.temperatureEnabled, intervalMinutes: interval),
-            bloodOxygenMonitor(enabled: settings.spo2Enabled, intervalMinutes: interval),
+            bloodOxygenMonitor(enabled: settings.spo2Enabled, intervalMinutes: spo2Interval),
             hrvMonitor(enabled: settings.hrvEnabled, intervalMinutes: interval),
         ]
     }

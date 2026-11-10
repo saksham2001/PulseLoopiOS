@@ -380,8 +380,8 @@ final class CRPSyncEngine: RingSyncEngine {
     }
 
     /// Send the all-day enable/disable command for every vital. The CRP protocol takes a single
-    /// interval byte per enable, and `MeasurementSettings` carries only `hrIntervalMinutes` (no
-    /// per-vital cadence), so the HR interval is shared across the board. Disabled vitals are
+    /// interval byte per enable, and `MeasurementSettings` carries a per-vital cadence only for blood
+    /// oxygen (Android #66) — HRV and stress still share the heart-rate interval. Disabled vitals are
     /// explicitly turned off so a reconnect can't leave a previously-enabled monitor running.
     private func applyTimingSettings(_ settings: MeasurementSettings) {
         if settings.hrEnabled {
@@ -400,7 +400,9 @@ final class CRPSyncEngine: RingSyncEngine {
             send(CRPProtocol.disableTimingStress())
         }
         if settings.spo2Enabled {
-            send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes))
+            // 0 means "follow heart rate", which is what this leg did unconditionally before.
+            let interval = settings.spo2IntervalMinutes > 0 ? settings.spo2IntervalMinutes : settings.hrIntervalMinutes
+            send(CRPProtocol.enableTimingSpO2(intervalMinutes: interval))
         } else {
             send(CRPProtocol.disableTimingSpO2())
         }

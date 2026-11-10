@@ -100,7 +100,7 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | VO₂max | 🧪 | raw byte taken unscaled | body-data record @16 |
 | Battery level | 🧪 | — | in-band: `02 00` reply payload[5], plus the unprompted `06 15` push |
 | Find device | 🧪 | **the command's three payload bytes** | `03 00 {01, 05, 02}` — the app's literal arguments; the SDK never names them |
-| Measurement intervals | 🧪 | — | five `01 xx {enable, interval}` monitors; floored at the firmware's 30-min minimum |
+| Measurement intervals | 🧪 | — | five `01 xx {enable, interval}` monitors; floored at the firmware's 30-min minimum; heart rate runs 30–120 min (`01 0c 01 78` = 120 min, hardware-verified on a SmartHealth ring), every other monitor at most hourly. Blood oxygen can take its own 30–60 min interval (`01 26`) or follow heart rate; one ring ACKed the byte and kept SpO₂ on the heart-rate cadence anyway. No stress toggle — YCBT has no stress monitor command |
 | Periodic re-sync while connected | ✅ | — | every 30 min (SmartHealth's own cadence), plus a post-workout vitals pass |
 | Continuous background sync | ❌ | — | the ring is only read while connected |
 | FW update via app | ❌ | — | out of scope — would require the JieLi RCSP auth (see below) |

@@ -73,6 +73,42 @@ final class YCBTEncoderTests: XCTestCase {
         ])
     }
 
+    /// 120 minutes is evidenced on the heart-rate key only (Android #103: the ring ACKed `01 0c 01 78`
+    /// and read at 10:00 and 12:00). Every other sampler keeps the 60-minute ceiling, so its bytes are
+    /// what the settings screen's old 60-minute cap always produced.
+    func testHeartRateCarriesOneHundredTwentyMinutesWhileTheOtherMonitorsKeepTheHourlyCeiling() {
+        let settings = MeasurementSettings(
+            hrEnabled: true, hrIntervalMinutes: 120,
+            spo2Enabled: true, stressEnabled: true, hrvEnabled: true, temperatureEnabled: true
+        )
+        XCTAssertEqual(encoder.monitorCommands(settings), [
+            [0x01, 0x0c, 0x01, 0x78],
+            [0x01, 0x1c, 0x01, 60],
+            [0x01, 0x20, 0x01, 60],
+            [0x01, 0x26, 0x01, 60],
+            [0x01, 0x45, 0x01, 60, 0, 0, 0],
+        ])
+    }
+
+    /// Blood oxygen carries its own interval when one is set (Android #66), floored at the firmware's
+    /// 30 and capped at the hourly ceiling; 0 keeps following heart rate.
+    func testBloodOxygenCarriesItsOwnIntervalWhenSet() {
+        var settings = MeasurementSettings(
+            hrEnabled: true, hrIntervalMinutes: 30,
+            spo2Enabled: true, stressEnabled: true, hrvEnabled: true, temperatureEnabled: true
+        )
+        settings.spo2IntervalMinutes = 45
+        XCTAssertEqual(encoder.monitorCommands(settings)[3], [0x01, 0x26, 0x01, 45])
+        XCTAssertEqual(encoder.monitorCommands(settings)[0], [0x01, 0x0c, 0x01, 30], "heart rate is unaffected")
+
+        settings.spo2IntervalMinutes = 10
+        XCTAssertEqual(encoder.monitorCommands(settings)[3], [0x01, 0x26, 0x01, 30])
+        settings.spo2IntervalMinutes = 120
+        XCTAssertEqual(encoder.monitorCommands(settings)[3], [0x01, 0x26, 0x01, 60])
+        settings.spo2IntervalMinutes = 0
+        XCTAssertEqual(encoder.monitorCommands(settings)[3], [0x01, 0x26, 0x01, 30])
+    }
+
     // MARK: User profile
 
     /// The old encoder replayed the capture's `01 03 aa 40 00 2b` blob — 170 cm / 64 kg / 43 y — for
