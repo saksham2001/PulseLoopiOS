@@ -164,7 +164,7 @@ final class TodayStore {
         // signature and the next refresh rebuilds — otherwise a hide/show or chart-detail change
         // wouldn't take effect on the tab until an unrelated sync bumped the signature.
         let p = MetricPrefsStore.shared.settings
-        let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)"
+        let prefSig = "\(p.todayHiddenMetrics.sorted().joined(separator: ","))/\(p.todayResolution.rawValue)/\(p.hideEstimatedSpO2)"
 
         // The daily goal targets feed the rings tile (via `goalsSummary`) but aren't otherwise
         // observed, so a goal edit must change the signature or the rings keep filling against the

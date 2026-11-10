@@ -96,7 +96,7 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | Stress | 🔓 | — | ring-declared (`IS_HAS_PRESSURE`, byte 22 bit 6). **Ring-stored**, from the body-data record (`05 33`) — the SDK's `pressure` field |
 | Fatigue | 🔓 | — | ring-declared on the **same bit as stress**: no `ISHASFATIGUE` exists, but the vendor app gates the whole `05 33` query on `IS_HAS_PRESSURE`, and fatigue (the SDK's `body` field) is a field of that one record. No body data ⇒ neither score |
 | Blood sugar | 🔓 | **one real reading — the scale is inferred, not observed** | ring-declared (`ISHASBLOODSUGAR`, byte 17 bit 3). All record @17 and the comprehensive record (`05 2F`); tenths of mmol/L → mg/dL |
-| Respiratory rate | 🧪 | — | All record @10 |
+| Respiratory rate | 🧪 | — | All record @10 — about 0.2 × heart rate, so it is shown in PulseLoop but never exported to Apple Health |
 | VO₂max | 🧪 | raw byte taken unscaled | body-data record @16 |
 | Battery level | 🧪 | — | in-band: `02 00` reply payload[5], plus the unprompted `06 15` push |
 | Find device | 🧪 | **the command's three payload bytes** | `03 00 {01, 05, 02}` — the app's literal arguments; the SDK never names them |

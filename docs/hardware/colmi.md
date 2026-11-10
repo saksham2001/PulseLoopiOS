@@ -276,6 +276,12 @@ least 24 pairs, at least 12 repeated heart rates, more than one SpO₂ value, an
 paired with two SpO₂ values. The SpO₂ card then carries an ESTIMATED chip and a note, the Today tile an
 amber "Estimated from heart rate" caption, and the detail chart a disclaimer. Stored data is unchanged.
 
+**Hide estimated SpO₂** (Settings → Vitals or Today, on by default for YCBT rings) drops those hourly
+estimates from every chart, card and "latest" value, leaving only real spot readings; turn it off to see
+them, labelled. Either way they are **never exported to Apple Health**. Neither is **respiratory rate**
+from any YCBT ring: the combined record's respiration byte is about 0.2 × heart rate, not a breathing
+measurement, so its Apple Health toggle is greyed out with that explanation.
+
 ### 🧪 Still unconfirmed
 
 **Sleep** is the one significant path no SmartHealth-Colmi has exercised yet. Everything else above is

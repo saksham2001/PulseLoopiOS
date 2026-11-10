@@ -22,7 +22,8 @@ enum MetricsService {
         // per-kind to match Vitals when a database mixes real + mock across different metrics.) This is
         // one fetch per kind — same fetch count as the previous inline query.
         let hrSamples = rangeSamples(kind: .heartRate, range: .twentyFourHours, context: context)
-        let spo2Samples = rangeSamples(kind: .spo2, range: .twentyFourHours, context: context)
+        // SpO₂ goes through the same estimated-hourly filter `metricRange` applies (`EstimatedSpO2`).
+        let spo2Samples = spo2Window(range: .twentyFourHours, context: context).samples
         // Display copies go through the same `displaySamples` transform Vitals applies (resolution
         // downsampling). Byte-identical to `metricRange`'s output, so the sparkline shape matches too.
         let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours, scope: scope)
@@ -33,7 +34,7 @@ enum MetricsService {
         // Flatten the latest live readings to value snapshots immediately so nothing downstream
         // (or the cached TodaySummary) holds a live SwiftData object.
         let latestHR = LatestReading(MetricsRepository.latestMeasurement(kind: .heartRate, context: context))
-        let latestSpO2 = LatestReading(MetricsRepository.latestMeasurement(kind: .spo2, context: context))
+        let latestSpO2 = latestShownSpO2(context: context)
         let calibration = calibrationState(device: device, activityRows: activityRows, isDemo: isDemo, context: context)
         let hrFreshness = freshness(lastUpdatedAt: latestHR?.timestamp, isDemo: isDemo)
         let spo2Freshness = freshness(lastUpdatedAt: latestSpO2?.timestamp, isDemo: isDemo)
@@ -97,7 +98,7 @@ enum MetricsService {
         case .heartRate:
             raw = rangeSamples(kind: .heartRate, range: range, context: context)
         case .spo2:
-            raw = rangeSamples(kind: .spo2, range: range, context: context)
+            return spo2Series(range: range, context: context, scope: scope).samples
         case .stress:
             raw = rangeSamples(kind: .stress, range: range, context: context)
         case .hrv:
@@ -125,16 +126,44 @@ enum MetricsService {
     /// unlabelled by re-deriving the samples on its own.
     struct SpO2Series {
         let samples: [MetricSample]
+        /// True only when estimated rows are *shown* — with "Hide estimated SpO₂" on they are filtered
+        /// out instead, so nothing on screen needs the label.
         let isEstimated: Bool
     }
 
-    /// `metricRange(.spo2, …)` with the estimated-hourly verdict attached. The verdict reads the raw
-    /// rows, before display bucketing averages their timestamps away.
+    /// `metricRange(.spo2, …)` with the estimated-hourly verdict applied: hidden when the user hides
+    /// estimates (the default), otherwise flagged. The verdict reads the raw rows, before display
+    /// bucketing averages their timestamps away.
     static func spo2Series(range: MetricRange, context: ModelContext, scope: MetricScope = .vitals) -> SpO2Series {
+        let window = spo2Window(range: range, context: context)
+        return SpO2Series(samples: displaySamples(window.samples, range: range, scope: scope),
+                          isEstimated: window.isEstimated)
+    }
+
+    /// The raw (un-bucketed) SpO₂ rows of a window after the hide-estimated preference.
+    private static func spo2Window(range: MetricRange, context: ModelContext) -> (samples: [MetricSample], isEstimated: Bool) {
         let raw = rangeSamples(kind: .spo2, range: range, context: context)
         let estimated = estimatedSpO2Timestamps(in: raw, context: context)
-        return SpO2Series(samples: displaySamples(raw, range: range, scope: scope),
-                          isEstimated: raw.contains { estimated.contains($0.timestamp) })
+        guard !estimated.isEmpty else { return (raw, false) }
+        if MetricPrefsStore.shared.settings.hideEstimatedSpO2 {
+            return (raw.filter { !estimated.contains($0.timestamp) }, false)
+        }
+        return (raw, raw.contains { estimated.contains($0.timestamp) })
+    }
+
+    /// The newest SpO₂ reading to present as "latest". With estimates hidden, an hourly row the ring
+    /// computed from heart rate never surfaces here either — the newest *measured* reading does, from
+    /// the last 500 rows (weeks of hourly history), or none.
+    static func latestShownSpO2(context: ModelContext) -> LatestReading? {
+        let latest = MetricsRepository.latestMeasurement(kind: .spo2, context: context)
+        guard MetricPrefsStore.shared.settings.hideEstimatedSpO2, let at = latest?.timestamp,
+              EstimatedSpO2.estimatedTimestamps(from: at, to: at, context: context).contains(at)
+        else { return LatestReading(latest) }
+        let recent = MetricsRepository.measurements(kind: .spo2, start: .distantPast, end: .distantFuture,
+                                                    limit: 500, context: context)   // newest first
+        guard let newest = recent.first?.timestamp, let oldest = recent.last?.timestamp else { return nil }
+        let estimated = EstimatedSpO2.estimatedTimestamps(from: oldest, to: newest, context: context)
+        return LatestReading(recent.first { !estimated.contains($0.timestamp) })
     }
 
     /// The estimated-hourly SpO₂ timestamps across the span of `samples` (empty for an empty window).

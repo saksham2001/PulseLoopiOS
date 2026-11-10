@@ -153,7 +153,7 @@ final class VitalsStore {
         // signature and the next refresh rebuilds — otherwise it wouldn't take effect on the tab until
         // an unrelated sync bumped the signature.
         let p = MetricPrefsStore.shared.settings
-        let prefSig = "\(p.hiddenMetrics.sorted().joined(separator: ","))/\(p.resolution.rawValue)"
+        let prefSig = "\(p.hiddenMetrics.sorted().joined(separator: ","))/\(p.resolution.rawValue)/\(p.hideEstimatedSpO2)"
 
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),

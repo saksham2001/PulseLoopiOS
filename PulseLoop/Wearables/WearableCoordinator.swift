@@ -48,6 +48,18 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     }
 }
 
+extension RingDeviceType {
+    /// The families that speak the Yucheng YCBT protocol and share the whole `YCBT*` stack (driver,
+    /// encoder, decoder, history transfer). A protocol fact rather than a capability: what the ring's
+    /// settings commands accept, and how it fills its history records, follow from it.
+    var speaksYCBT: Bool {
+        switch self {
+        case .tk5, .colmiSmartHealth, .ycbt: return true
+        case .jring, .colmiR02, .luckRing, .rwfit, .crp: return false
+        }
+    }
+}
+
 /// The advertisement facts a coordinator needs to claim a discovered peripheral, wrapped so
 /// `matches` doesn't depend on CoreBluetooth's raw `[String: Any]` advertisement dictionary.
 struct AdvertisementInfo {

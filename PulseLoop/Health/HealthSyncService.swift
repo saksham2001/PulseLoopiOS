@@ -216,10 +216,26 @@ final class HealthSyncService {
         let rows = (try? context.fetch(descriptor)) ?? []
         guard !rows.isEmpty else { return }
 
+        // Estimates never leave PulseLoop: hourly SpO₂ the ring computed from heart rate, and the
+        // respiratory rate a YCBT ring derives from it. Skipped rows still advance the watermark — they
+        // are a verdict, not a failure, so there is nothing to retry.
+        var estimatedSpO2: Set<Date> = []
+        if kind == .spo2, let first = rows.map(\.timestamp).min(), let last = rows.map(\.timestamp).max() {
+            estimatedSpO2 = EstimatedSpO2.estimatedTimestamps(from: first, to: last, now: now, context: context)
+        }
+        let respiratoryRateDerived = kind == .respiratoryRate
+            && HealthKitTypeMappings.derivesRespiratoryRate(DeviceRepository.current(context: context)?.deviceType)
+
         // Chunk of 1,000 per save; advance the watermark after each successful chunk so an interrupted
         // backfill resumes and re-runs stay harmless (upsert).
         for chunk in rows.chunked(into: 1000) {
-            let samples = chunk.compactMap { vitalSample(row: $0, mapping: mapping, kindRaw: raw, now: now, device: device) }
+            let samples = chunk
+                .filter {
+                    HealthKitTypeMappings.shouldExport(kind: kind, value: $0.value, timestamp: $0.timestamp,
+                                                       estimatedSpO2: estimatedSpO2,
+                                                       respiratoryRateDerived: respiratoryRateDerived)
+                }
+                .compactMap { vitalSample(row: $0, mapping: mapping, kindRaw: raw, now: now, device: device) }
             if !samples.isEmpty {
                 try await save(samples)
                 counts.vitals += samples.count

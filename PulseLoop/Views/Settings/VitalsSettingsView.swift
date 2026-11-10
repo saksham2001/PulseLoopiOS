@@ -27,12 +27,34 @@ struct MetricPrefsSettingsView: View {
         }
     }
 
+    /// Only YCBT rings log hourly SpO₂ in a record that can be told apart from a spot reading (see
+    /// `EstimatedSpO2`), so the toggle is offered where it can ever change something.
+    private var offersEstimatedSpO2Toggle: Bool {
+        MetricsService.supports(.spo2, context: modelContext)
+            && DeviceRepository.current(context: modelContext)?.deviceType.speaksYCBT == true
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 SettingsGroup(header: "Visible tiles", footer: visibilityBlurb) {
                     ForEach(supported, id: \.metric) { item in
                         visibilityRow(item.metric, label: item.label, color: item.color)
+                    }
+                }
+
+                if offersEstimatedSpO2Toggle {
+                    SettingsGroup(
+                        header: "Blood oxygen",
+                        footer: "Some rings fill their hourly SpO₂ from heart rate instead of measuring it. When PulseLoop "
+                            + "detects that, hiding those estimates shows only real spot readings on charts, cards and "
+                            + "the latest value — on every page. Your stored data is unchanged, and estimates are never "
+                            + "exported to Apple Health."
+                    ) {
+                        FormToggleRow(title: "Hide estimated SpO₂", isOn: Binding(
+                            get: { store.settings.hideEstimatedSpO2 },
+                            set: { store.settings.hideEstimatedSpO2 = $0 }
+                        ))
                     }
                 }
 

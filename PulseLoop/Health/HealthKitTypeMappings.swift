@@ -85,6 +85,30 @@ enum HealthKitTypeMappings {
         (60...250).contains(systolic) && (30...160).contains(diastolic) && systolic > diastolic
     }
 
+    // MARK: - Export filtering
+
+    /// Rings whose respiratory rate is a function of heart rate (about 0.2 × HR), not a measurement:
+    /// the YCBT families fill the combined record's respiration byte that way. Exporting it would put a
+    /// heart-rate restatement into Health as breathing data, so it is never written for them.
+    static func derivesRespiratoryRate(_ deviceType: RingDeviceType?) -> Bool {
+        deviceType?.speaksYCBT == true
+    }
+
+    /// Whether one stored vital belongs in Apple Health: plausible after conversion, not an hourly SpO₂
+    /// the ring computed from heart rate (`estimatedSpO2`, from `EstimatedSpO2`), and not a respiratory
+    /// rate from a ring that derives it. Estimates stay in PulseLoop — labelled — and never leave it.
+    static func shouldExport(kind: MeasurementKind, value: Double, timestamp: Date,
+                             estimatedSpO2: Set<Date> = [], respiratoryRateDerived: Bool = false) -> Bool {
+        guard let mapping = quantityMapping(for: kind) else { return false }
+        let converted = mapping.convert(value)
+        guard converted.isFinite, mapping.isPlausible(converted) else { return false }
+        switch kind {
+        case .spo2: return !estimatedSpO2.contains(timestamp)
+        case .respiratoryRate: return !respiratoryRateDerived
+        default: return true
+        }
+    }
+
     // MARK: - Workouts
 
     /// Maps a PulseLoop activity type onto the closest `HKWorkoutActivityType`.

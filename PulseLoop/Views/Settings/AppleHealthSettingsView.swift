@@ -104,14 +104,29 @@ struct AppleHealthSettingsView: View {
         SettingsGroup(
             header: "Data types",
             footer: "Stress and fatigue have no Apple Health equivalent — Health has no type for a device "
-                + "wellness score — so they can't be synced. Rows appear only for metrics your ring can produce."
+                + "wellness score — so they can't be synced. Rows appear only for metrics your ring can produce. "
+                + "Hourly blood oxygen a ring estimates from heart rate is never exported; spot readings are."
         ) {
             FormToggleRow(title: "Heart rate", isOn: prefBinding(\.syncHeartRate))
             FormToggleRow(title: "Blood oxygen", isOn: prefBinding(\.syncSpO2))
             FormToggleRow(title: "Heart rate variability", isOn: prefBinding(\.syncHRV))
             FormToggleRow(title: "Temperature", isOn: prefBinding(\.syncTemperature))
             if shows(.respiratoryRate) {
-                FormToggleRow(title: "Respiratory rate", isOn: prefBinding(\.syncRespiratoryRate))
+                if respiratoryRateDerived {
+                    // The toggle can't do anything for this ring, so it reads as off and says why.
+                    VStack(alignment: .leading, spacing: 2) {
+                        FormToggleRow(title: "Respiratory rate", isOn: .constant(false))
+                            .disabled(true)
+                        Text("Derived from heart rate by this ring — not exported.")
+                            .font(.caption)
+                            .foregroundStyle(PulseColors.textMuted)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
+                    }
+                    .opacity(0.6)
+                } else {
+                    FormToggleRow(title: "Respiratory rate", isOn: prefBinding(\.syncRespiratoryRate))
+                }
             }
             if shows(.vo2max) {
                 FormToggleRow(title: "Cardio fitness (VO₂max)", isOn: prefBinding(\.syncVO2Max))
@@ -125,6 +140,13 @@ struct AppleHealthSettingsView: View {
             FormToggleRow(title: "Sleep", isOn: prefBinding(\.syncSleep))
             FormToggleRow(title: "Steps & activity", isOn: prefBinding(\.syncActivity))
         }
+    }
+
+    /// YCBT rings compute respiratory rate from heart rate, so the export skips it for them.
+    private var respiratoryRateDerived: Bool {
+        HealthKitTypeMappings.derivesRespiratoryRate(
+            ble.activeDeviceType ?? DeviceRepository.current(context: modelContext)?.deviceType
+        )
     }
 
     /// Whether to offer a toggle for a ring-dependent metric.

@@ -142,12 +142,10 @@ final class EstimatedSpO2Tests: XCTestCase {
 
     // MARK: - Over SwiftData
 
-    /// The store glue reads only the ring's own history rows: a derived ring's hourly rows are labelled,
-    /// a live spot reading beside them is not, and the 24h series reports itself as estimated.
+    /// A derived ring's last 30 hours in the store (hourly SpO₂ + respiration + HR history) plus one
+    /// live spot reading ten minutes ago.
     @MainActor
-    func testStoreBackedVerdictLabelsHistoryHourlyRowsOnly() throws {
-        let context = try TestSupport.makeContext()
-        let now = Date()
+    private func seedDerivedRing(_ context: ModelContext, now: Date) throws -> (hourly: [Date], spot: Date) {
         let hours = 30
         var hourlyTimes: [Date] = []
         for i in 0..<hours {
@@ -161,12 +159,35 @@ final class EstimatedSpO2Tests: XCTestCase {
         let spot = now.addingTimeInterval(-600)
         insert(.spo2, 99, spot, .live, context)
         try context.save()
+        return (hourlyTimes, spot)
+    }
+
+    /// Runs `body` with the shared display prefs at full resolution and the given hide setting, then
+    /// restores whatever was there (the store is `UserDefaults`-backed and shared across tests).
+    @MainActor
+    private func withPrefs(hideEstimated: Bool, _ body: () throws -> Void) rethrows {
+        let saved = MetricPrefsStore.shared.settings
+        defer { MetricPrefsStore.shared.settings = saved }
+        var prefs = saved
+        prefs.resolution = .full
+        prefs.todayResolution = .full
+        prefs.hideEstimatedSpO2 = hideEstimated
+        MetricPrefsStore.shared.settings = prefs
+        try body()
+    }
+
+    /// The store glue reads only the ring's own history rows: a derived ring's hourly rows are labelled,
+    /// a live spot reading beside them is not.
+    @MainActor
+    func testStoreBackedVerdictLabelsHistoryHourlyRowsOnly() throws {
+        let context = try TestSupport.makeContext()
+        let now = Date()
+        let seeded = try seedDerivedRing(context, now: now)
 
         let labelled = EstimatedSpO2.estimatedTimestamps(from: now.addingTimeInterval(-86_400 * 2), to: now,
                                                          now: now, context: context)
-        XCTAssertEqual(labelled, Set(hourlyTimes))
-        XCTAssertFalse(labelled.contains(spot))
-        XCTAssertTrue(MetricsService.spo2Series(range: .twentyFourHours, context: context).isEstimated)
+        XCTAssertEqual(labelled, Set(seeded.hourly))
+        XCTAssertFalse(labelled.contains(seeded.spot))
     }
 
     @MainActor
@@ -174,7 +195,7 @@ final class EstimatedSpO2Tests: XCTestCase {
         let context = try TestSupport.makeContext()
         let now = Date()
         for i in 0..<30 {
-            let t = now.addingTimeInterval(-Double(30 - i) * hour)
+            let t = now.addingTimeInterval(-Double(30 - i) * hour + 34)
             let hr = heartRates[i % heartRates.count]
             insert(.spo2, Double(ringSpO2(hr)), t, .history, context)
             insert(.heartRate, Double(hr), t, .history, context)
@@ -182,7 +203,71 @@ final class EstimatedSpO2Tests: XCTestCase {
         try context.save()
         XCTAssertTrue(EstimatedSpO2.estimatedTimestamps(from: now.addingTimeInterval(-86_400 * 2), to: now,
                                                         now: now, context: context).isEmpty)
-        XCTAssertFalse(MetricsService.spo2Series(range: .twentyFourHours, context: context).isEstimated)
+        try withPrefs(hideEstimated: true) {
+            let series = MetricsService.spo2Series(range: .twentyFourHours, context: context)
+            XCTAssertFalse(series.isEstimated)
+            XCTAssertEqual(series.samples.count, 24, "nothing judged, so nothing hidden")
+        }
+    }
+
+    // MARK: - Hide estimated SpO₂ (Android #134)
+
+    func testHideEstimatedDefaultsOnAndSurvivesAnOlderSavedBlob() throws {
+        XCTAssertTrue(MetricPrefs.default.hideEstimatedSpO2)
+        let legacy = try JSONDecoder().decode(MetricPrefs.self, from: Data(#"{"hiddenMetrics":["hrv"]}"#.utf8))
+        XCTAssertTrue(legacy.hideEstimatedSpO2, "a blob saved before the setting existed gets the default")
+        XCTAssertEqual(legacy.hiddenMetrics, ["hrv"])
+    }
+
+    /// Hidden (the default): only the real spot reading is charted, the series needs no label, and the
+    /// latest value is the spot reading even though an hourly estimate is newer than nothing else.
+    @MainActor
+    func testHidingEstimatesLeavesOnlySpotReadings() throws {
+        let context = try TestSupport.makeContext()
+        let seeded = try seedDerivedRing(context, now: Date())
+        try withPrefs(hideEstimated: true) {
+            let series = MetricsService.spo2Series(range: .twentyFourHours, context: context)
+            XCTAssertFalse(series.isEstimated)
+            XCTAssertEqual(series.samples.map(\.timestamp), [seeded.spot])
+            XCTAssertEqual(MetricsService.metricRange(metric: .spo2, range: .twentyFourHours, context: context)
+                .map(\.timestamp), [seeded.spot])
+            let summary = MetricsService.buildTodaySummary(context: context)
+            XCTAssertEqual(summary.trends.spo2Samples24h.map(\.timestamp), [seeded.spot])
+        }
+    }
+
+    /// With the newest row an hourly estimate, "latest" falls back to the newest measured reading.
+    @MainActor
+    func testLatestSkipsANewerEstimateWhenHidden() throws {
+        let context = try TestSupport.makeContext()
+        let now = Date()
+        let seeded = try seedDerivedRing(context, now: now.addingTimeInterval(-1800))
+        // One more hourly record, newer than the spot reading.
+        let newest = now.addingTimeInterval(-60)
+        insert(.spo2, 98, newest, .history, context)
+        insert(.respiratoryRate, 15, newest, .history, context)
+        insert(.heartRate, 75, newest.addingTimeInterval(-5), .history, context)
+        try context.save()
+
+        try withPrefs(hideEstimated: true) {
+            XCTAssertEqual(MetricsService.latestShownSpO2(context: context)?.timestamp, seeded.spot)
+        }
+        try withPrefs(hideEstimated: false) {
+            XCTAssertEqual(MetricsService.latestShownSpO2(context: context)?.timestamp, newest)
+        }
+    }
+
+    /// Shown: every row is charted and the series carries the estimated flag for the chip/caption.
+    @MainActor
+    func testShowingEstimatesKeepsThemLabelled() throws {
+        let context = try TestSupport.makeContext()
+        let seeded = try seedDerivedRing(context, now: Date())
+        try withPrefs(hideEstimated: false) {
+            let series = MetricsService.spo2Series(range: .twentyFourHours, context: context)
+            XCTAssertTrue(series.isEstimated)
+            let inWindow = seeded.hourly.filter { $0 >= Date().addingTimeInterval(-86_400) }
+            XCTAssertEqual(series.samples.count, inWindow.count + 1)
+        }
     }
 
     @MainActor
