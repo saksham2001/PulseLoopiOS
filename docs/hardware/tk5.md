@@ -85,7 +85,7 @@ promise — the app claims it unconditionally, and the bitmap can only ever *add
 | Heart rate — live | 🧪 | — | verified against the capture (climbed 82→86) |
 | Heart rate — history | 🧪 | — | `05 06` query, 6-byte records |
 | SpO₂ — spot | 🧪 | — | red/IR LED, `03 2f` mode `02` |
-| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants. A ring that never answers the `05 1A` query is asked once per connection (see [below](#how-pulseloop-diverges-from-smarthealth)) |
+| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants. A ring that never answers the `05 1A` query is asked once per connection (see [below](#how-pulseloop-diverges-from-smarthealth)). Hourly All-record rows are labelled *estimated* when this ring's own data show them to be a fixed function of heart rate ([how](colmi.md#hourly-spo2-estimated-from-heart-rate)) |
 | Steps / distance / calories | 🧪 | distance & calories byte offsets in the `06 00` live push | live push + `05 02` history buckets + the All record's cumulative counter |
 | Sleep (light / deep / awake) | 🧪 | — | `05 04` timeline; stage = `tag & 0x0F` |
 | REM sleep | 🧪 | — | stage tag `3` — a stage *inside* the timeline `ISHASSLEEP` grants, so no bit names it and it is not gated |

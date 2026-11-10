@@ -12,6 +12,8 @@ final class VitalsStore {
     private(set) var summary: TodaySummary
     private(set) var hrSamples: [MetricSample]
     private(set) var spo2Samples: [MetricSample]
+    /// The 24h SpO₂ series holds hourly readings computed from heart rate (`EstimatedSpO2`).
+    private(set) var spo2IsEstimated = false
     private(set) var stressSamples: [MetricSample]
     private(set) var hrvSamples: [MetricSample]
     private(set) var tempSamples: [MetricSample]
@@ -45,7 +47,9 @@ final class VitalsStore {
         self.profile = profile
         self.summary = MetricsService.buildTodaySummary(context: modelContext)
         self.hrSamples = MetricsService.metricRange(metric: .heartRate, range: .twentyFourHours, context: modelContext)
-        self.spo2Samples = MetricsService.metricRange(metric: .spo2, range: .twentyFourHours, context: modelContext)
+        let spo2 = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext)
+        self.spo2Samples = spo2.samples
+        self.spo2IsEstimated = spo2.isEstimated
         self.stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
         self.hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         self.tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
@@ -87,7 +91,9 @@ final class VitalsStore {
     private func rebuild(signature sig: String) {
         summary = MetricsService.buildTodaySummary(context: modelContext)
         hrSamples = MetricsService.metricRange(metric: .heartRate, range: .twentyFourHours, context: modelContext)
-        spo2Samples = MetricsService.metricRange(metric: .spo2, range: .twentyFourHours, context: modelContext)
+        let spo2 = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext)
+        spo2Samples = spo2.samples
+        spo2IsEstimated = spo2.isEstimated
         stressSamples = MetricsService.metricRange(metric: .stress, range: .twentyFourHours, context: modelContext)
         hrvSamples = MetricsService.metricRange(metric: .hrv, range: .twentyFourHours, context: modelContext)
         tempSamples = MetricsService.metricRange(metric: .temperature, range: .twentyFourHours, context: modelContext)
@@ -109,6 +115,7 @@ final class VitalsStore {
             hr: hrSamples, spo2: spo2Samples, hrv: hrvSamples,
             stress: stressSamples, fatigue: fatigueSamples, temperature: tempSamples,
             systolic: systolicSamples, diastolic: diastolicSamples, glucose: bloodSugarSamples,
+            spo2Estimated: spo2IsEstimated,
             summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric
         )
         var result: [MetricKind: VitalCardViewModel] = [:]

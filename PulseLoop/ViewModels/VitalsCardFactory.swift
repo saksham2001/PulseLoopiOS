@@ -16,6 +16,9 @@ enum VitalsCardFactory {
         var systolic: [MetricSample] = []
         var diastolic: [MetricSample] = []
         var glucose: [MetricSample] = []
+        /// The SpO₂ series holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
+        /// Spot readings never set it.
+        var spo2Estimated: Bool = false
         var summary: TodaySummary?
         var range: MetricRange = .twentyFourHours
         var now: Date = Date()
@@ -86,7 +89,7 @@ enum VitalsCardFactory {
             referenceBands: [ReferenceBand(lower: 95, upper: 100, colorToken: .cyan)],
             dashedRules: [92],
             trend: TrendSummary.compute(samples: chart, metric: .spo2, unitLabel: "%"),
-            sourceQuality: quality, isEstimated: false, confidenceLabel: nil,
+            sourceQuality: quality, isEstimated: inputs.spo2Estimated, confidenceLabel: nil,
             lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
             isEmpty: samples.count < 2
         )

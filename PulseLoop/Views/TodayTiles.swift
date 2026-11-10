@@ -298,6 +298,12 @@ struct TodayChartTile: View {
                         .lineLimit(1)
                 }
             }
+            // Hourly SpO₂ computed from heart rate is labelled on every surface it reaches.
+            if model.metric == .spo2 && model.isEstimated {
+                Text("Estimated from heart rate")
+                    .font(PulseFont.caption2).foregroundStyle(PulseColors.warning)
+                    .lineLimit(1).truncationMode(.tail)
+            }
             Spacer(minLength: 0)
             if model.isEmpty {
                 Text(model.statusText)

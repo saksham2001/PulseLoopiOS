@@ -16,6 +16,8 @@ struct MetricDetailView: View {
     @State private var period: DetailPeriod = .today
     @State private var primary: [MetricSample] = []
     @State private var secondary: [MetricSample] = []   // diastolic, for BP
+    /// The SpO₂ window holds hourly readings this ring computed from heart rate (`EstimatedSpO2`).
+    @State private var spo2Estimated = false
     /// Observed so the detail chart/tiles re-fetch when a background sync lands while this is open.
     @State private var dataChange = PulseDataChange.shared
 
@@ -258,6 +260,11 @@ struct MetricDetailView: View {
         if metric == .bloodPressure {
             primary = MetricsService.metricRange(metric: .bloodPressureSystolic, range: period.range, context: modelContext)
             secondary = MetricsService.metricRange(metric: .bloodPressureDiastolic, range: period.range, context: modelContext)
+        } else if metric == .spo2 {
+            let series = MetricsService.spo2Series(range: period.range, context: modelContext)
+            primary = series.samples
+            secondary = []
+            spo2Estimated = series.isEstimated
         } else {
             primary = MetricsService.metricRange(metric: metric.metricKey, range: period.range, context: modelContext)
             secondary = []
@@ -315,7 +322,7 @@ struct MetricDetailView: View {
     }
 
     private var isEstimatedMetric: Bool {
-        metric == .glucose
+        metric == .glucose || (metric == .spo2 && spo2Estimated)
     }
 
     private var explainerText: String {
@@ -353,6 +360,8 @@ struct MetricDetailView: View {
         case .glucose:
             return "Estimated wellness metric — not for dosing or diabetes decisions. No smart ring or watch is "
                 + "FDA-authorized to measure or estimate glucose on its own."
+        case .spo2:
+            return EstimatedSpO2.disclaimer
         case .bloodPressure:
             return "Ring blood pressure is an estimate. Calibrate against a validated cuff in Settings → Calibration, "
                 + "and talk to a clinician about persistent high or low readings."

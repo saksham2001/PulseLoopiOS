@@ -98,7 +98,8 @@ final class TodayStore {
             MetricsService.metricRange(metric: metric, range: .twentyFourHours, context: modelContext, scope: .today)
         }
         let hr = series(.heartRate)
-        let spo2 = series(.spo2)
+        let spo2Series = MetricsService.spo2Series(range: .twentyFourHours, context: modelContext, scope: .today)
+        let spo2 = spo2Series.samples
         let hrv = series(.hrv)
         let stress = series(.stress)
         let fatigue = series(.fatigue)
@@ -118,6 +119,7 @@ final class TodayStore {
             hr: hr, spo2: spo2, hrv: hrv,
             stress: stress, fatigue: fatigue, temperature: temperature,
             systolic: systolic, diastolic: diastolic, glucose: glucose,
+            spo2Estimated: spo2Series.isEstimated,
             summary: summary, range: .twentyFourHours, units: profile?.units ?? .metric
         )
         var result: [MetricKind: VitalCardViewModel] = [:]

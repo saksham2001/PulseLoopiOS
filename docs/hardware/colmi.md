@@ -261,6 +261,21 @@ SmartHealth itself never requests. The R99 never answers that query at all — n
 PulseLoop gives up after its 10-second timeout and doesn't ask again until the ring reconnects. Each
 connection costs one 10-second wait, not one per sync.
 
+### Hourly SpO₂ estimated from heart rate
+
+On at least one SmartHealth-Colmi the **hourly** SpO₂ in the combined record is not a measurement: across
+304 records read off the ring, the same heart rate always came with the same SpO₂ (HR 48 → 88, 57 → 94,
+67–92 → 98, 105 → 96, never 99), so a night-time "dip" just follows a low sleeping heart rate. Its
+**spot** SpO₂ is real (red LED, readings up to 99).
+
+PulseLoop decides this **per ring, from its own data**, not per family — any YCBT ring qualifies. A
+history SpO₂ row is *hourly* only when a respiratory-rate row shares its exact timestamp (a spot
+record logs respiration 0, which is never stored), and hourly rows are labelled *estimated* only when,
+over the last 7 days, pairing each with the nearest heart-rate history row within 2 minutes gives at
+least 24 pairs, at least 12 repeated heart rates, more than one SpO₂ value, and **no** heart rate ever
+paired with two SpO₂ values. The SpO₂ card then carries an ESTIMATED chip and a note, the Today tile an
+amber "Estimated from heart rate" caption, and the detail chart a disclaimer. Stored data is unchanged.
+
 ### 🧪 Still unconfirmed
 
 **Sleep** is the one significant path no SmartHealth-Colmi has exercised yet. Everything else above is

@@ -120,6 +120,29 @@ enum MetricsService {
         return displaySamples(raw, range: range, scope: scope)
     }
 
+    /// An SpO₂ window plus whether it holds hourly readings the ring computed from heart rate rather
+    /// than measured (`EstimatedSpO2`). Carried with the series so no surface can show those rows
+    /// unlabelled by re-deriving the samples on its own.
+    struct SpO2Series {
+        let samples: [MetricSample]
+        let isEstimated: Bool
+    }
+
+    /// `metricRange(.spo2, …)` with the estimated-hourly verdict attached. The verdict reads the raw
+    /// rows, before display bucketing averages their timestamps away.
+    static func spo2Series(range: MetricRange, context: ModelContext, scope: MetricScope = .vitals) -> SpO2Series {
+        let raw = rangeSamples(kind: .spo2, range: range, context: context)
+        let estimated = estimatedSpO2Timestamps(in: raw, context: context)
+        return SpO2Series(samples: displaySamples(raw, range: range, scope: scope),
+                          isEstimated: raw.contains { estimated.contains($0.timestamp) })
+    }
+
+    /// The estimated-hourly SpO₂ timestamps across the span of `samples` (empty for an empty window).
+    private static func estimatedSpO2Timestamps(in samples: [MetricSample], context: ModelContext) -> Set<Date> {
+        guard let first = samples.first?.timestamp, let last = samples.last?.timestamp else { return [] }
+        return EstimatedSpO2.estimatedTimestamps(from: min(first, last), to: max(first, last), context: context)
+    }
+
     /// The display transform applied to already-fetched, windowed samples: bucket-average per the
     /// user's graph-resolution preference (`.full`/targetBuckets 0 is identity). This is the SINGLE
     /// source of truth for the vitals sparkline/chart shape, so any caller that runs it over the same
