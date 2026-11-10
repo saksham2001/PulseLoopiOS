@@ -28,6 +28,8 @@ final class CRPSyncEngine: RingSyncEngine {
     private weak var writer: RingCommandWriter?
     private var profile: UserProfileValues?
     private let historyWatchdogNanos: UInt64
+    /// Wall clock for the 20:00 sleep guard; injectable so tests don't depend on the time they run.
+    private let now: () -> Date
     private let eventSink: @MainActor (PulseEvent) -> Void
 
     /// The four framed timing streams that have a protocol-defined terminal cursor. Sleep and
@@ -99,11 +101,13 @@ final class CRPSyncEngine: RingSyncEngine {
         // Below RingSyncCoordinator's 20-second stall deadline so this engine's explicit `done` wins.
         historyWatchdogNanos: UInt64 = 15_000_000_000,
         timingFirstFrameWindowNanos: UInt64 = 5_000_000_000,
+        now: @escaping () -> Date = Date.init,
         eventSink: @escaping @MainActor (PulseEvent) -> Void = { event in
             Task { PulseEventBus.shared.publish(event) }
         }
     ) {
         self.writer = writer
+        self.now = now
         self.historyWatchdogNanos = historyWatchdogNanos
         self.timingFirstFrameWindowNanos = timingFirstFrameWindowNanos
         self.eventSink = eventSink
@@ -127,6 +131,7 @@ final class CRPSyncEngine: RingSyncEngine {
         cancelHistorySync()
         connectionQueriesSent = false
         sleepBackfillSent = false
+        sleepBackfillDeferred = false
         requestedTimingFrames.removeAll()
     }
 
@@ -199,8 +204,16 @@ final class CRPSyncEngine: RingSyncEngine {
         send(CRPProtocol.queryTimingHrvHistory())
         send(CRPProtocol.queryTimingStressHistory())
         send(CRPProtocol.queryHistoryTemp())
+        // The ring dates its sleep replies by its own clock against the 20:00 turnover, and the decoder
+        // by the phone's when the reply lands. Straddling 20:00 the two disagree by a day and the night
+        // is filed a day early. So a pass this close to 20:00 leaves sleep — the per-link backfill
+        // included — to the next one (~30 min later).
+        if CRPDecoder.nearSleepDayRollover(now()) {
+            if includeSleepBackfill { sleepBackfillDeferred = true }
+            return
+        }
         send(CRPProtocol.queryHistorySleep())
-        if includeSleepBackfill { sendSleepBackfill() }
+        if includeSleepBackfill || sleepBackfillDeferred { sendSleepBackfill() }
     }
 
     /// Start one standalone history pass. Periodic BLE wakeups can race the foreground timer, so a
@@ -267,6 +280,8 @@ final class CRPSyncEngine: RingSyncEngine {
 
     /// Whether older nights have already been backfilled on this GATT link.
     private var sleepBackfillSent = false
+    /// The startup pass fell inside the 20:00 guard, so the next periodic pass sends the backfill.
+    private var sleepBackfillDeferred = false
 
     /// Pull the nights *before* today, once per connection.
     ///
@@ -277,6 +292,8 @@ final class CRPSyncEngine: RingSyncEngine {
     /// Safe to send blind. Each reply is self-describing: `payload[0]` is the ring's own day index,
     /// so `CRPDecoder.decodeSleep` dates a night from the reply rather than from what we asked for,
     /// and a day the ring has no record of simply produces no reply — the same nothing we get today.
+    /// That index counts back from the ring's sleep day, which turns over at 20:00, not midnight:
+    /// after 8 PM last night is day 1 (see `CRPDecoder.decodeSleep`).
     ///
     /// Once per connection, and deliberately short of the decoder's 14-day ceiling. This ring
     /// funnels the handshake, timing config, history pull
@@ -285,6 +302,7 @@ final class CRPSyncEngine: RingSyncEngine {
     private func sendSleepBackfill() {
         if sleepBackfillSent { return }
         sleepBackfillSent = true
+        sleepBackfillDeferred = false
         // Half-open on purpose: `crpSleepBackfillDays` is documented as a knob to raise or lower, and
         // `1...0` would trap at runtime if it were ever turned down to "today only".
         for daysAgo in 1..<(crpSleepBackfillDays + 1) {

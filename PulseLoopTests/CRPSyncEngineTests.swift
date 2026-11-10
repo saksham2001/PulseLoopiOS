@@ -15,6 +15,10 @@ final class CRPSyncEngineTests: XCTestCase {
         func payloadByte(_ frame: Int, _ index: Int) -> Int { Int([UInt8](sent[frame])[index]) }
     }
 
+    /// A sync time well clear of the 20:00 sleep-day guard, so tests that count sleep queries don't
+    /// depend on when they run.
+    private static let afternoon = Calendar.current.date(bySettingHour: 14, minute: 0, second: 0, of: Date())!
+
     private func finishTimingHistory(_ engine: CRPSyncEngine) {
         engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 1))
         engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingSpO2, day: 0, frameIndex: 1))
@@ -93,7 +97,7 @@ final class CRPSyncEngineTests: XCTestCase {
     /// blind — a day the ring has no record of simply produces no reply.
     func testSleepBackfillPullsThePriorWeekOncePerConnection() {
         let w = FakeWriter()
-        let engine = CRPSyncEngine(writer: w)
+        let engine = CRPSyncEngine(writer: w, now: { Self.afternoon })
         engine.runStartup()
         let sleepDays = w.opcodes.indices
             .filter { w.opcodes[$0] == [2, 14] }
@@ -185,7 +189,7 @@ final class CRPSyncEngineTests: XCTestCase {
     /// the vendor's `querySleepState`, which is why the ring never answered the old query.
     func testRunStartupQueriesHistoryOnGroupTwo() {
         let w = FakeWriter()
-        let engine = CRPSyncEngine(writer: w)
+        let engine = CRPSyncEngine(writer: w, now: { Self.afternoon })
         engine.runStartup()
         for cmd in [15, 17, 16, 47, 22, 14] {   // HR, SpO2, HRV, stress, temp, sleep
             XCTAssertTrue(w.opcodes.contains([2, cmd]), "expected group2/cmd\(cmd) history query")
@@ -284,12 +288,32 @@ final class CRPSyncEngineTests: XCTestCase {
         XCTAssertTrue(w.sent.isEmpty)
     }
 
+    /// A pass within 5 minutes of the ring's 20:00 sleep-day turnover sends no sleep query (its reply
+    /// would be dated against the wrong day); the per-link backfill waits for the next pass.
+    func testSleepQueriesWaitOutThe2000Turnover() {
+        let w = FakeWriter()
+        var clock = Calendar.current.date(bySettingHour: 19, minute: 58, second: 0, of: Date())!
+        let engine = CRPSyncEngine(writer: w, now: { clock })
+        engine.runStartup()
+        XCTAssertFalse(w.opcodes.contains([2, 14]), "no sleep query at 19:58")
+        XCTAssertTrue(w.opcodes.contains([2, 15]), "the rest of the history pass still runs")
+
+        finishTimingHistory(engine)
+        w.sent.removeAll()
+        clock = Calendar.current.date(bySettingHour: 20, minute: 30, second: 0, of: Date())!
+        engine.syncHistory()
+        let sleepDays = w.opcodes.indices
+            .filter { w.opcodes[$0] == [2, 14] }
+            .map { w.payloadByte($0, 6) }
+        XCTAssertEqual(sleepDays, [0, 1, 2, 3, 4, 5, 6], "the next pass sends sleep and the deferred backfill")
+    }
+
     // MARK: - Sync lifecycle + completion
 
     func testPeriodicSyncHistoryIsStandaloneAndRejectsAConcurrentKick() {
         let w = FakeWriter()
         var stages: [String] = []
-        let engine = CRPSyncEngine(writer: w, eventSink: { event in
+        let engine = CRPSyncEngine(writer: w, now: { Self.afternoon }, eventSink: { event in
             if case let .syncProgress(stage) = event { stages.append(stage) }
         })
 
@@ -437,6 +461,7 @@ final class CRPSyncEngineTests: XCTestCase {
             historyWatchdogNanos: 20_000_000,
             // Both deadlines expire inside the sleep below, so neither may survive the disconnect.
             timingFirstFrameWindowNanos: 10_000_000,
+            now: { Self.afternoon },
             eventSink: { event in
                 if case let .syncProgress(stage) = event { stages.append(stage) }
             }

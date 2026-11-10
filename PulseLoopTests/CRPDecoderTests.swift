@@ -428,10 +428,14 @@ final class CRPDecoderTests: XCTestCase {
 
     // MARK: - Sleep (group 2 / cmd 14)
 
+    /// 2023-11-14 08:13:20 UTC: a morning sync, so day 0 is the night just ended. (From 20:00 the ring's
+    /// sleep day turns over and day 0 is the coming night; see `CRPSleepDayIndexTests`.)
+    private let sleepSyncMorning = Date(timeIntervalSince1970: 1_699_949_600)
+
     /// Vendor `e1/j.b`: `[dayIndex]` then 3-byte `[state, hour, minute]` records, each marking the
     /// moment that state BEGINS and running until the next record.
     func testSleepDecodesStagesOnePerMinute() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         let cal = utcCalendar
         // 01:00 light (60 min) → 02:00 deep (30 min) → 02:30 awake (ends the night)
         let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
@@ -450,7 +454,7 @@ final class CRPDecoderTests: XCTestCase {
 
     /// A day can hold a night plus a nap; an awake run of >= the session gap splits them.
     func testSleepSplitsBoutsOnALongAwakeGap() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         // 01:00 light 60m → 02:00 awake 180m → 05:00 light 30m → 05:30 awake
         let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
                                       cmd: CRPCommands.cmdQueryHistorySleep,
@@ -461,7 +465,7 @@ final class CRPDecoderTests: XCTestCase {
 
     /// A short mid-night wake stays inside its bout as awake minutes.
     func testSleepKeepsShortWakesInsideTheBout() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         // 01:00 light 60m → 02:00 awake 10m → 02:10 light 30m → 02:40 awake
         let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
                                       cmd: CRPCommands.cmdQueryHistorySleep,
@@ -595,7 +599,7 @@ final class CRPDecoderTests: XCTestCase {
     /// A night that starts before midnight: the first record reads later on the clock than the last,
     /// so the anchor rolls back a day rather than placing the night in the wrong evening.
     func testSleepAnchorsAnEveningStartBeforeMidnight() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         let cal = utcCalendar
         // 23:00 light 120m → 01:00 deep 60m → 02:00 awake
         let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
@@ -611,7 +615,7 @@ final class CRPDecoderTests: XCTestCase {
     }
 
     func testSleepAnchorsFromMidnightRolloverWhenALaterBoutEndsAfterTheFirstClockTime() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         let cal = utcCalendar
         // Prior 23:00 light → 07:00 awake, then 22:30 light → 23:30 awake on the wake day.
         // The final clock time is later than the first, but the 23:00→07:00 rollover still proves
@@ -631,7 +635,7 @@ final class CRPDecoderTests: XCTestCase {
     }
 
     func testSleepNeverMovesAOneDayReplyBackMoreThanOneDay() {
-        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let now = sleepSyncMorning
         let cal = utcCalendar
         // Two backward clock transitions are malformed for one day reply. They must not shift the
         // first transition two days back; dayIndex identifies a single wake day.
