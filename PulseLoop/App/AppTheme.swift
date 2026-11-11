@@ -25,6 +25,8 @@ enum AppRoute: Hashable {
     case settingsHealth
     case settingsStrava
     case settingsPrivacyData
+    case settingsCycle
+    case cycleDetail
     case settingsAbout
     case settingsNutrition
     case nutrition
@@ -92,6 +94,10 @@ enum PulseColors {
     static let bloodPressure = Color(hex: "#FF6B9D")
     static let bloodSugar = Color(hex: "#FFB84D")
     static let fatigue = Color(hex: "#C77DFF")
+    // Cycle tracking (Colmi temperature-based)
+    static let cycle = Color(hex: "#FF7AA8")
+    static let cycleFertile = Color(hex: "#4DDCFF")
+    static let cycleLuteal = Color(hex: "#9D7CFF")
     // Vitals reference-zone palette. These are the ONLY colors a zone may use, so the chart line,
     // reference band, gauge arc, stat dot, and status label are always identical for the same zone.
     static let zoneBlue = Color(hex: "#4DA3FF")     // low / cool
