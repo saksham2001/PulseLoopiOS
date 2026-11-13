@@ -27,6 +27,7 @@ enum AppRoute: Hashable {
     case settingsPrivacyData
     case settingsAbout
     case settingsNutrition
+    case settingsCircadian
     case nutrition
     case mealDetail(UUID)
     case pairing
@@ -78,6 +79,8 @@ enum PulseColors {
     static let calories = Color(hex: "#FF8A4C")
     static let distance = Color(hex: "#4DA3FF")
     static let readiness = Color(hex: "#D6FF65")
+    /// Circadian drift (today vs. usual) — gold, distinct from the violet sleep hue it sits beside.
+    static let rhythm = Color(hex: "#FFD166")
     static let battery = Color(hex: "#A7F3D0")
     // Colmi R02 metrics
     static let stress = Color(hex: "#FF8A4C")

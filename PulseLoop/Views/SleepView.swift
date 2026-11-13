@@ -21,10 +21,18 @@ struct SleepView: View {
     /// True while a press-and-hold scrub is active on a hypnogram. Pauses this screen's scroll
     /// views (outer vertical + session carousel) so the scrub drag doesn't pan them.
     @State private var hypnogramScrubbing = false
+    /// Observed so the circadian tile appears, disappears and re-filters as its settings change.
+    @State private var circadianStore = CircadianPrefsStore.shared
+    @State private var showCircadian: Bool
+    /// A coach question picked on the circadian sheet, asked once that sheet has closed (the
+    /// coach is a sheet on the tab view, and two sheets can't be up at once).
+    @State private var pendingCoachAsk: (prompt: String, context: String)?
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
         _range = State(initialValue: SleepRangeKey.allCases.first { $0.rawValue == raw } ?? .day)
+        // Optional `-openCircadian YES` launch arg (screenshot tooling): start on the detail sheet.
+        _showCircadian = State(initialValue: UserDefaults.standard.bool(forKey: "openCircadian"))
     }
 
     private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
@@ -46,18 +54,21 @@ struct SleepView: View {
         let summary = SleepService.sleepRange(range, context: modelContext, now: range == .day ? effectiveNow : Date())
         let goalMin = MetricsRepository.goals(context: modelContext)?.sleepMinutes
         let activitySteps = MetricsRepository.latestActivity(context: modelContext)?.steps
+        let shownDay = SleepService.dayReferenceNight(now: effectiveNow)
+        // The circadian tile covers whatever the page is showing: the selected day, or the range.
+        let circadian = circadianSnapshot(shownDay: shownDay, summary: summary)
 
         ScrollView {
             VStack(spacing: 16) {
                 SleepRangeSelectorView(selection: $range)
 
                 if range == .day {
-                    dayNavHeader(shownDay: SleepService.dayReferenceNight(now: effectiveNow))
-                    dayView(summary: summary, activitySteps: activitySteps, isToday: dayOffset == 0)
+                    dayNavHeader(shownDay: shownDay)
+                    dayView(summary: summary, activitySteps: activitySteps, isToday: dayOffset == 0, circadian: circadian)
                         .id(dayOffset)
                         .transition(reduceMotion ? .opacity : .push(from: dayNavEdge))
                 } else {
-                    aggregateView(summary: summary, goalMin: goalMin)
+                    aggregateView(summary: summary, goalMin: goalMin, circadian: circadian)
                 }
             }
             .padding(.horizontal, 16)
@@ -75,6 +86,23 @@ struct SleepView: View {
         .sensoryFeedback(.selection, trigger: dayOffset)
         .onChange(of: dayOffset) { _, newOffset in announceDay(newOffset) }
         .sheet(isPresented: $showDayPicker) { dayPickerSheet }
+        .sensoryFeedback(.selection, trigger: showCircadian)
+        .sheet(isPresented: $showCircadian, onDismiss: askPendingCoachPrompt) {
+            if let circadian {
+                CircadianDetailSheet(
+                    snapshot: circadian,
+                    periodTitle: circadianPeriodTitle(shownDay: shownDay),
+                    coachEnabled: coachEnabled,
+                    onAskCoach: { prompt in
+                        pendingCoachAsk = (prompt, circadian.coachContext)
+                        showCircadian = false
+                    }
+                )
+            } else {
+                // The tile went away underneath the sheet (turned off, or its data was cleared).
+                Color.clear.onAppear { showCircadian = false }
+            }
+        }
         .task(id: "\(range.rawValue)-\(dayOffset)") {
             guard coachEnabled else { return }
             if range == .day {
@@ -104,11 +132,48 @@ struct SleepView: View {
         }
     }
 
+    // MARK: Circadian
+
+    /// Nil when the tile is switched off in Settings or there is nothing to draw.
+    private func circadianSnapshot(shownDay: Date, summary: SleepRangeSummary) -> CircadianSnapshot? {
+        guard circadianStore.prefs.enabled else { return nil }
+        let period = CircadianService.period(range: range, day: shownDay, summary: summary)
+        let snapshot = CircadianService.snapshot(period: period, context: modelContext, prefs: circadianStore.prefs)
+        return snapshot.isEmpty ? nil : snapshot
+    }
+
+    /// The tile that opens every range's page, above the Last Sleep hero.
+    @ViewBuilder
+    private func circadianCard(_ snapshot: CircadianSnapshot?) -> some View {
+        if let snapshot {
+            CircadianRhythmCard(snapshot: snapshot) { showCircadian = true }
+        }
+    }
+
+    private func circadianPeriodTitle(shownDay: Date) -> String {
+        switch range {
+        case .day:
+            let labels = dayLabels(shownDay)
+            return labels.secondary.isEmpty ? labels.primary : "\(labels.primary) · \(labels.secondary)"
+        case .week: return "Past 7 days"
+        case .month: return "Past 30 days"
+        case .year: return "Past year"
+        }
+    }
+
+    /// Runs when the circadian sheet has finished closing: hand its question to the coach.
+    private func askPendingCoachPrompt() {
+        guard let ask = pendingCoachAsk else { return }
+        pendingCoachAsk = nil
+        CoachNavigation.shared.ask(ask.prompt, context: ask.context)
+    }
+
     // MARK: Day
 
     @ViewBuilder
-    private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool) -> some View {
+    private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool, circadian: CircadianSnapshot?) -> some View {
         let sessions = SleepInsights.validSessions(summary.sessions).sorted { $0.session.startAt < $1.session.startAt }
+        circadianCard(circadian)
         if sessions.isEmpty {
             // The "wear your ring" explainer lives in the architecture card ONLY — the hero and
             // stage cards just dash out, so the message isn't repeated all over one page.
@@ -410,7 +475,7 @@ struct SleepView: View {
     // MARK: Aggregate
 
     @ViewBuilder
-    private func aggregateView(summary: SleepRangeSummary, goalMin: Int?) -> some View {
+    private func aggregateView(summary: SleepRangeSummary, goalMin: Int?, circadian: CircadianSnapshot?) -> some View {
         // Collapse naps into their day so the hero's "N of M nights tracked" counts distinct nights,
         // consistent with the (already-collapsing) averages and coach copy.
         let valid = SleepInsights.collapseByDay(SleepInsights.validSessions(summary.sessions))
@@ -428,7 +493,8 @@ struct SleepView: View {
             : SleepInsights.buildNightAxis(start: summary.start, end: summary.end, sessions: summary.sessions, range: range)
         let vizTitle = range == .year ? "Monthly average" : "Nightly sleep"
 
-        // Hero card opens the page; coach card closes it.
+        // The circadian tile, then the hero card, open the page; the coach card closes it.
+        circadianCard(circadian)
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[range] ?? "Sleep",
             value: enough ? SleepFormat.duration(avgMin) : noData.value,
