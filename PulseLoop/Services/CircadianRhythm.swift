@@ -484,7 +484,9 @@ extension CircadianSnapshot {
             prompts.append(delta > 0 ? "How do I get back to my usual wake time?" : "Why am I waking earlier than usual?")
         }
         if let meal = off.first(where: { $0.kind.isMeal }), let delta = meal.deltaMinutes {
-            prompts.append(delta > 0 ? "How does eating later than usual affect my sleep?" : "Does eating earlier than usual change my sleep?")
+            prompts.append(delta > 0
+                ? "How does eating later than usual affect my sleep?"
+                : "Does eating earlier than usual change my sleep?")
         }
         if off.isEmpty { prompts.append("What helps me stay on rhythm?") }
         prompts.append("How consistent has my daily rhythm been lately?")
@@ -510,7 +512,8 @@ extension CircadianSnapshot {
             return text + ")"
         }
         facts += workouts.map { w in
-            "\(w.isTypical ? "typical workout" : w.label.lowercased()) at \(CircadianFormat.clock(w.startMinutes)) for \(CircadianFormat.duration(w.durationMinutes))"
+            let name = w.isTypical ? "typical workout" : w.label.lowercased()
+            return "\(name) at \(CircadianFormat.clock(w.startMinutes)) for \(CircadianFormat.duration(w.durationMinutes))"
         }
         return "Circadian rhythm from the Sleep tab, for \(scopeText): \(facts.joined(separator: "; ")). "
             + "\"Usual\" is the average over the \(CircadianEngine.baselineDays) days before."

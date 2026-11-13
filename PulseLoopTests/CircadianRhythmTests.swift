@@ -244,7 +244,10 @@ final class CircadianRhythmTests: XCTestCase {
 
     func testARangeShowsOneTypicalWorkout() throws {
         let week = CircadianPeriod(scope: .week, start: day(-6), end: today)
-        let sessions = [workout(0, 18, minutes: 40, .strength), workout(-2, 18, minutes: 50, .strength), workout(-4, 18, minutes: 60), workout(-5, 18)]
+        let sessions = [
+            workout(0, 18, minutes: 40, .strength), workout(-2, 18, minutes: 50, .strength),
+            workout(-4, 18, minutes: 60), workout(-5, 18)
+        ]
         let span = try XCTUnwrap(snapshot(period: week, sleep: baseline(20), workouts: sessions).workouts.first)
         XCTAssertTrue(span.isTypical)
         XCTAssertEqual(span.startMinutes, 18 * 60, accuracy: 0.01)
@@ -477,7 +480,8 @@ final class CircadianRhythmTests: XCTestCase {
             context.insert(MealEntry(timestamp: moment(-offset, 16), name: "Snack", mealType: .snack, calories: 100))
         }
         for offset in [0, 1, 2, 4] {
-            context.insert(ActivitySession(type: "gym", status: .finished, startedAt: moment(-offset, 18), endedAt: moment(-offset, 18, 45)))
+            context.insert(ActivitySession(
+                type: "gym", status: .finished, startedAt: moment(-offset, 18), endedAt: moment(-offset, 18, 45)))
         }
         // Still recording: must not appear.
         context.insert(ActivitySession(type: "run", status: .recording, startedAt: moment(0, 6)))

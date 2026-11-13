@@ -130,7 +130,7 @@ enum SeedData {
             SeedWorkout(offset: -1,  type: "walk",  minutes: 52, distance: 4200,  calories: 210, origin: (40.4406, -79.9959)),
             SeedWorkout(offset: -2,  type: "gym",   minutes: 50, distance: 0,     calories: 300, origin: nil),
             SeedWorkout(offset: -3,  type: "cycle", minutes: 64, distance: 18400, calories: 460, origin: (40.4612, -79.9249)),
-            SeedWorkout(offset: -4,  type: "run",   minutes: 35, distance: 5200,  calories: 296, origin: nil),                    // treadmill
+            SeedWorkout(offset: -4,  type: "run",   minutes: 35, distance: 5200,  calories: 296, origin: nil),  // treadmill
             SeedWorkout(offset: -6,  type: "gym",   minutes: 45, distance: 0,     calories: 280, origin: nil),
             SeedWorkout(offset: -10, type: "run",   minutes: 41, distance: 7300,  calories: 372, origin: (40.4280, -79.9420))
         ]
@@ -186,6 +186,18 @@ enum SeedData {
     }
 
     /// One demo meal to insert.
+    /// One recurring meal for the demo's month of history: a base time, how far it wanders,
+    /// and how often a day skips it.
+    private struct MealHabit {
+        let type: MealType
+        let hour: Int
+        let minute: Int
+        let spread: Int
+        let skipEvery: Int
+        let names: [String]
+        let kcal: Double
+    }
+
     private struct MealSeed {
         let dayOffset: Int
         let hour: Int
@@ -231,10 +243,13 @@ enum SeedData {
         // the circadian tile only shows a meal that is logged regularly, and needs its usual time.
         // Deterministic (no RNG): times wander within ~25 minutes and a few days skip a meal, the
         // way real logging does.
-        let history: [(type: MealType, hour: Int, minute: Int, spread: Int, skipEvery: Int, names: [String], kcal: Double)] = [
-            (.breakfast, 7, 50, 25, 6, ["Greek yogurt bowl", "Overnight oats", "Eggs on toast"], 350),
-            (.lunch, 12, 30, 25, 5, ["Chicken salad", "Turkey sandwich", "Grain bowl"], 530),
-            (.dinner, 18, 50, 30, 7, ["Salmon & rice", "Pasta primavera", "Stir-fry"], 660),
+        let history: [MealHabit] = [
+            MealHabit(type: .breakfast, hour: 7, minute: 50, spread: 25, skipEvery: 6,
+                      names: ["Greek yogurt bowl", "Overnight oats", "Eggs on toast"], kcal: 350),
+            MealHabit(type: .lunch, hour: 12, minute: 30, spread: 25, skipEvery: 5,
+                      names: ["Chicken salad", "Turkey sandwich", "Grain bowl"], kcal: 530),
+            MealHabit(type: .dinner, hour: 18, minute: 50, spread: 30, skipEvery: 7,
+                      names: ["Salmon & rice", "Pasta primavera", "Stir-fry"], kcal: 660),
         ]
         for offset in 2..<30 {
             guard let day = calendar.date(byAdding: .day, value: -offset, to: now) else { continue }
