@@ -45,12 +45,12 @@ final class CircadianRhythmTests: XCTestCase {
         sleep: [CircadianSleepSample] = [],
         meals: [CircadianMealSample] = [],
         workouts: [CircadianWorkoutSample] = [],
-        prefs: CircadianPrefs = .default,
+        prefs: CircadianPrefs? = nil,
         nutritionEnabled: Bool = true
     ) -> CircadianSnapshot {
         CircadianEngine.snapshot(
             period: period ?? dayPeriod, sleep: sleep, meals: meals, workouts: workouts,
-            prefs: prefs, nutritionEnabled: nutritionEnabled, calendar: cal)
+            prefs: prefs ?? .default, nutritionEnabled: nutritionEnabled, calendar: cal)
     }
 
     /// `count` consecutive baseline nights ending yesterday, all at the same times.
@@ -61,7 +61,7 @@ final class CircadianRhythmTests: XCTestCase {
     // MARK: Clock math
 
     func testCircularMeanAveragesAcrossMidnight() throws {
-        let mean = try XCTUnwrap(CircadianMath.circularMean([23 * 60 + 30, 30]))
+        let mean = try XCTUnwrap(CircadianMath.circularMean([1410.0, 30.0]))
         XCTAssertEqual(CircadianMath.signedDelta(mean, from: 0), 0, accuracy: 0.01)
     }
 
@@ -166,7 +166,7 @@ final class CircadianRhythmTests: XCTestCase {
         let lapsed = (8...27).map { meal(-$0, .dinner, 19, 0) }
         let snap = snapshot(sleep: baseline(), meals: lapsed)
         let dinner = try XCTUnwrap(snap.anchor(.dinner))
-        XCTAssertEqual(try XCTUnwrap(dinner.usualMinutes), 19 * 60, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(dinner.usualMinutes), 1140.0, accuracy: 0.01)
         XCTAssertNil(dinner.periodMinutes)
     }
 
@@ -182,7 +182,7 @@ final class CircadianRhythmTests: XCTestCase {
         let breakfast = try XCTUnwrap(snap.anchor(.breakfast))
         XCTAssertNil(breakfast.usualMinutes)
         XCTAssertNil(breakfast.deltaMinutes)
-        XCTAssertEqual(breakfast.displayMinutes, 8 * 60 + 30, accuracy: 0.01)
+        XCTAssertEqual(breakfast.displayMinutes, 510.0, accuracy: 0.01)
     }
 
     func testMealsHideWhenNutritionOrTheMealSwitchIsOff() {
@@ -225,7 +225,7 @@ final class CircadianRhythmTests: XCTestCase {
         prefs.workoutSelection = .manual
         let snap = snapshot(sleep: baseline(), workouts: [workout(0, 18, minutes: 45, .strength)], prefs: prefs)
         let span = try XCTUnwrap(snap.workouts.first)
-        XCTAssertEqual(span.startMinutes, 18 * 60, accuracy: 0.01)
+        XCTAssertEqual(span.startMinutes, 1080.0, accuracy: 0.01)
         XCTAssertEqual(span.durationMinutes, 45, accuracy: 0.01)
         XCTAssertEqual(span.category, .strength)
         XCTAssertFalse(span.isTypical)
@@ -239,7 +239,7 @@ final class CircadianRhythmTests: XCTestCase {
         prefs.workoutSelection = .manual
         let all = [workout(0, 7), workout(0, 18), workout(-1, 18), workout(0, 12, minutes: 2)]
         let spans = snapshot(sleep: baseline(), workouts: all, prefs: prefs).workouts
-        XCTAssertEqual(spans.map(\.startMinutes), [7 * 60, 18 * 60])
+        XCTAssertEqual(spans.map(\.startMinutes), [420.0, 1080.0])
     }
 
     func testARangeShowsOneTypicalWorkout() throws {
@@ -250,8 +250,8 @@ final class CircadianRhythmTests: XCTestCase {
         ]
         let span = try XCTUnwrap(snapshot(period: week, sleep: baseline(20), workouts: sessions).workouts.first)
         XCTAssertTrue(span.isTypical)
-        XCTAssertEqual(span.startMinutes, 18 * 60, accuracy: 0.01)
-        XCTAssertEqual(span.durationMinutes, (40 + 50 + 60 + 45) / 4, accuracy: 0.01)
+        XCTAssertEqual(span.startMinutes, 1080.0, accuracy: 0.01)
+        XCTAssertEqual(span.durationMinutes, 48.75, accuracy: 0.01)   // mean of 40, 50, 60, 45
     }
 
     func testWorkoutTypesMapToTwoIcons() {
@@ -352,7 +352,7 @@ final class CircadianRhythmTests: XCTestCase {
         XCTAssertEqual(CircadianFormat.spoken(-82), "1 hour 22 minutes earlier than usual")
         XCTAssertEqual(CircadianFormat.clock(423), "7:03 AM")
         XCTAssertEqual(CircadianFormat.clock(0), "12:00 AM")
-        XCTAssertEqual(CircadianFormat.clock(12 * 60 + 45), "12:45 PM")
+        XCTAssertEqual(CircadianFormat.clock(765.0), "12:45 PM")
         XCTAssertEqual(CircadianFormat.clock(1439.7), "12:00 AM")
     }
 
@@ -394,13 +394,13 @@ final class CircadianRhythmTests: XCTestCase {
     func testSemicircleRunsFourAMToFourAMLeftToRight() {
         let dial = CircadianDialGeometry(shape: .semicircle)
         let center = CGPoint(x: 100, y: 100)
-        let start = dial.point(4 * 60, radius: 50, center: center)
+        let start = dial.point(240.0, radius: 50, center: center)
         XCTAssertEqual(start.x, 50, accuracy: 0.01)
         XCTAssertEqual(start.y, 100, accuracy: 0.01)
-        let apex = dial.point(16 * 60, radius: 50, center: center)   // 4 PM, halfway through the day
+        let apex = dial.point(960.0, radius: 50, center: center)   // 4 PM, halfway through the day
         XCTAssertEqual(apex.x, 100, accuracy: 0.01)
         XCTAssertEqual(apex.y, 50, accuracy: 0.01)
-        let late = dial.point(3 * 60 + 59, radius: 50, center: center)
+        let late = dial.point(239.0, radius: 50, center: center)
         XCTAssertGreaterThan(late.x, 149.9)
         // Nothing ever lands below the baseline.
         for minute in stride(from: 0.0, to: 1440, by: 30) {
@@ -411,10 +411,10 @@ final class CircadianRhythmTests: XCTestCase {
     func testFullDialPutsNoonOnTopAndMidnightAtTheBottom() {
         let dial = CircadianDialGeometry(shape: .full)
         let center = CGPoint(x: 100, y: 100)
-        XCTAssertEqual(dial.point(12 * 60, radius: 50, center: center).y, 50, accuracy: 0.01)
+        XCTAssertEqual(dial.point(720.0, radius: 50, center: center).y, 50, accuracy: 0.01)
         XCTAssertEqual(dial.point(0, radius: 50, center: center).y, 150, accuracy: 0.01)
-        XCTAssertEqual(dial.point(18 * 60, radius: 50, center: center).x, 150, accuracy: 0.01)
-        XCTAssertEqual(dial.point(6 * 60, radius: 50, center: center).x, 50, accuracy: 0.01)
+        XCTAssertEqual(dial.point(1080.0, radius: 50, center: center).x, 150, accuracy: 0.01)
+        XCTAssertEqual(dial.point(360.0, radius: 50, center: center).x, 50, accuracy: 0.01)
     }
 
     func testOvernightSleepSplitsAtTheSemicircleSeam() {
@@ -428,7 +428,7 @@ final class CircadianRhythmTests: XCTestCase {
         let full = CircadianDialGeometry(shape: .full)
         XCTAssertEqual(full.arcs(from: bed, to: wake).count, 1)
         XCTAssertEqual(full.arcs(from: bed, to: wake)[0].sweep, 495 * full.sweepPerMinute, accuracy: 1e-9)
-        XCTAssertEqual(semi.arcs(from: 18 * 60, to: 18 * 60 + 45).count, 1)
+        XCTAssertEqual(semi.arcs(from: 1080.0, to: 1125.0).count, 1)
         XCTAssertTrue(semi.arcs(from: 600, to: 600).isEmpty)
     }
 

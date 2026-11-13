@@ -171,10 +171,10 @@ struct CircadianDetailSheet: View {
             tint: anchor.kind.isMeal ? PulseColors.textPrimary.opacity(0.85) : PulseColors.sleep,
             title: anchor.kind.label,
             subtitle: anchor.usualMinutes.map { "Usually \(CircadianFormat.clock($0))" } ?? "No usual yet",
-            value: anchor.periodMinutes.map(CircadianFormat.clock) ?? "—",
+            value: anchor.periodMinutes.map { CircadianFormat.clock($0) } ?? "—",
             detail: detail,
             detailColor: offRhythm ? PulseColors.rhythm : PulseColors.textSecondary,
-            spoken: delta.map(CircadianFormat.spoken)
+            spoken: delta.map { CircadianFormat.spoken($0) }
         )
     }
 
