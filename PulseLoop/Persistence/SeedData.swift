@@ -128,7 +128,9 @@ enum SeedData {
         let workouts: [SeedWorkout] = [
             SeedWorkout(offset: 0,   type: "run",   minutes: 38, distance: 6100,  calories: 330, origin: (40.4443, -79.9436)),  // CMU / Pittsburgh
             SeedWorkout(offset: -1,  type: "walk",  minutes: 52, distance: 4200,  calories: 210, origin: (40.4406, -79.9959)),
+            SeedWorkout(offset: -2,  type: "gym",   minutes: 50, distance: 0,     calories: 300, origin: nil),
             SeedWorkout(offset: -3,  type: "cycle", minutes: 64, distance: 18400, calories: 460, origin: (40.4612, -79.9249)),
+            SeedWorkout(offset: -4,  type: "run",   minutes: 35, distance: 5200,  calories: 296, origin: nil),                    // treadmill
             SeedWorkout(offset: -6,  type: "gym",   minutes: 45, distance: 0,     calories: 280, origin: nil),
             SeedWorkout(offset: -10, type: "run",   minutes: 41, distance: 7300,  calories: 372, origin: (40.4280, -79.9420))
         ]
@@ -196,7 +198,8 @@ enum SeedData {
         let source: MealEntrySource
     }
 
-    /// Demo meals for today + yesterday. Dormant until the nutrition feature is enabled in Settings.
+    /// Demo meals: named entries for today + yesterday plus a month of history. Dormant until the
+    /// nutrition feature is enabled in Settings.
     @MainActor
     private static func seedDemoMeals(_ context: ModelContext, calendar: Calendar, now: Date) {
         let seeds: [MealSeed] = [
@@ -222,6 +225,29 @@ enum SeedData {
                 calories: seed.kcal, proteinG: seed.protein, carbsG: seed.carbs, fatG: seed.fat,
                 source: seed.source
             ))
+        }
+
+        // A month of earlier meals so the demo has eating habits, not just two days of entries:
+        // the circadian tile only shows a meal that is logged regularly, and needs its usual time.
+        // Deterministic (no RNG): times wander within ~25 minutes and a few days skip a meal, the
+        // way real logging does.
+        let history: [(type: MealType, hour: Int, minute: Int, spread: Int, skipEvery: Int, names: [String], kcal: Double)] = [
+            (.breakfast, 7, 50, 25, 6, ["Greek yogurt bowl", "Overnight oats", "Eggs on toast"], 350),
+            (.lunch, 12, 30, 25, 5, ["Chicken salad", "Turkey sandwich", "Grain bowl"], 530),
+            (.dinner, 18, 50, 30, 7, ["Salmon & rice", "Pasta primavera", "Stir-fry"], 660),
+        ]
+        for offset in 2..<30 {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: now) else { continue }
+            for (index, meal) in history.enumerated() where offset % meal.skipEvery != 0 {
+                let minute = meal.minute + (offset * (7 + index * 4)) % meal.spread
+                guard let timestamp = calendar.date(bySettingHour: meal.hour + minute / 60, minute: minute % 60, second: 0, of: day)
+                else { continue }
+                context.insert(MealEntry(
+                    timestamp: timestamp, name: meal.names[offset % meal.names.count], mealType: meal.type,
+                    calories: meal.kcal, proteinG: meal.kcal * 0.07, carbsG: meal.kcal * 0.1, fatG: meal.kcal * 0.035,
+                    source: .manual
+                ))
+            }
         }
     }
 

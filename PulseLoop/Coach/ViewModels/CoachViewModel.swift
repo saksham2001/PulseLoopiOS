@@ -42,7 +42,8 @@ final class CoachViewModel {
         conversationId: UUID,
         context: ModelContext,
         attachments: [CoachAttachmentRef] = [],
-        coordinator: RingSyncCoordinator? = nil
+        coordinator: RingSyncCoordinator? = nil,
+        hiddenContext: String? = nil
     ) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Allow image-only sends: require either text or an attachment.
@@ -79,8 +80,10 @@ final class CoachViewModel {
                 foodClient: flags.nutritionContextEnabled ? OpenFoodFactsClient() : nil)
         )
 
+        // `hiddenContext` rides along to the model only: the stored bubble stays the user's own words.
+        let modelText = hiddenContext.map { "\(trimmed)\n\n[Context from the app: \($0)]" } ?? trimmed
         let result = await orchestrator.runTurn(
-            userText: trimmed,
+            userText: modelText,
             packet: packet,
             recentMessages: recent,
             userImages: userImages
