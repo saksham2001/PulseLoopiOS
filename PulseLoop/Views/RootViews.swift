@@ -103,6 +103,11 @@ struct RootAppView: View {
                     if UserDefaults.standard.bool(forKey: "openNutritionSettings") {
                         path.append(AppRoute.settingsNutrition)
                     }
+                    // Test tooling: open Settings → Circadian rhythm. (`-openCircadian YES` opens the
+                    // tile's detail sheet instead; SleepView reads that one itself.)
+                    if UserDefaults.standard.bool(forKey: "openCircadianSettings") {
+                        path.append(AppRoute.settingsCircadian)
+                    }
                     // Test tooling: deep-link straight to a seeded workout's detail (route map).
                     if UserDefaults.standard.bool(forKey: "openWorkout"),
                        let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
@@ -182,6 +187,8 @@ struct RootAppView: View {
                     AboutSettingsView(path: $path)
                 case .settingsNutrition:
                     NutritionSettingsView()
+                case .settingsCircadian:
+                    CircadianSettingsView()
                 case .nutrition:
                     NutritionView(path: $path)
                 case let .mealDetail(id):
@@ -345,7 +352,7 @@ struct MainTabView: View {
         .onChange(of: selected) { _, _ in reorder.end() }
         .onChange(of: coachEnabled) { _, enabled in
             // Coach turned off — dismiss the sheet and clear any pending deep link.
-            if !enabled { nav.requestedConversationId = nil; nav.showCoach = false }
+            if !enabled { nav.requestedConversationId = nil; nav.clearPendingPrompt(); nav.showCoach = false }
         }
         // Coach opens as a sheet (swipe-to-dismiss) instead of a tab, so it never
         // crowds the tab bar. All entry points set `nav.showCoach`.

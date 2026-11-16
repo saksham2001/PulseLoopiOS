@@ -128,6 +128,12 @@ struct SettingsView: View {
                 trailingValue: NutritionPrefsStore.shared.prefs.masterEnabled ? "On" : "Off"
             ) {
                 path.append(AppRoute.settingsNutrition)
+            },
+            SettingsRowItem(
+                icon: "sun.and.horizon", tint: PulseColors.rhythm, title: "Circadian Rhythm",
+                trailingValue: CircadianPrefsStore.shared.prefs.enabled ? "On" : "Off"
+            ) {
+                path.append(AppRoute.settingsCircadian)
             }
         ]
     }

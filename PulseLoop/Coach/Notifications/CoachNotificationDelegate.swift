@@ -12,17 +12,38 @@ final class CoachNavigation {
     /// Drives the Coach sheet. Coach is no longer a tab, so all entry points
     /// (summary-card tap, notification deep-link, header button) set this true.
     var showCoach = false
+    /// A question to ask in a fresh chat as soon as the coach opens (e.g. a prompt chip on the
+    /// circadian sheet). `CoachView` sends it and clears it.
+    var pendingPrompt: String?
+    /// Facts sent to the model alongside `pendingPrompt` but not shown in the chat bubble.
+    var pendingPromptContext: String?
 
     /// Open the coach on a specific conversation (deep link).
     func open(_ conversationId: UUID) {
         requestedConversationId = conversationId
+        clearPendingPrompt()
         showCoach = true
+    }
+
+    /// Open the coach on a new chat and ask `prompt` straight away. `context` gives the model
+    /// the on-screen facts the question is about without cluttering the visible message.
+    func ask(_ prompt: String, context: String? = nil) {
+        requestedConversationId = nil
+        pendingPrompt = prompt
+        pendingPromptContext = context
+        showCoach = true
+    }
+
+    func clearPendingPrompt() {
+        pendingPrompt = nil
+        pendingPromptContext = nil
     }
 
     /// Open the coach with no specific conversation (e.g. the floating bubble).
     /// Clears any prior deep-link id so it doesn't reopen a stale thread.
     func openRoot() {
         requestedConversationId = nil
+        clearPendingPrompt()
         showCoach = true
     }
 }

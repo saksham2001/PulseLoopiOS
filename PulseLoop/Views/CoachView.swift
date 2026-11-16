@@ -155,9 +155,13 @@ struct CoachView: View {
                 activeConversationId = allMessages.last?.conversationId ?? conversations.first?.id
             }
             if nav.requestedConversationId != nil { openRequestedConversation() }
+            askPendingPrompt()
         }
         .onChange(of: nav.requestedConversationId) { _, id in
             if id != nil { openRequestedConversation() }
+        }
+        .onChange(of: nav.pendingPrompt) { _, prompt in
+            if prompt != nil { askPendingPrompt() }
         }
         .sheet(isPresented: $showHistory) {
             CoachHistorySheet(conversations: conversations, activeId: activeConversationId) { id in
@@ -322,7 +326,20 @@ struct CoachView: View {
         stagedAttachment = nil
     }
 
-    private func send(_ text: String) {
+    /// Ask a question handed over from another screen (see `CoachNavigation.ask`) in a chat of
+    /// its own, titled from the question.
+    private func askPendingPrompt() {
+        guard let prompt = nav.pendingPrompt else { return }
+        let hiddenContext = nav.pendingPromptContext
+        nav.clearPendingPrompt()
+        let conversation = CoachConversation(title: String(prompt.prefix(40)))
+        modelContext.insert(conversation)
+        try? modelContext.save()
+        activeConversationId = conversation.id
+        send(prompt, hiddenContext: hiddenContext)
+    }
+
+    private func send(_ text: String, hiddenContext: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachment = stagedAttachment
         // Allow image-only sends: require either text or a staged image.
@@ -341,7 +358,11 @@ struct CoachView: View {
         stagedAttachment = nil
         composerFocused = false
         let attachments = attachment.map { [$0] } ?? []
-        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext, attachments: attachments, coordinator: coordinator) }
+        Task {
+            await viewModel.send(
+                trimmed, conversationId: conversationId, context: modelContext,
+                attachments: attachments, coordinator: coordinator, hiddenContext: hiddenContext)
+        }
     }
 
     /// The active conversation, creating one on first use.
