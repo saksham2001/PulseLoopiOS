@@ -5,32 +5,54 @@ on:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC
 
+# Keep scheduled and manual runs from racing over the same update branch.
+concurrency:
+  group: contributors
+  cancel-in-progress: false
+
 permissions:
   contents: write
+  pull-requests: write
+
+# Repository setup: enable Settings → Actions → General → Workflow permissions →
+# "Allow GitHub Actions to create and approve pull requests". Keep main protected;
+# contributor updates go through the same review and required checks as other PRs.
 
 jobs:
   update:
+    if: github.repository == 'saksham2001/PulseLoopiOS'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
         with:
-          python-version: "3.x"
+          ref: main
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
 
       - name: Regenerate contributor grids
         run: python scripts/update_contributors.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit if changed
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add README.md docs/project/contributors.md
-            git commit -m "chore: refresh contributors"
-            git push
-          else
-            echo "No contributor changes."
-          fi
+      - name: Open or update contributor PR
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8
+        with:
+          base: main
+          branch: feat/refresh-contributors
+          delete-branch: true
+          add-paths: |
+            README.md
+            docs/project/contributors.md
+          commit-message: "chore: refresh contributors"
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          title: "chore: refresh contributors"
+          body: |
+            Refresh the generated contributor grids in README.md and the docs
+            using the iOS and Android repositories' contributor lists.
+
+            If GitHub shows an "Approve workflows to run" banner, a maintainer
+            must approve the workflow runs so the required checks can start.
+            Review and merge this PR through the usual protected-branch process.
