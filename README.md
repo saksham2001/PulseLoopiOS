@@ -242,7 +242,9 @@ Thanks to everyone who's contributed to the iOS app 💜
     <td align="center"><a href="https://github.com/saksham2001"><img src="https://avatars.githubusercontent.com/u/44300901?v=4&s=100" width="80" height="80" alt="@saksham2001" style="border-radius:50%" /><br /><sub>@saksham2001</sub></a></td>
     <td align="center"><a href="https://github.com/rgvxsthi"><img src="https://avatars.githubusercontent.com/u/65727207?v=4&s=100" width="80" height="80" alt="@rgvxsthi" style="border-radius:50%" /><br /><sub>@rgvxsthi</sub></a></td>
     <td align="center"><a href="https://github.com/hoveeman"><img src="https://avatars.githubusercontent.com/u/18269595?v=4&s=100" width="80" height="80" alt="@hoveeman" style="border-radius:50%" /><br /><sub>@hoveeman</sub></a></td>
+    <td align="center"><a href="https://github.com/foureight84"><img src="https://avatars.githubusercontent.com/u/1146028?v=4&s=100" width="80" height="80" alt="@foureight84" style="border-radius:50%" /><br /><sub>@foureight84</sub></a></td>
     <td align="center"><a href="https://github.com/radxp"><img src="https://avatars.githubusercontent.com/u/207566977?v=4&s=100" width="80" height="80" alt="@radxp" style="border-radius:50%" /><br /><sub>@radxp</sub></a></td>
+    <td align="center"><a href="https://github.com/ak710"><img src="https://avatars.githubusercontent.com/u/35409857?v=4&s=100" width="80" height="80" alt="@ak710" style="border-radius:50%" /><br /><sub>@ak710</sub></a></td>
   </tr>
 </table>
 <!-- CONTRIBUTORS:END -->
