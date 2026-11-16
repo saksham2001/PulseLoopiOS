@@ -58,7 +58,7 @@ struct SettingsView: View {
                 // blends consistently (iOS-Settings inset-grouped look).
                 VStack(spacing: 20) {
                     SettingsSection(title: "General", rows: generalRows(caps))
-                    SettingsSection(title: "Metrics", rows: metricsRows)
+                    SettingsSection(title: "Metrics", rows: metricsRows(caps))
                     SettingsSection(title: "Resources", rows: resourcesRows(caps))
                 }
                 .pulseGlassContainer(spacing: 20)
@@ -104,8 +104,8 @@ struct SettingsView: View {
         return rows
     }
 
-    private var metricsRows: [SettingsRowItem] {
-        [
+    private func metricsRows(_ caps: Set<WearableCapability>) -> [SettingsRowItem] {
+        var rows: [SettingsRowItem] = [
             SettingsRowItem(icon: "circle.circle", tint: PulseColors.accent, title: "Today") {
                 path.append(AppRoute.settingsToday)
             },
@@ -130,6 +130,17 @@ struct SettingsView: View {
                 path.append(AppRoute.settingsNutrition)
             }
         ]
+        // Cycle tracking rides on passive overnight temperature, which only rings declaring
+        // `.temperature` (Colmi) capture — jring never shows this. Off by default, like Nutrition.
+        if caps.contains(.temperature) {
+            rows.append(SettingsRowItem(
+                icon: "arrow.trianglehead.2.clockwise.rotate.90", tint: PulseColors.cycle, title: "Cycle Tracking",
+                trailingValue: CycleSettingsStore.shared.isActive ? "On" : "Off"
+            ) {
+                path.append(AppRoute.settingsCycle)
+            })
+        }
+        return rows
     }
 
     private func resourcesRows(_ caps: Set<WearableCapability>) -> [SettingsRowItem] {

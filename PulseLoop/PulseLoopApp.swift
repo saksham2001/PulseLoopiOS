@@ -137,6 +137,8 @@ struct PulseLoopApp: App {
         CoachNotificationScheduler.shared.register { syncBudget in
             CoachNotificationService(modelContext: ctx, coordinator: coordinator, syncWaitTimeout: syncBudget)
         }
+        // Cycle period-prompt notifications: register the action category + context access.
+        CycleNotificationCenter.shared.register { ctx }
     }
 
     var body: some Scene {
@@ -175,6 +177,8 @@ struct PulseLoopApp: App {
             // scheduler gates on `coachMasterEnabled`, and `runDueSlot` short
             // -circuits via the feature-flags gate.
             CoachNotificationScheduler.shared.scheduleNext()
+            // Cycle period prompt: no-op unless cycle tracking is enabled with a prediction.
+            CycleNotificationCenter.shared.scheduleNext()
             guard CoachSettingsStore.shared.settings.coachMasterEnabled else { return }
             // Foreground catch-up: deliver a due check-in we missed while away.
             let ctx = container.mainContext
